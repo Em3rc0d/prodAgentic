@@ -24,8 +24,12 @@ Example format: ["idea 1", "idea 2", "idea 3", "idea 4", "idea 5", "idea 6", "id
 from core.model_registry import ModelProfile
 
 class IdeaGeneratorAgent(BaseAgent):
-    def __init__(self):
-        super().__init__(SYSTEM_PROMPT, ModelProfile.ECONOMY_TEXT)
+    def __init__(self, router):
+        super().__init__(
+            system_prompt=SYSTEM_PROMPT,
+            profile=ModelProfile.ECONOMY_TEXT,
+            router=router
+        )
 
     async def generate_ideas(self, topic: str, style: str) -> list[str]:
         prompt = (

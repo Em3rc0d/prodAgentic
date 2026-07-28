@@ -30,8 +30,12 @@ Hard Constraints:
 from core.model_registry import ModelProfile
 
 class ContentWriterAgent(BaseAgent):
-    def __init__(self):
-        super().__init__(SYSTEM_PROMPT, ModelProfile.ECONOMY_TEXT)
+    def __init__(self, router):
+        super().__init__(
+            system_prompt=SYSTEM_PROMPT,
+            profile=ModelProfile.ECONOMY_TEXT,
+            router=router
+        )
 
     async def stream(self, idea: str, research: str, style: str, attempt_id: str = None) -> AsyncGenerator[tuple, None]:
         style_map = {

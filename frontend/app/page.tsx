@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { fetchIdeas, createPipelineStream } from "@/lib/api";
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
@@ -65,6 +65,21 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
 
   const esRef = useRef<EventSource | null>(null);
+  
+  const activeAttemptByStage = useRef<Record<StageKey, string | null>>({
+    research: null,
+    write: null,
+    edit: null,
+  });
+  const lastSequenceByAttempt = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    return () => {
+      if (esRef.current) {
+        esRef.current.close();
+      }
+    };
+  }, []);
 
   /* ─── Generate Ideas ─────────────────────────────────────────────── */
   const handleGenerateIdeas = useCallback(async () => {
@@ -102,25 +117,46 @@ export default function Home() {
         try {
           const msg = JSON.parse(e.data);
 
-          if (msg.stage === "stage_start" || msg.stage === "stage_attempt_started") {
+          if (msg.stage === "stage_start" || msg.stage === "stage.attempt_started") {
             const sKey = msg.stage_name as StageKey;
             setCurrentStage(sKey);
             setStageStatus((prev) => ({ ...prev, [sKey]: "running" }));
+            
+            const attemptId = msg.attempt_id;
+            if (attemptId) {
+                activeAttemptByStage.current[sKey] = attemptId;
+                lastSequenceByAttempt.current[attemptId] = 0;
+            }
+
             if (msg.selected_model) {
               setStageModels((prev) => ({ ...prev, [sKey]: msg.selected_model }));
             }
-          } else if (msg.stage === "stage_attempt_reset") {
+          } else if (msg.stage === "stage.attempt_reset") {
             const sKey = msg.stage_name as StageKey;
+            activeAttemptByStage.current[sKey] = null;
             setStageOutputs((prev) => ({ ...prev, [sKey]: "" }));
-          } else if (msg.stage === "chunk") {
+          } else if (msg.stage === "chunk" || msg.stage === "stage.chunk") {
             const sKey = msg.stage_name as StageKey;
+            const attemptId = msg.attempt_id;
+            const seq = msg.event_sequence || 0;
+            
+            if (attemptId && activeAttemptByStage.current[sKey] !== attemptId) return;
+            if (attemptId && seq > 0) {
+                if (seq <= (lastSequenceByAttempt.current[attemptId] || 0)) return;
+                lastSequenceByAttempt.current[attemptId] = seq;
+            }
+            
             setStageOutputs((prev) => ({
               ...prev,
               [sKey]: prev[sKey] + msg.text,
             }));
-          } else if (msg.stage === "stage_done") {
+          } else if (msg.stage === "stage_done" || msg.stage === "stage.completed") {
             const sKey = msg.stage_name as StageKey;
             setStageStatus((prev) => ({ ...prev, [sKey]: "done" }));
+          } else if (msg.stage === "stage_failed" || msg.stage === "stage.failed") {
+            setError(msg.reason || "Pipeline encountered a terminal error");
+            setMode("ideas_ready");
+            es.close();
           } else if (msg.stage === "complete") {
             setFinalPost(msg.final_post || "");
             setMode("pipeline_done");
@@ -150,6 +186,9 @@ export default function Home() {
     setStageModels({ research: null, write: null, edit: null });
     setCurrentStage(null);
     setFinalPost("");
+    
+    activeAttemptByStage.current = { research: null, write: null, edit: null };
+    lastSequenceByAttempt.current = {};
   }
 
   function handleCopy() {

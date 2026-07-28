@@ -1,11 +1,76 @@
 import asyncio
-from typing import AsyncGenerator
+import uuid
+from typing import AsyncGenerator, Any, Optional
+from dataclasses import dataclass
+from datetime import datetime, timezone, timedelta
+from enum import Enum
 from core.model_registry import ModelProfile, get_models_for_profile
 from .adapters.types import ModelExecutionError, ErrorCode, ProviderAdapter
 
-class StageFailedException(Exception):
-    """Raised when an attempt fails mid-stream, requiring a full stage reset."""
-    pass
+@dataclass
+class AttemptStarted:
+    model_id: str
+    attempt_id: str
+    provider: str
+
+@dataclass
+class ContentChunk:
+    text: str
+    attempt_id: str
+
+@dataclass
+class AttemptFailed:
+    reason: str
+    attempt_id: str
+
+@dataclass
+class AttemptResetRequired:
+    reason: str
+    attempt_id: str
+
+@dataclass
+class AttemptCompleted:
+    attempt_id: str
+
+@dataclass
+class RoutingExhausted:
+    reason: str
+
+class CircuitState(str, Enum):
+    CLOSED = "CLOSED"
+    OPEN = "OPEN"
+    HALF_OPEN = "HALF_OPEN"
+
+@dataclass
+class CircuitBreaker:
+    state: CircuitState = CircuitState.CLOSED
+    opened_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    failure_count: int = 0
+    last_failure_category: Optional[str] = None
+    
+    def record_failure(self, category: str, ttl_seconds: int = 60):
+        self.state = CircuitState.OPEN
+        self.opened_at = datetime.now(timezone.utc)
+        self.expires_at = self.opened_at + timedelta(seconds=ttl_seconds)
+        self.failure_count += 1
+        self.last_failure_category = category
+        
+    def is_allowed(self) -> bool:
+        if self.state == CircuitState.CLOSED:
+            return True
+        if self.state == CircuitState.OPEN:
+            if datetime.now(timezone.utc) > self.expires_at:
+                self.state = CircuitState.HALF_OPEN
+                return True
+            return False
+        if self.state == CircuitState.HALF_OPEN:
+            return True
+            
+    def record_success(self):
+        self.state = CircuitState.CLOSED
+        self.opened_at = None
+        self.expires_at = None
 
 class RoutingPolicy:
     max_models_per_stage = 2
@@ -16,109 +81,113 @@ class ModelRouter:
     def __init__(self, google_adapter: ProviderAdapter, n8n_adapter: ProviderAdapter = None):
         self.google_adapter = google_adapter
         self.n8n_adapter = n8n_adapter
-        self._circuit_broken_models = set()
+        self._provider_breakers: dict[str, CircuitBreaker] = {}
+        self._model_breakers: dict[str, CircuitBreaker] = {}
+        self.allow_direct_provider_fallback_after_n8n_failure = False
 
-    def _get_adapters(self):
+    def _get_provider_breaker(self, provider: str) -> CircuitBreaker:
+        if provider not in self._provider_breakers:
+            self._provider_breakers[provider] = CircuitBreaker()
+        return self._provider_breakers[provider]
+
+    def _get_model_breaker(self, provider: str, model: str) -> CircuitBreaker:
+        key = f"{provider}::{model}"
+        if key not in self._model_breakers:
+            self._model_breakers[key] = CircuitBreaker()
+        return self._model_breakers[key]
+        
+    def _record_success(self, provider: str, model: str):
+        self._get_provider_breaker(provider).record_success()
+        self._get_model_breaker(provider, model).record_success()
+
+    def _get_adapters(self) -> list[tuple[str, ProviderAdapter]]:
+        adapters = []
         if self.n8n_adapter:
-            return [self.n8n_adapter, self.google_adapter]
-        return [self.google_adapter]
+            adapters.append(("n8n", self.n8n_adapter))
+        adapters.append(("google", self.google_adapter))
+        return adapters
 
-    async def stream_generation(self, profile: ModelProfile, system_prompt: str, prompt: str, attempt_id: str) -> AsyncGenerator[tuple, None]:
+    async def stream_generation(self, profile: ModelProfile, system_prompt: str, prompt: str, run_id: str) -> AsyncGenerator[Any, None]:
         models = get_models_for_profile(profile)
         total_attempts = 0
+        models_tried = 0
         
         for model_def in models:
-            if model_def.model_id in self._circuit_broken_models:
-                continue
+            if models_tried >= RoutingPolicy.max_models_per_stage:
+                break
                 
-            retries = 0
-            while retries <= RoutingPolicy.max_retries_per_model and total_attempts < RoutingPolicy.max_total_attempts:
-                total_attempts += 1
-                successful_start = False
+            models_tried += 1
+            
+            for provider_name, adapter in self._get_adapters():
+                if not self._get_provider_breaker(provider_name).is_allowed():
+                    if provider_name == "n8n" and not self.allow_direct_provider_fallback_after_n8n_failure:
+                        yield RoutingExhausted("n8n provider circuit is open and bypass is disabled")
+                        return
+                    continue
+                    
+                if not self._get_model_breaker(provider_name, model_def.model_id).is_allowed():
+                    continue
                 
-                for adapter in self._get_adapters():
+                retries = 0
+                while retries <= RoutingPolicy.max_retries_per_model and total_attempts < RoutingPolicy.max_total_attempts:
+                    total_attempts += 1
+                    attempt_id = str(uuid.uuid4())
+                    successful_start = False
+                    
                     try:
                         stream_gen = adapter.stream(
                             model=model_def.model_id,
                             prompt=prompt,
                             system_instruction=system_prompt,
-                            attempt_id=attempt_id
+                            attempt_id=attempt_id,
+                            run_id=run_id,
+                            profile_name=profile.value
                         )
                         
                         first = True
                         async for chunk_type, chunk_text in stream_gen:
-                            successful_start = True
                             if first:
-                                yield ("model_selected", model_def.model_id)
+                                yield AttemptStarted(model_def.model_id, attempt_id, provider_name)
                                 first = False
-                            yield (chunk_type, chunk_text)
-                                
-                        return # Success!
+                                successful_start = True
+                            yield ContentChunk(chunk_text, attempt_id)
+                            
+                        self._record_success(provider_name, model_def.model_id)
+                        yield AttemptCompleted(attempt_id)
+                        return # fully successful
                         
                     except ModelExecutionError as exec_error:
+                        if exec_error.category in (ErrorCode.INVALID_REQUEST, ErrorCode.AUTHENTICATION, ErrorCode.CANCELLED):
+                            # Non-recoverable client error
+                            yield AttemptFailed(exec_error.sanitized_message, attempt_id)
+                            yield RoutingExhausted(f"Terminal error: {exec_error.category.value}")
+                            return
+                            
                         if successful_start:
-                            # Failed mid-stream. We cannot yield an error message as content.
-                            print(f"[WARN] Mid-stream failure for {model_def.model_id}: {exec_error}")
-                            raise StageFailedException(exec_error)
-                        
-                        print(f"[WARN] Adapter attempt failed for {model_def.model_id}: {exec_error}")
-                        
-                        if exec_error.code == ErrorCode.MODEL_NOT_FOUND:
-                            self._circuit_broken_models.add(model_def.model_id)
+                            yield AttemptResetRequired(exec_error.sanitized_message, attempt_id)
+                        else:
+                            yield AttemptFailed(exec_error.sanitized_message, attempt_id)
                             
-                        if adapter == self._get_adapters()[-1]:
-                            # Last adapter failed, apply router retry/fallback logic
-                            if exec_error.retryable:
+                        if exec_error.category == ErrorCode.MODEL_NOT_FOUND:
+                            self._get_model_breaker(provider_name, model_def.model_id).record_failure(exec_error.category.value)
+                            break # Move to next provider for this model or next model
+                        
+                        # Provider endpoint failures
+                        if exec_error.category in (ErrorCode.TIMEOUT, ErrorCode.SERVICE_UNAVAILABLE, ErrorCode.PROVIDER_PROTOCOL_ERROR, ErrorCode.RATE_LIMITED, ErrorCode.MODEL_MISMATCH):
+                            if exec_error.retryable and retries < RoutingPolicy.max_retries_per_model:
                                 retries += 1
                                 await asyncio.sleep(2 ** retries)
-                                break # Break adapter loop, continue while loop (retry)
+                                continue # retry same provider/model
                                 
-                            if exec_error.fallback_allowed:
-                                retries = float('inf') # Force break the while loop to move to next model
-                                break # Try next model
-                                
-                            # Terminal error
-                            raise exec_error
-
-        raise Exception("All eligible models in profile exhausted or failed.")
-
-    async def generate(self, profile: ModelProfile, system_prompt: str, prompt: str, attempt_id: str) -> tuple:
-        models = get_models_for_profile(profile)
-        total_attempts = 0
-        
-        for model_def in models:
-            if model_def.model_id in self._circuit_broken_models:
-                continue
-                
-            retries = 0
-            while retries <= RoutingPolicy.max_retries_per_model and total_attempts < RoutingPolicy.max_total_attempts:
-                total_attempts += 1
-                
-                for adapter in self._get_adapters():
-                    try:
-                        res = await adapter.generate(
-                            model=model_def.model_id,
-                            prompt=prompt,
-                            system_instruction=system_prompt,
-                            attempt_id=attempt_id
-                        )
-                        return res.actual_model, res.content
-                    except ModelExecutionError as exec_error:
-                        print(f"[WARN] Sync adapter attempt failed for {model_def.model_id}: {exec_error}")
-                        
-                        if exec_error.code == ErrorCode.MODEL_NOT_FOUND:
-                            self._circuit_broken_models.add(model_def.model_id)
+                            self._get_provider_breaker(provider_name).record_failure(exec_error.category.value)
                             
-                        if adapter == self._get_adapters()[-1]:
-                            if exec_error.retryable:
-                                retries += 1
-                                await asyncio.sleep(2 ** retries)
-                                break
-                                
-                            if exec_error.fallback_allowed:
-                                retries = float('inf')
-                                break
-                                
-                            raise exec_error
-        
-        raise Exception("All eligible models in profile exhausted or failed.")
+                            if provider_name == "n8n" and not self.allow_direct_provider_fallback_after_n8n_failure:
+                                yield RoutingExhausted("n8n provider failed and bypass is disabled")
+                                return
+                            
+                            break # Move to next provider
+                            
+        yield RoutingExhausted("All eligible models and providers exhausted or failed.")
+
+    async def generate(self, profile: ModelProfile, system_prompt: str, prompt: str, run_id: str) -> tuple:
+        raise NotImplementedError("Use stream_generation instead. Sync generate is deprecated.")

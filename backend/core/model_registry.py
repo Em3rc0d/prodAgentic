@@ -28,57 +28,90 @@ REGISTRY: Dict[ModelProfile, List[ModelDefinition]] = {
     ]
 }
 
+import asyncio
+from datetime import datetime, timezone, timedelta
+
 # Cache for available models
-_discoverable_models = set()
-_preflight_done = False
+class PreflightCache:
+    def __init__(self):
+        self.discoverable_models = set()
+        self.checked_at = None
+        self.expires_at = None
+        self.status_by_model = {}
+        self.last_error_category = None
+        self.is_valid = False
+        self._refresh_lock = asyncio.Lock()
+        self.ttl_seconds = 3600
+
+    async def refresh(self, client: genai.Client, force: bool = False):
+        if not force and self.is_valid and self.expires_at and datetime.now(timezone.utc) < self.expires_at:
+            return
+
+        async with self._refresh_lock:
+            if not force and self.is_valid and self.expires_at and datetime.now(timezone.utc) < self.expires_at:
+                return
+                
+            try:
+                new_models = set()
+                async with asyncio.timeout(10.0):
+                    pager = await client.aio.models.list()
+                    async for m in pager:
+                        name = getattr(m, 'name', '')
+                        base_id = getattr(m, 'base_model_id', '')
+                        
+                        if name: 
+                            new_models.add(name.replace("models/", ""))
+                        if base_id: 
+                            new_models.add(base_id.replace("models/", ""))
+                            
+                self.discoverable_models = new_models
+                self.checked_at = datetime.now(timezone.utc)
+                self.expires_at = self.checked_at + timedelta(seconds=self.ttl_seconds)
+                self.is_valid = True
+                self.last_error_category = None
+                print(f"[INFO] Preflight refresh complete. Discovered {len(self.discoverable_models)} models.")
+            except TimeoutError:
+                self.last_error_category = "TIMEOUT"
+                print("[WARN] Preflight refresh failed: Timeout")
+            except Exception as e:
+                self.last_error_category = str(e)
+                print(f"[WARN] Preflight refresh failed: {e}")
+
+_cache = PreflightCache()
 
 async def validate_available_models(client: genai.Client) -> None:
     """Preflight check to discover models available to this API key."""
-    global _discoverable_models, _preflight_done
-    try:
-        _discoverable_models = set()
-        
-        # Use sync generator since this runs once at startup
-        for m in client.models.list():
-            name = getattr(m, 'name', '')
-            base_id = getattr(m, 'base_model_id', '')
-            
-            if name: 
-                _discoverable_models.add(name.replace("models/", ""))
-            if base_id: 
-                _discoverable_models.add(base_id.replace("models/", ""))
-                
-        _preflight_done = True
-        print(f"[INFO] Preflight complete. Discovered {len(_discoverable_models)} models.")
-    except Exception as e:
-        print(f"[WARN] Preflight failed: {e}")
-        _preflight_done = False
+    await _cache.refresh(client, force=True)
 
 def get_profile_readiness() -> str:
     """Returns READY, DEGRADED, or NOT_READY based on preflight cache."""
-    if not _preflight_done:
+    if not _cache.is_valid:
         return "UNKNOWN"
     
     missing_profiles = 0
     degraded_profiles = 0
     
     for profile, definitions in REGISTRY.items():
-        available = [d for d in definitions if d.model_id in _discoverable_models]
+        available = [d for d in definitions if d.model_id in _cache.discoverable_models]
         if len(available) == 0:
             missing_profiles += 1
         elif len(available) < len(definitions):
             degraded_profiles += 1
             
+    is_stale = _cache.expires_at and datetime.now(timezone.utc) > _cache.expires_at
+    
     if missing_profiles > 0:
-        return "NOT_READY"
+        return "NOT_READY_WITH_STALE_CACHE" if is_stale else "NOT_READY"
     if degraded_profiles > 0:
-        return "DEGRADED"
-    return "READY"
+        return "DEGRADED_WITH_STALE_CACHE" if is_stale else "DEGRADED"
+    
+    return "READY_WITH_STALE_CACHE" if is_stale else "READY"
 
 def get_models_for_profile(profile: ModelProfile) -> List[ModelDefinition]:
     """Returns the list of models for a given profile, prioritizing those that are discoverable."""
     definitions = REGISTRY.get(profile, [])
-    if not _preflight_done:
+    if not _cache.is_valid:
         return definitions # Return all if preflight failed/skipped
     
-    return [d for d in definitions if d.model_id in _discoverable_models]
+    return [d for d in definitions if d.model_id in _cache.discoverable_models]
+

@@ -34,8 +34,12 @@ No commentary, no "here's the edited version:", no explanation. Just the post.""
 from core.model_registry import ModelProfile
 
 class EditorAgent(BaseAgent):
-    def __init__(self):
-        super().__init__(SYSTEM_PROMPT, ModelProfile.QUALITY_TEXT)
+    def __init__(self, router):
+        super().__init__(
+            system_prompt=SYSTEM_PROMPT,
+            profile=ModelProfile.QUALITY_TEXT,
+            router=router
+        )
 
     async def stream(self, draft: str, attempt_id: str = None) -> AsyncGenerator[tuple, None]:
         prompt = f"""Edit and elevate this LinkedIn post to publication quality:

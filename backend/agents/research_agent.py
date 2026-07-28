@@ -30,8 +30,12 @@ Output format (use this exact structure):
 from core.model_registry import ModelProfile
 
 class ResearchAgent(BaseAgent):
-    def __init__(self):
-        super().__init__(SYSTEM_PROMPT, ModelProfile.QUALITY_TEXT)
+    def __init__(self, router):
+        super().__init__(
+            system_prompt=SYSTEM_PROMPT,
+            profile=ModelProfile.QUALITY_TEXT,
+            router=router
+        )
 
     async def stream(self, idea: str, attempt_id: str = None) -> AsyncGenerator[tuple, None]:
         prompt = f"Research this LinkedIn post idea deeply and practically:\n\n**Idea:** {idea}"

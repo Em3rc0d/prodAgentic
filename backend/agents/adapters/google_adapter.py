@@ -10,49 +10,104 @@ class GoogleDirectAdapter(ProviderAdapter):
         self.client = client
         self.async_client = client.aio
 
-    def _translate_error(self, e: Exception) -> ModelExecutionError:
+    def _translate_error(self, e: Exception, model_id: str, attempt_id: str) -> ModelExecutionError:
+        code = getattr(e, 'code', 500) if isinstance(e, APIError) else None
+        message = str(e).lower()
+        http_status = code
+        provider_error_code = getattr(e, 'status', None) if isinstance(e, APIError) else None
+        
+        category = ErrorCode.UNKNOWN
+        retryable = False
+        fallback_allowed = False
+        
         if isinstance(e, APIError):
-            code = getattr(e, 'code', 500)
-            message = str(e).lower()
-            
             if code in (400, 401, 403):
                 if code == 400 and "invalid" in message:
-                    return ModelExecutionError(ErrorCode.INVALID_REQUEST, str(e), False, False, e)
-                return ModelExecutionError(ErrorCode.AUTHENTICATION, str(e), False, False, e)
+                    category = ErrorCode.INVALID_REQUEST
+                else:
+                    category = ErrorCode.AUTHENTICATION
             elif code == 404:
-                return ModelExecutionError(ErrorCode.MODEL_NOT_FOUND, str(e), False, True, e)
+                category = ErrorCode.MODEL_NOT_FOUND
+                fallback_allowed = True
             elif code == 429:
                 if "quota" in message:
-                    return ModelExecutionError(ErrorCode.QUOTA_EXHAUSTED, str(e), False, False, e)
-                return ModelExecutionError(ErrorCode.RATE_LIMITED, str(e), True, False, e)
+                    category = ErrorCode.QUOTA_EXHAUSTED
+                else:
+                    category = ErrorCode.RATE_LIMITED
+                    retryable = True
             elif code == 503 or code == 500:
-                return ModelExecutionError(ErrorCode.SERVICE_UNAVAILABLE, str(e), True, True, e)
+                category = ErrorCode.SERVICE_UNAVAILABLE
+                retryable = True
+                fallback_allowed = True
             elif code == 504:
-                return ModelExecutionError(ErrorCode.TIMEOUT, str(e), True, True, e)
-        
-        # Fallback for unknown errors
-        if "timeout" in str(e).lower():
-            return ModelExecutionError(ErrorCode.TIMEOUT, str(e), True, True, e)
-        
-        return ModelExecutionError(ErrorCode.UNKNOWN, str(e), False, False, e)
+                category = ErrorCode.TIMEOUT
+                retryable = True
+                fallback_allowed = True
+        elif "timeout" in str(e).lower():
+            category = ErrorCode.TIMEOUT
+            retryable = True
+            fallback_allowed = True
+            
+        sanitized_message = f"Google API Error: {category.value}"
+
+        return ModelExecutionError(
+            category=category,
+            provider="google",
+            model_id=model_id,
+            attempt_id=attempt_id,
+            http_status=http_status,
+            provider_error_code=str(provider_error_code) if provider_error_code else None,
+            retryable=retryable,
+            fallback_allowed=fallback_allowed,
+            sanitized_message=sanitized_message,
+            original_exception=e
+        )
 
     async def generate(self, model: str, prompt: str, **kwargs) -> ModelExecutionResult:
+        attempt_id = kwargs.get("attempt_id", "default")
+        profile = kwargs.get("profile_name", "UNKNOWN")
+        system_instruction = kwargs.get("system_instruction")
+        
+        config = None
+        if system_instruction:
+            from google.genai import types
+            config = types.GenerateContentConfig(system_instruction=system_instruction)
+
         try:
-            # Base generation
             response = await self.async_client.models.generate_content(
                 model=model,
-                contents=prompt
+                contents=prompt,
+                config=config
             )
             text = response.text if hasattr(response, 'text') else ""
-            return ModelExecutionResult(actual_model=model, content=text, raw_response=response)
+            
+            return ModelExecutionResult(
+                provider="google",
+                requested_model=model,
+                actual_model=model,
+                model_profile=profile,
+                attempt_id=attempt_id,
+                content=text,
+                finish_reason="STOP",
+                raw_response=response
+            )
         except Exception as e:
-            raise self._translate_error(e) from e
+            raise self._translate_error(e, model, attempt_id) from e
 
     async def stream(self, model: str, prompt: str, **kwargs) -> AsyncGenerator[tuple, None]:
+        attempt_id = kwargs.get("attempt_id", "default")
+        system_instruction = kwargs.get("system_instruction")
+        
+        config = None
+        if system_instruction:
+            from google.genai import types
+            config = types.GenerateContentConfig(system_instruction=system_instruction)
+
         try:
             response = await self.async_client.models.generate_content_stream(
                 model=model,
-                contents=prompt
+                contents=prompt,
+                config=config
             )
             
             async for chunk in response:
@@ -60,4 +115,4 @@ class GoogleDirectAdapter(ProviderAdapter):
                 if text:
                     yield ("chunk", text)
         except Exception as e:
-            raise self._translate_error(e) from e
+            raise self._translate_error(e, model, attempt_id) from e

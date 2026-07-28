@@ -17,21 +17,47 @@ class ErrorCode(str, Enum):
 
 @dataclass
 class ModelExecutionResult:
+    provider: str
+    requested_model: str
     actual_model: str
+    model_profile: str
+    attempt_id: str
     content: str
+    finish_reason: str = "UNKNOWN"
+    usage: Optional[dict] = None
+    latency_ms: Optional[int] = None
+    provider_request_id: Optional[str] = None
+    warnings: Optional[list] = None
     raw_response: Optional[Any] = None
 
 class ModelExecutionError(Exception):
-    def __init__(self, code: ErrorCode, message: str, retryable: bool, fallback_allowed: bool, original_exception: Optional[Exception] = None):
-        super().__init__(message)
-        self.code = code
-        self.message = message
+    def __init__(
+        self, 
+        category: ErrorCode, 
+        provider: str,
+        model_id: str,
+        attempt_id: str,
+        http_status: Optional[int],
+        provider_error_code: Optional[str],
+        retryable: bool, 
+        fallback_allowed: bool, 
+        sanitized_message: str,
+        original_exception: Optional[Exception] = None
+    ):
+        super().__init__(sanitized_message)
+        self.category = category
+        self.provider = provider
+        self.model_id = model_id
+        self.attempt_id = attempt_id
+        self.http_status = http_status
+        self.provider_error_code = provider_error_code
         self.retryable = retryable
         self.fallback_allowed = fallback_allowed
+        self.sanitized_message = sanitized_message
         self.original_exception = original_exception
 
     def __str__(self):
-        return f"[{self.code.value}] {self.message}"
+        return f"[{self.category.value}] {self.sanitized_message} (Provider: {self.provider}, Model: {self.model_id})"
 
 class ProviderAdapter:
     async def generate(self, model: str, prompt: str, **kwargs) -> ModelExecutionResult:

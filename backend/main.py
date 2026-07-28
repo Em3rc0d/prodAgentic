@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from db.mongo import connect_db, close_db
 from routes.pipeline import router as pipeline_router
@@ -7,18 +7,22 @@ from routes.posts import router as posts_router
 from dotenv import load_dotenv
 import asyncio
 from core.model_registry import validate_available_models, get_profile_readiness
-from agents.base_agent import client
+from core.container import ApplicationContainer
 import json
 
 load_dotenv()
 
+container = ApplicationContainer()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: connect to MongoDB. Shutdown: close connection."""
     await connect_db()
-    asyncio.create_task(validate_available_models(client))
+    container.startup()
+    app.state.container = container
+    asyncio.create_task(validate_available_models(container.client))
     yield
+    await container.shutdown()
     await close_db()
 
 
