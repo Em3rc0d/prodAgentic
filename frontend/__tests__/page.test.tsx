@@ -77,12 +77,21 @@ describe('Page Component', () => {
     
     // Fail stage
     act(() => {
-      mockEventSourceInstance.onmessage({ data: JSON.stringify({ stage: "stage.failed", stage_name: "research" }) })
+      mockEventSourceInstance.onmessage({ data: JSON.stringify({ stage: "stage.failed", stage_name: "research", reason: "First error" }) })
     })
     
     // Active attempt should be cleared, check by seeing if EventSource was closed
     expect(mockEventSourceInstance.close).toHaveBeenCalled()
     // Exits pipeline_running mode
     expect(screen.queryByText('💡 "Idea 1"')).not.toBeInTheDocument()
+    
+    // Send late chunk for old attempt
+    act(() => {
+      mockEventSourceInstance.onmessage({ data: JSON.stringify({ stage: "research", action: "content_chunk", attempt_id: "att-1", event_sequence: 1, content: "Late content" }) })
+    })
+    
+    // The late chunk should not render
+    expect(screen.queryByText(/Late content/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/First error/i)).toBeInTheDocument()
   })
 })

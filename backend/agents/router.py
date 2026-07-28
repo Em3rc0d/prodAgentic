@@ -85,7 +85,7 @@ class CircuitBreaker:
 class RoutingPolicy:
     max_models_per_stage: int = 2
     max_retries_per_model: int = 1
-    max_total_attempts: int = 4
+    max_total_attempts: int = 5
     allow_direct_provider_fallback_after_n8n_failure: bool = False
 
 class ModelRouter:
@@ -115,10 +115,15 @@ class ModelRouter:
         adapters = []
         if self.n8n_adapter:
             adapters.append(("n8n", self.n8n_adapter))
-        adapters.append(("google", self.google_adapter))
+        if self.google_adapter:
+            adapters.append(("google", self.google_adapter))
         return adapters
 
     async def stream_generation(self, profile: ModelProfile, system_prompt: str, prompt: str, run_id: str) -> AsyncGenerator[Any, None]:
+        if not self._get_adapters():
+            yield RoutingExhausted("No viable provider adapters available.")
+            return
+
         models = get_models_for_profile(profile)
         total_attempts = 0
         models_tried = 0
@@ -195,10 +200,11 @@ class ModelRouter:
                                 
                             self._get_model_breaker(provider_name, model_def.model_id).record_failure(exec_error.category.value)
                             
-                            if provider_name == "n8n" and not self.policy.allow_direct_provider_fallback_after_n8n_failure:
+                            if provider_name == "n8n":
                                 self._get_provider_breaker(provider_name).record_failure(exec_error.category.value)
-                                yield RoutingExhausted("n8n provider failed and bypass is disabled")
-                                return
+                                if not self.policy.allow_direct_provider_fallback_after_n8n_failure:
+                                    yield RoutingExhausted("n8n provider failed and bypass is disabled")
+                                    return
                             
                             break # Move to next provider
                             

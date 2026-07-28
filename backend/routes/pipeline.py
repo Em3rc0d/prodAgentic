@@ -1,17 +1,19 @@
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from models.post import IdeasRequest
+from agents.idea_generator import GenerationIdeasFailed
+
+def get_ready_pipeline_service(request: Request):
+    pipeline = request.app.state.container.pipeline_service
+    if not request.app.state.container.router._get_adapters():
+        raise HTTPException(status_code=503, detail="No viable provider adapters available.")
+    return pipeline
 
 router = APIRouter(tags=["pipeline"])
 
-
-from agents.idea_generator import GenerationIdeasFailed
-from fastapi import HTTPException
-
 @router.post("/ideas")
-async def get_ideas(request: Request, req: IdeasRequest):
+async def get_ideas(req: IdeasRequest, pipeline = Depends(get_ready_pipeline_service)):
     """Generate 7 LinkedIn post ideas for a given topic and style."""
-    pipeline = request.app.state.container.pipeline_service
     try:
         ideas = await pipeline.generate_ideas(req.topic, req.style)
         return {"ideas": ideas, "topic": req.topic, "style": req.style}
@@ -28,16 +30,15 @@ async def get_ideas(request: Request, req: IdeasRequest):
 
 @router.get("/pipeline/stream")
 async def pipeline_stream(
-    request: Request,
     idea: str = Query(..., description="The selected idea to expand"),
     topic: str = Query(..., description="Original topic"),
     style: str = Query("educational", description="Post style: educational | storytelling | controversial"),
+    pipeline = Depends(get_ready_pipeline_service)
 ):
     """
     SSE endpoint that streams the full Research → Write → Edit pipeline.
     Connect with EventSource on the frontend.
     """
-    pipeline = request.app.state.container.pipeline_service
     
     async def event_generator():
         async for event in pipeline.run_pipeline_stream(idea, topic, style):

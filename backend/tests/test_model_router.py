@@ -92,23 +92,23 @@ async def test_google_503_uses_fallback_model():
     google = MockAdapter("google")
     n8n = MockAdapter("n8n")
     from agents.router import RoutingPolicy
-    policy = RoutingPolicy(allow_direct_provider_fallback_after_n8n_failure=True, max_total_attempts=5)
+    # Use production policy with max_total_attempts=4 but enable bypass
+    policy = RoutingPolicy(allow_direct_provider_fallback_after_n8n_failure=True)
     router = ModelRouter(google, n8n, routing_policy=policy)
     
     class FailOnceGoogle(MockAdapter):
         async def stream(self, model: str, prompt: str, **kwargs):
             if model == "gemini-3.6-flash":
                 raise ModelExecutionError(
-                    ErrorCode.SERVICE_UNAVAILABLE, "google", model, "attempt-1", 503, None, False, False, "Unavailable"
+                    ErrorCode.SERVICE_UNAVAILABLE, "google", model, "attempt-1", 503, None, True, False, "Unavailable"
                 )
             yield ("chunk", f"hello from {model}")
 
     class FailN8n(MockAdapter):
         async def stream(self, model: str, prompt: str, **kwargs):
             raise ModelExecutionError(
-                ErrorCode.SERVICE_UNAVAILABLE, "n8n", model, "attempt-n8n", 503, None, False, False, "Unavailable"
+                ErrorCode.SERVICE_UNAVAILABLE, "n8n", model, "attempt-n8n", 503, None, True, False, "Unavailable"
             )
-            yield
             yield
 
     router.google_adapter = FailOnceGoogle("google")
@@ -116,6 +116,7 @@ async def test_google_503_uses_fallback_model():
 
     events = [evt async for evt in router.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
     
+    assert router._get_provider_breaker("n8n").state == CircuitState.OPEN
     assert router._get_model_breaker("google", "gemini-3.6-flash").state == CircuitState.OPEN
     
     fallback_started = next((e for e in events if isinstance(e, AttemptStarted) and e.model_id == "gemini-3.5-flash" and e.provider == "google"), None)
@@ -129,7 +130,7 @@ async def test_google_midstream_failure_resets_and_switches_model():
     google = MockAdapter("google")
     n8n = MockAdapter("n8n")
     from agents.router import RoutingPolicy
-    policy = RoutingPolicy(allow_direct_provider_fallback_after_n8n_failure=True, max_total_attempts=5)
+    policy = RoutingPolicy(allow_direct_provider_fallback_after_n8n_failure=True)
     router = ModelRouter(google, n8n, routing_policy=policy)
     
     class MidstreamFailGoogle(MockAdapter):
@@ -137,16 +138,15 @@ async def test_google_midstream_failure_resets_and_switches_model():
             if model == "gemini-3.6-flash":
                 yield ("chunk", "First part of the stream")
                 raise ModelExecutionError(
-                    ErrorCode.SERVICE_UNAVAILABLE, "google", model, "attempt-1", 503, None, False, False, "Failed halfway"
+                    ErrorCode.SERVICE_UNAVAILABLE, "google", model, "attempt-1", 503, None, True, False, "Failed halfway"
                 )
             yield ("chunk", f"hello from {model}")
 
     class FailN8n(MockAdapter):
         async def stream(self, model: str, prompt: str, **kwargs):
             raise ModelExecutionError(
-                ErrorCode.SERVICE_UNAVAILABLE, "n8n", model, "attempt-n8n", 503, None, False, False, "Unavailable"
+                ErrorCode.SERVICE_UNAVAILABLE, "n8n", model, "attempt-n8n", 503, None, True, False, "Unavailable"
             )
-            yield
             yield
 
     router.google_adapter = MidstreamFailGoogle("google")
@@ -154,6 +154,7 @@ async def test_google_midstream_failure_resets_and_switches_model():
 
     events = [evt async for evt in router.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
     
+    assert router._get_provider_breaker("n8n").state == CircuitState.OPEN
     assert any(isinstance(evt, AttemptResetRequired) for evt in events)
     assert router._get_model_breaker("google", "gemini-3.6-flash").state == CircuitState.OPEN
     
@@ -162,3 +163,21 @@ async def test_google_midstream_failure_resets_and_switches_model():
     
     assert any(isinstance(e, AttemptCompleted) and e.attempt_id == fallback_started.attempt_id for e in events)
     assert not any(isinstance(e, RoutingExhausted) for e in events)
+
+@pytest.mark.asyncio
+async def test_router_never_calls_none_adapter():
+    google = MockAdapter("google")
+    from agents.router import RoutingPolicy
+    router = ModelRouter(google, None, routing_policy=RoutingPolicy())
+    
+    adapters = dict(router._get_adapters())
+    assert "n8n" not in adapters
+    assert "google" in adapters
+    
+    router2 = ModelRouter(None, None, routing_policy=RoutingPolicy())
+    assert not router2._get_adapters()
+    
+    events = [evt async for evt in router2.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
+    assert len(events) == 1
+    assert isinstance(events[0], RoutingExhausted)
+    assert "No viable provider" in events[0].reason
