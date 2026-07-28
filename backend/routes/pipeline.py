@@ -5,12 +5,24 @@ from models.post import IdeasRequest
 router = APIRouter(tags=["pipeline"])
 
 
+from agents.idea_generator import GenerationIdeasFailed
+from fastapi import HTTPException
+
 @router.post("/ideas")
 async def get_ideas(request: Request, req: IdeasRequest):
     """Generate 7 LinkedIn post ideas for a given topic and style."""
     pipeline = request.app.state.container.pipeline_service
-    ideas = await pipeline.generate_ideas(req.topic, req.style)
-    return {"ideas": ideas, "topic": req.topic, "style": req.style}
+    try:
+        ideas = await pipeline.generate_ideas(req.topic, req.style)
+        return {"ideas": ideas, "topic": req.topic, "style": req.style}
+    except GenerationIdeasFailed:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "IDEA_GENERATION_FAILED",
+                "message": "The model routing policy could not produce seven valid ideas."
+            }
+        )
 
 
 @router.get("/pipeline/stream")

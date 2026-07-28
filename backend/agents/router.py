@@ -192,9 +192,10 @@ class ModelRouter:
                                 await asyncio.sleep(2 ** retries)
                                 continue # retry same provider/model
                                 
-                            self._get_provider_breaker(provider_name).record_failure(exec_error.category.value)
+                            self._get_model_breaker(provider_name, model_def.model_id).record_failure(exec_error.category.value)
                             
                             if provider_name == "n8n" and not RoutingPolicy.allow_direct_provider_fallback_after_n8n_failure:
+                                self._get_provider_breaker(provider_name).record_failure(exec_error.category.value)
                                 yield RoutingExhausted("n8n provider failed and bypass is disabled")
                                 return
                             

@@ -157,7 +157,11 @@ export default function Home() {
             const rawStage = msg.stage_name;
             if (rawStage && rawStage !== "unknown") {
                 setStageStatus((prev) => ({ ...prev, [rawStage as StageKey]: "failed" }));
+                activeAttemptByStage.current[rawStage as StageKey] = null;
             }
+            setCurrentStage(null);
+            setMode("ideas_ready");
+            setFinalPost("");
             setError(msg.reason || "Pipeline encountered a terminal error");
             es.close();
           } else if (msg.stage === "complete") {

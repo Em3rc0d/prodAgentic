@@ -19,12 +19,15 @@ class ApplicationContainer:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             logging.error("GEMINI_API_KEY not found in environment!")
-            
-        self.client = genai.Client(api_key=api_key)
-        self.google_adapter = GoogleDirectAdapter(self.client)
+            self.client = None
+            self.google_adapter = None
+        else:
+            self.client = genai.Client(api_key=api_key)
+            self.google_adapter = GoogleDirectAdapter(self.client)
         
         from agents.router import RoutingPolicy
-        RoutingPolicy.allow_direct_provider_fallback_after_n8n_failure = os.getenv("N8N_ALLOW_DIRECT_FALLBACK", "false").lower() == "true"
+        n8n_fallback = str(os.getenv("N8N_ALLOW_DIRECT_FALLBACK", "false")).lower()
+        RoutingPolicy.allow_direct_provider_fallback_after_n8n_failure = n8n_fallback in ("true", "1")
         
         n8n_webhook_url = os.getenv("N8N_WEBHOOK_URL")
         if n8n_webhook_url and "your-domain" not in n8n_webhook_url:
@@ -38,6 +41,12 @@ class ApplicationContainer:
     async def shutdown(self):
         if self.client:
             if hasattr(self.client, 'aio') and hasattr(self.client.aio, 'aclose'):
-                await self.client.aio.aclose()
-            elif hasattr(self.client, 'close'):
-                self.client.close()
+                try:
+                    await self.client.aio.aclose()
+                except Exception:
+                    pass
+            if hasattr(self.client, 'close'):
+                try:
+                    self.client.close()
+                except Exception:
+                    pass

@@ -12,18 +12,27 @@ import json
 
 load_dotenv()
 
-container = ApplicationContainer()
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: connect to MongoDB. Shutdown: close connection."""
     await connect_db()
+    
+    container = ApplicationContainer()
     container.startup()
     app.state.container = container
-    container.preflight_task = asyncio.create_task(validate_available_models(container.client))
+    
+    if container.client:
+        container.preflight_task = asyncio.create_task(validate_available_models(container.client))
+        
     yield
-    if container.preflight_task and not container.preflight_task.done():
+    
+    if getattr(container, 'preflight_task', None) and not container.preflight_task.done():
         container.preflight_task.cancel()
+        try:
+            await container.preflight_task
+        except asyncio.CancelledError:
+            pass
+            
     await container.shutdown()
     await close_db()
 
@@ -62,7 +71,12 @@ def health_live():
 
 
 @app.get("/health/ready")
-def health_ready():
+def health_ready(request: Request):
+    container = getattr(request.app.state, "container", None)
+    if not container or not container.client:
+        from fastapi import Response
+        return Response(content=json.dumps({"status": "NOT_READY", "message": "Missing API Key"}), media_type="application/json", status_code=503)
+        
     status = get_profile_readiness()
     if status in ("READY", "READY_WITH_STALE_CACHE"):
         return {"status": status}

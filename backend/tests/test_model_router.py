@@ -86,3 +86,56 @@ async def test_circuit_breaker_half_open():
     
     # Second probe should be rejected
     assert cb.is_allowed() is False
+
+@pytest.mark.asyncio
+async def test_google_503_uses_fallback_model():
+    google = MockAdapter("google")
+    n8n = MockAdapter("n8n")
+    router = ModelRouter(google, n8n)
+    
+    class FailOnceGoogle(MockAdapter):
+        async def stream(self, model: str, prompt: str, **kwargs):
+            if model == "gemini-3.6-flash":
+                raise ModelExecutionError(
+                    ErrorCode.SERVICE_UNAVAILABLE, "google", model, "attempt-1", 503, None, False, False, "Unavailable"
+                )
+            yield ("chunk", f"hello from {model}")
+
+    router.google_adapter = FailOnceGoogle("google")
+    n8n.should_fail = True
+    n8n.fail_error = ModelExecutionError(
+        ErrorCode.MODEL_NOT_FOUND, "n8n", "gemini-3.6-flash", "attempt-0", 404, None, False, True, "Not found"
+    )
+
+    events = [evt async for evt in router.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
+    
+    assert router._get_model_breaker("google", "gemini-3.6-flash").state == CircuitState.OPEN
+    assert any(isinstance(evt, AttemptStarted) and evt.model_id == "gemini-3.5-flash" for evt in events)
+
+@pytest.mark.asyncio
+async def test_google_midstream_failure_resets_and_switches_model():
+    google = MockAdapter("google")
+    n8n = MockAdapter("n8n")
+    router = ModelRouter(google, n8n)
+    
+    class MidstreamFailGoogle(MockAdapter):
+        async def stream(self, model: str, prompt: str, **kwargs):
+            if model == "gemini-3.6-flash":
+                yield ("chunk", "First part of the stream")
+                raise ModelExecutionError(
+                    ErrorCode.SERVICE_UNAVAILABLE, "google", model, "attempt-1", 503, None, False, False, "Failed halfway"
+                )
+            yield ("chunk", f"hello from {model}")
+
+    router.google_adapter = MidstreamFailGoogle("google")
+    n8n.should_fail = True
+    n8n.fail_error = ModelExecutionError(
+        ErrorCode.MODEL_NOT_FOUND, "n8n", "gemini-3.6-flash", "attempt-0", 404, None, False, True, "Not found"
+    )
+
+    events = [evt async for evt in router.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
+    
+    # Ensure it emitted AttemptResetRequired for the first attempt
+    assert any(isinstance(evt, AttemptResetRequired) for evt in events)
+    assert router._get_model_breaker("google", "gemini-3.6-flash").state == CircuitState.OPEN
+    assert any(isinstance(evt, AttemptStarted) and evt.model_id == "gemini-3.5-flash" for evt in events)
