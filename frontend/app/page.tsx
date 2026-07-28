@@ -55,6 +55,11 @@ export default function Home() {
     write: "",
     edit: "",
   });
+  const [stageModels, setStageModels] = useState<Record<StageKey, string | null>>({
+    research: null,
+    write: null,
+    edit: null,
+  });
   const [currentStage, setCurrentStage] = useState<StageKey | null>(null);
   const [finalPost, setFinalPost] = useState("");
   const [copied, setCopied] = useState(false);
@@ -97,10 +102,16 @@ export default function Home() {
         try {
           const msg = JSON.parse(e.data);
 
-          if (msg.stage === "stage_start") {
+          if (msg.stage === "stage_start" || msg.stage === "stage_attempt_started") {
             const sKey = msg.stage_name as StageKey;
             setCurrentStage(sKey);
             setStageStatus((prev) => ({ ...prev, [sKey]: "running" }));
+            if (msg.selected_model) {
+              setStageModels((prev) => ({ ...prev, [sKey]: msg.selected_model }));
+            }
+          } else if (msg.stage === "stage_attempt_reset") {
+            const sKey = msg.stage_name as StageKey;
+            setStageOutputs((prev) => ({ ...prev, [sKey]: "" }));
           } else if (msg.stage === "chunk") {
             const sKey = msg.stage_name as StageKey;
             setStageOutputs((prev) => ({
@@ -136,6 +147,7 @@ export default function Home() {
   function resetPipeline() {
     setStageStatus({ research: "pending", write: "pending", edit: "pending" });
     setStageOutputs({ research: "", write: "", edit: "" });
+    setStageModels({ research: null, write: null, edit: null });
     setCurrentStage(null);
     setFinalPost("");
   }
@@ -175,7 +187,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div className="header-model-badge">
             <div className="model-dot" />
-            gemini-2.0-flash
+            Gemini Model Router
           </div>
           {mode !== "idle" && (
             <button
@@ -378,7 +390,7 @@ export default function Home() {
               write your next viral LinkedIn post — in real time.
             </p>
             <p className="hero-tip">
-              Powered by Gemini 2.0 Flash · Research → Write → Edit pipeline
+              Dynamic Model Router · Research → Write → Edit pipeline
             </p>
           </div>
         )}
@@ -478,6 +490,11 @@ export default function Home() {
                       )}
                       {status === "done" && (
                         <span className="stage-status-badge done">✓ done</span>
+                      )}
+                      {stageModels[s.key] && (
+                        <span style={{ marginLeft: 8, fontSize: 11, color: "var(--text-3)", verticalAlign: "middle" }}>
+                          · {stageModels[s.key]}
+                        </span>
                       )}
                     </div>
                     <div

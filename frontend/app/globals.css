@@ -876,3 +876,65 @@ body::after {
   background: var(--border);
   margin: 4px 0;
 }
+
+/* ─── Responsive Overrides ─────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .app-shell {
+    grid-template-columns: 240px 1fr;
+  }
+  .preview-panel {
+    display: none; /* Hide preview on tablet for simplicity or move it to bottom */
+  }
+}
+
+@media (max-width: 768px) {
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow-y: auto;
+  }
+  
+  .app-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 16px;
+    max-height: none;
+  }
+  
+  .main-content {
+    overflow-y: visible;
+    padding: 16px;
+  }
+  
+  .ideas-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .stream-stage-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  
+  .stage-status-badge {
+    white-space: nowrap;
+  }
+  
+  /* Wrap long model names */
+  .stream-stage-header span {
+    word-break: break-all;
+  }
+  
+  .preview-panel {
+    display: flex;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+}

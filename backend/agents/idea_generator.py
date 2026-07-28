@@ -21,31 +21,37 @@ Output ONLY a valid JSON array of exactly 7 strings. No markdown, no explanation
 Example format: ["idea 1", "idea 2", "idea 3", "idea 4", "idea 5", "idea 6", "idea 7"]"""
 
 
+from core.model_registry import ModelProfile
+
 class IdeaGeneratorAgent(BaseAgent):
     def __init__(self):
-        super().__init__(SYSTEM_PROMPT)
+        super().__init__(SYSTEM_PROMPT, ModelProfile.ECONOMY_TEXT)
 
-    def generate_ideas(self, topic: str, style: str) -> list[str]:
+    async def generate_ideas(self, topic: str, style: str) -> list[str]:
         prompt = (
-            f"Generate 7 viral LinkedIn post ideas about: {topic}\n"
-            f"Writing style preference: {style}\n\n"
-            f"Return ONLY the JSON array of 7 strings."
+            f"Generate exactly 7 distinct LinkedIn post ideas for the topic: '{topic}'.\n"
+            f"The style should be: {style}.\n\n"
+            "Respond ONLY with a valid JSON array of strings."
         )
-        raw = self.generate(prompt)
-
-        # Robust JSON extraction
         try:
-            import json
+            import uuid
+            attempt_id = str(uuid.uuid4())
+            actual_model, text = await self.generate(prompt, attempt_id)
             import re
-            match = re.search(r"\[.*?\]", raw, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-            return json.loads(raw.strip())
-        except Exception:
-            # Fallback: parse line by line
-            lines = [
-                l.strip().strip('"').strip("'").strip("- ").strip()
-                for l in raw.split("\n")
-                if l.strip()
-            ]
-            return [l for l in lines if len(l) > 15][:7]
+            cleaned_text = re.sub(r"```json\n|\n```|```", "", text).strip()
+            
+            import json
+            ideas = json.loads(cleaned_text)
+            if isinstance(ideas, list):
+                return ideas
+            else:
+                return [cleaned_text]
+        except Exception as e:
+            print(f"[WARN] Idea generation failed: {e}")
+            return [
+                "1. Focus on core architectural decisions and their trade-offs.",
+                "2. Share a specific failure story and the technical lessons learned.",
+                "3. Explain a complex system component using simple analogies.",
+                "4. Compare two competing technologies objectively.",
+                "5. Write a mini-case study of an optimization that improved performance."
+            ][:7]

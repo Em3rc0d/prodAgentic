@@ -31,18 +31,15 @@ Output: The final, polished post ONLY, including the image prompt at the bottom.
 No commentary, no "here's the edited version:", no explanation. Just the post."""
 
 
+from core.model_registry import ModelProfile
+
 class EditorAgent(BaseAgent):
     def __init__(self):
-        super().__init__(SYSTEM_PROMPT)
+        super().__init__(SYSTEM_PROMPT, ModelProfile.QUALITY_TEXT)
 
-    async def stream(self, draft: str) -> AsyncGenerator[str, None]:
+    async def stream(self, draft: str, attempt_id: str = None) -> AsyncGenerator[tuple, None]:
         prompt = f"""Edit and elevate this LinkedIn post to publication quality:
 
----
-{draft}
----
-
-Apply all editing rules. Output the final post only."""
-
-        async for chunk in super().stream(prompt):
-            yield chunk
+{draft}"""
+        async for event in super().stream(prompt, attempt_id):
+            yield event

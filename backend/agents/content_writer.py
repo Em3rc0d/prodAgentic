@@ -27,27 +27,25 @@ Hard Constraints:
 - No repetition of ideas across sections"""
 
 
+from core.model_registry import ModelProfile
+
 class ContentWriterAgent(BaseAgent):
     def __init__(self):
-        super().__init__(SYSTEM_PROMPT)
+        super().__init__(SYSTEM_PROMPT, ModelProfile.ECONOMY_TEXT)
 
-    async def stream(self, idea: str, research: str, style: str) -> AsyncGenerator[str, None]:
+    async def stream(self, idea: str, research: str, style: str, attempt_id: str = None) -> AsyncGenerator[tuple, None]:
         style_map = {
-            "educational": "educational and clear — teach something valuable",
-            "storytelling": "storytelling — open with a personal experience or failure",
-            "controversial": "controversial and opinionated — take a strong stance",
+            "story": "Use a narrative structure. Start with a hook, build tension, end with a takeaway.",
+            "listicle": "Use bullet points or numbered lists. Be highly actionable.",
+            "opinion": "Take a strong stance on an industry topic. Defend it with facts from the research."
         }
-        style_description = style_map.get(style, style)
+        style_prompt = style_map.get(style, "Write in a professional but engaging tone.")
 
-        prompt = f"""Write a LinkedIn post for this idea:
+        prompt = f"""Write a LinkedIn post.
 
-**Idea:** {idea}
-**Style:** {style_description}
-
-**Research to draw from:**
-{research}
-
-Write the complete post now. Follow the structure precisely."""
-
-        async for chunk in super().stream(prompt):
-            yield chunk
+Idea: {idea}
+Research context: {research}
+Style constraint: {style_prompt}"""
+        
+        async for event in super().stream(prompt, attempt_id):
+            yield event

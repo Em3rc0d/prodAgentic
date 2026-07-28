@@ -5,6 +5,10 @@ from db.mongo import connect_db, close_db
 from routes.pipeline import router as pipeline_router
 from routes.posts import router as posts_router
 from dotenv import load_dotenv
+import asyncio
+from core.model_registry import validate_available_models, get_profile_readiness
+from agents.base_agent import client
+import json
 
 load_dotenv()
 
@@ -13,13 +17,14 @@ load_dotenv()
 async def lifespan(app: FastAPI):
     """Startup: connect to MongoDB. Shutdown: close connection."""
     await connect_db()
+    asyncio.create_task(validate_available_models(client))
     yield
     await close_db()
 
 
 app = FastAPI(
     title="AI Multi-Agent Content Engine",
-    description="5-agent LinkedIn content pipeline powered by Gemini 2.0 Flash",
+    description="5-agent LinkedIn content pipeline with formal Model Registry & Attempt-aware Streaming",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -40,11 +45,26 @@ app.include_router(posts_router, prefix="/api")
 async def root():
     return {
         "message": "🚀 AI Multi-Agent Content Engine",
-        "model": "gemini-2.0-flash",
-        "agents": ["idea-generator", "research", "content-writer", "editor"],
+        "description": "API is running. See /health/ready for status.",
         "docs": "/docs",
-        "status": "running",
     }
+
+
+@app.get("/health/live")
+def health_live():
+    return {"status": "alive"}
+
+
+@app.get("/health/ready")
+def health_ready():
+    status = get_profile_readiness()
+    if status == "READY":
+        return {"status": "READY"}
+    elif status == "DEGRADED":
+        return {"status": "DEGRADED", "message": "Some fallbacks or primary models are missing."}
+    else:
+        from fastapi import Response
+        return Response(content=json.dumps({"status": "NOT_READY"}), media_type="application/json", status_code=503)
 
 
 if __name__ == "__main__":
