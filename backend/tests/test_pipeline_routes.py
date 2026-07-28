@@ -14,7 +14,7 @@ def test_generation_ideas_failed_has_typed_http_response():
             return [("test", None)]
             
     class MockPipelineService:
-        async def generate_ideas(self, topic, style):
+        async def generate_ideas(self, topic, style, target_language="es"):
             raise GenerationIdeasFailed("Failed")
             
     container.router = MockRouter()

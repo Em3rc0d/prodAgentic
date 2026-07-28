@@ -15,7 +15,7 @@ router = APIRouter(tags=["pipeline"])
 async def get_ideas(req: IdeasRequest, pipeline = Depends(get_ready_pipeline_service)):
     """Generate 7 LinkedIn post ideas for a given topic and style."""
     try:
-        ideas = await pipeline.generate_ideas(req.topic, req.style)
+        ideas = await pipeline.generate_ideas(req.topic, req.style, req.target_language)
         return {"ideas": ideas, "topic": req.topic, "style": req.style}
     except GenerationIdeasFailed as e:
         print(f"[ERROR] GenerationIdeasFailed in /api/ideas: {e}")
@@ -33,6 +33,8 @@ async def pipeline_stream(
     idea: str = Query(..., description="The selected idea to expand"),
     topic: str = Query(..., description="Original topic"),
     style: str = Query("educational", description="Post style: educational | storytelling | controversial"),
+    target_language: str = Query("es", description="Target language for the post"),
+    image_prompt_language: str = Query("en", description="Target language for the image prompt"),
     pipeline = Depends(get_ready_pipeline_service)
 ):
     """
@@ -41,7 +43,7 @@ async def pipeline_stream(
     """
     
     async def event_generator():
-        async for event in pipeline.run_pipeline_stream(idea, topic, style):
+        async for event in pipeline.run_pipeline_stream(idea, topic, style, target_language, image_prompt_language):
             data = event.get("data", "{}")
             yield f"data: {data}\n\n"
         # Signal stream end

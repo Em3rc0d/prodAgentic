@@ -31,9 +31,13 @@ class Post(BaseModel):
 class IdeasRequest(BaseModel):
     topic: str
     style: str = "educational"
+    target_language: str = "es"
+    image_prompt_language: str = "en"
 
 
 class PipelineRequest(BaseModel):
     idea: str
     topic: str
     style: str = "educational"
+    target_language: str = "es"
+    image_prompt_language: str = "en"

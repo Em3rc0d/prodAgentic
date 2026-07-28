@@ -1,4 +1,6 @@
-"use client";
+import os
+
+content = """\"use client\";
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { fetchIdeas, createPipelineStream } from "@/lib/api";
@@ -41,7 +43,6 @@ export default function Home() {
   const [ideas, setIdeas] = useState<string[]>([]);
   const [selectedIdea, setSelectedIdea] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [renderImage, setRenderImage] = useState(false);
 
   // Pipeline state
   const [stageStatus, setStageStatus] = useState<Record<StageKey, StageStatus>>({
@@ -138,14 +139,14 @@ export default function Home() {
           setMode("pipeline_done"); setCurrentStage(null); es.close();
         } else if (msg.stage === "error") {
           setError(msg.reason || "Pipeline encountered a terminal error");
-          setMode("ideas_ready"); setFinalPost(""); setActiveTab("brief"); setSelectedIdea(null); es.close();
+          setMode("ideas_ready"); setFinalPost(""); es.close();
         } else if (msg.stage === "end") {
           es.close();
         }
       } catch {}
     };
     es.onerror = () => {
-      setError("Pipeline stream interrupted. Check backend logs."); setMode("ideas_ready"); setActiveTab("brief"); setSelectedIdea(null); es.close();
+      setError("Pipeline stream interrupted. Check backend logs."); setMode("ideas_ready"); es.close();
     };
   }, [topic, style, mode, targetLanguage, imagePromptLanguage]);
 
@@ -162,13 +163,6 @@ export default function Home() {
     if (esRef.current) esRef.current.close();
     setMode("idle"); setIdeas([]); setSelectedIdea(null); setError(null); setFinalPost("");
     setActiveTab("brief"); resetPipeline();
-  }
-
-  function handleCopy() {
-    navigator.clipboard.writeText(finalPost).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    });
   }
 
   const isRunning = mode === "pipeline_running" || mode === "loading_ideas";
@@ -295,7 +289,7 @@ export default function Home() {
                 <div className="empty-state">Select an idea in the Brief tab to start generation.</div>
               ) : (
                 <div className="stream-section">
-                  <div className="selected-idea-banner">💡 &quot;{selectedIdea}&quot;</div>
+                  <div className="selected-idea-banner">💡 "{selectedIdea}"</div>
                   {PIPELINE_STAGES.filter(s => s.key !== 'visual').map((s) => {
                     const status = stageStatus[s.key];
                     if (status === "pending" && !stageOutputs[s.key]) return null;
@@ -361,30 +355,10 @@ export default function Home() {
                 {visualPrompt && (
                   <div className="visual-result">
                     <h3 style={{color: 'var(--text-1)', marginBottom: '12px'}}>Generated Visual Prompt</h3>
-                    <div className="visual-prompt-box" style={{background: 'var(--surface-active)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-active)', marginBottom: '16px'}}>
+                    <div className="visual-prompt-box" style={{background: 'var(--surface-active)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-active)'}}>
                        {visualPrompt}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                      <input 
-                        type="checkbox" 
-                        id="render-image-toggle"
-                        checked={renderImage}
-                        onChange={(e) => setRenderImage(e.target.checked)}
-                      />
-                      <label htmlFor="render-image-toggle" style={{ color: 'var(--text-2)', fontSize: '14px', cursor: 'pointer' }}>
-                        Render image preview (Powered by Pollinations AI)
-                      </label>
-                    </div>
-                    {renderImage && (
-                      <div className="image-render-preview" style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface)' }}>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img 
-                          src={`https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt)}?width=800&height=400&nologo=true`} 
-                          alt={visualPrompt}
-                          style={{ width: '100%', display: 'block', aspectRatio: '2/1', objectFit: 'cover' }}
-                        />
-                      </div>
-                    )}
+                    {/* Optional Image Rendering would go here */}
                   </div>
                 )}
              </div>
@@ -394,3 +368,7 @@ export default function Home() {
     </div>
   );
 }
+"""
+
+with open("app/page.tsx", "w", encoding="utf-8") as f:
+    f.write(content)

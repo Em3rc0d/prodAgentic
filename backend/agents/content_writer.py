@@ -1,4 +1,5 @@
 from typing import AsyncGenerator
+from core.context import GenerationContext
 from .base_agent import BaseAgent
 
 SYSTEM_PROMPT = """You are a senior LinkedIn technical writer known for posts that go viral among engineers.
@@ -17,7 +18,6 @@ Required Structure:
 3. INSIGHTS — Core knowledge (3–5 bullets or short punchy paragraphs)
 4. TAKEAWAY — The one thing to remember, stated boldly
 5. CTA — A real question that sparks comments
-6. IMAGE PROMPT — A detailed prompt in English to generate a matching image (Midjourney/DALL-E style) placed at the very end.
 
 Hard Constraints:
 - 150–220 words MAX
@@ -28,28 +28,32 @@ Hard Constraints:
 
 
 from core.model_registry import ModelProfile
+from core.validator import ArtifactType
 
 class ContentWriterAgent(BaseAgent):
     def __init__(self, router):
         super().__init__(
             system_prompt=SYSTEM_PROMPT,
             profile=ModelProfile.ECONOMY_TEXT,
-            router=router
+            router=router,
+            artifact_type=ArtifactType.DRAFT
         )
 
-    async def stream(self, idea: str, research: str, style: str, attempt_id: str = None, run_id: str = "default-run") -> AsyncGenerator[tuple, None]:
+    async def stream(self, idea: str, research: str, context: GenerationContext, attempt_id: str = None) -> AsyncGenerator[tuple, None]:
         style_map = {
             "story": "Use a narrative structure. Start with a hook, build tension, end with a takeaway.",
             "listicle": "Use bullet points or numbered lists. Be highly actionable.",
             "opinion": "Take a strong stance on an industry topic. Defend it with facts from the research."
         }
-        style_prompt = style_map.get(style, "Write in a professional but engaging tone.")
+        style_prompt = style_map.get(context.style, "Write in a professional but engaging tone.")
 
         prompt = f"""Write a LinkedIn post.
 
 Idea: {idea}
 Research context: {research}
-Style constraint: {style_prompt}"""
+Style constraint: {style_prompt}
+
+Write all user-facing prose in {context.resolved_target_language.value}. Preserve code, technical identifiers, API names, product names, protocol names and error codes. Do not translate text inside code blocks."""
         
-        async for event in super().stream(prompt, attempt_id, run_id):
+        async for event in super().stream(prompt, context, attempt_id):
             yield event

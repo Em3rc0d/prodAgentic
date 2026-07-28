@@ -1,8 +1,12 @@
+from core.context import GenerationContext, LanguageCode
+ctx = GenerationContext(run_id="run-1", topic="", style="", requested_source_language=LanguageCode.AUTO, detected_source_language=LanguageCode.EN, source_detection_confidence=0.0, requested_target_language=LanguageCode.EN, resolved_target_language=LanguageCode.EN, image_prompt_language=LanguageCode.EN)
 import pytest
 import asyncio
 from agents.adapters.types import ModelExecutionError, ErrorCode, ProviderAdapter
 from agents.router import ModelRouter, CircuitState, AttemptStarted, ContentChunk, RoutingExhausted, AttemptFailed, AttemptResetRequired, RoutingPolicy, AttemptCompleted
-from core.model_registry import ModelProfile, REGISTRY
+from core.model_registry import ModelProfile
+from core.validator import ArtifactType
+from agents.router import ModelExecutionRequest
 
 class MockAdapter(ProviderAdapter):
     def __init__(self, name="mock"):
@@ -30,7 +34,7 @@ async def test_router_circuit_breaker_isolation():
         404, None, False, True, "Not found"
     )
     
-    events = [evt async for evt in router.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
+    events = [evt async for evt in router.stream_generation(ModelExecutionRequest(context=ctx, model_profile=ModelProfile.QUALITY_TEXT, artifact_type=ArtifactType.FINAL, system_instruction="sys", user_prompt="prompt", expected_output_language=LanguageCode.EN))]
         
     assert n8n.last_system_instruction == "sys"
     assert router._get_model_breaker("n8n", "gemini-3.6-flash").state == CircuitState.OPEN
@@ -50,7 +54,7 @@ async def test_n8n_provider_failure_no_bypass():
         500, None, False, False, "Internal Error"
     )
     
-    events = [evt async for evt in router.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
+    events = [evt async for evt in router.stream_generation(ModelExecutionRequest(context=ctx, model_profile=ModelProfile.QUALITY_TEXT, artifact_type=ArtifactType.FINAL, system_instruction="sys", user_prompt="prompt", expected_output_language=LanguageCode.EN))]
         
     assert router._get_provider_breaker("n8n").state == CircuitState.OPEN
     assert isinstance(events[-1], RoutingExhausted)
@@ -68,7 +72,7 @@ async def test_terminal_taxonomy():
         429, None, False, False, "Quota gone"
     )
     
-    events = [evt async for evt in router.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
+    events = [evt async for evt in router.stream_generation(ModelExecutionRequest(context=ctx, model_profile=ModelProfile.QUALITY_TEXT, artifact_type=ArtifactType.FINAL, system_instruction="sys", user_prompt="prompt", expected_output_language=LanguageCode.EN))]
     assert isinstance(events[-1], RoutingExhausted)
     assert events[-1].reason == "Terminal error: QUOTA_EXHAUSTED"
 
@@ -114,7 +118,7 @@ async def test_google_503_uses_fallback_model():
     router.google_adapter = FailOnceGoogle("google")
     router.n8n_adapter = FailN8n("n8n")
 
-    events = [evt async for evt in router.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
+    events = [evt async for evt in router.stream_generation(ModelExecutionRequest(context=ctx, model_profile=ModelProfile.QUALITY_TEXT, artifact_type=ArtifactType.FINAL, system_instruction="sys", user_prompt="prompt", expected_output_language=LanguageCode.EN))]
     
     assert router._get_provider_breaker("n8n").state == CircuitState.OPEN
     assert router._get_model_breaker("google", "gemini-3.6-flash").state == CircuitState.OPEN
@@ -152,7 +156,7 @@ async def test_google_midstream_failure_resets_and_switches_model():
     router.google_adapter = MidstreamFailGoogle("google")
     router.n8n_adapter = FailN8n("n8n")
 
-    events = [evt async for evt in router.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
+    events = [evt async for evt in router.stream_generation(ModelExecutionRequest(context=ctx, model_profile=ModelProfile.QUALITY_TEXT, artifact_type=ArtifactType.FINAL, system_instruction="sys", user_prompt="prompt", expected_output_language=LanguageCode.EN))]
     
     assert router._get_provider_breaker("n8n").state == CircuitState.OPEN
     assert any(isinstance(evt, AttemptResetRequired) for evt in events)
@@ -177,7 +181,7 @@ async def test_router_never_calls_none_adapter():
     router2 = ModelRouter(None, None, routing_policy=RoutingPolicy())
     assert not router2._get_adapters()
     
-    events = [evt async for evt in router2.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
+    events = [evt async for evt in router2.stream_generation(ModelExecutionRequest(context=ctx, model_profile=ModelProfile.QUALITY_TEXT, artifact_type=ArtifactType.FINAL, system_instruction="sys", user_prompt="prompt", expected_output_language=LanguageCode.EN))]
     assert len(events) == 1
     assert isinstance(events[0], RoutingExhausted)
     assert "No viable provider" in events[0].reason

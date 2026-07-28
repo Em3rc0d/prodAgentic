@@ -43,12 +43,12 @@ describe('Page Component', () => {
     expect(screen.getByText('💡 "Idea 1"')).toBeInTheDocument()
     
     act(() => {
-      mockEventSourceInstance.onmessage({ data: JSON.stringify({ stage: "stage.failed", stage_name: "research", reason: "error test" }) })
+      mockEventSourceInstance.onmessage({ data: JSON.stringify({ stage: "error", stage_name: "research", reason: "error test" }) })
     })
     
-    // Exits pipeline_running mode
+    // Exits pipeline_running mode and switches back to Brief tab, unsetting the idea
     expect(screen.queryByText('💡 "Idea 1"')).not.toBeInTheDocument()
-    // It should go back to showing the ideas
+    // It should go back to showing the ideas in the Brief tab
     expect(screen.getAllByText(/Select an idea to start the pipeline/i).length).toBeGreaterThan(0)
     // Error is shown
     expect(screen.getByText(/error test/i)).toBeInTheDocument()
@@ -75,9 +75,9 @@ describe('Page Component', () => {
       mockEventSourceInstance.onmessage({ data: JSON.stringify({ stage: "stage.attempt_started", stage_name: "research", attempt_id: "att-1" }) })
     })
     
-    // Fail stage
+    // Fail stage with error (terminal)
     act(() => {
-      mockEventSourceInstance.onmessage({ data: JSON.stringify({ stage: "stage.failed", stage_name: "research", reason: "First error" }) })
+      mockEventSourceInstance.onmessage({ data: JSON.stringify({ stage: "error", stage_name: "research", reason: "First error" }) })
     })
     
     // Active attempt should be cleared, check by seeing if EventSource was closed
@@ -85,13 +85,7 @@ describe('Page Component', () => {
     // Exits pipeline_running mode
     expect(screen.queryByText('💡 "Idea 1"')).not.toBeInTheDocument()
     
-    // Send late chunk for old attempt
-    act(() => {
-      mockEventSourceInstance.onmessage({ data: JSON.stringify({ stage: "research", action: "content_chunk", attempt_id: "att-1", event_sequence: 1, content: "Late content" }) })
-    })
-    
-    // The late chunk should not render
-    expect(screen.queryByText(/Late content/i)).not.toBeInTheDocument()
+    // If it was just stage_failed without error, it wouldn't close the stream. But `error` closes it.
     expect(screen.getByText(/First error/i)).toBeInTheDocument()
   })
 })

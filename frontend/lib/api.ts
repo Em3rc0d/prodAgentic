@@ -2,12 +2,13 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export async function fetchIdeas(
   topic: string,
-  style: string
+  style: string,
+  target_language: string = "es"
 ): Promise<string[]> {
   const res = await fetch(`${API}/api/ideas`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topic, style }),
+    body: JSON.stringify({ topic, style, target_language }),
   });
   if (!res.ok) throw new Error(`Ideas request failed: ${res.status}`);
   const data = await res.json();
@@ -17,9 +18,11 @@ export async function fetchIdeas(
 export function createPipelineStream(
   idea: string,
   topic: string,
-  style: string
+  style: string,
+  target_language: string = "es",
+  image_prompt_language: string = "en"
 ): EventSource {
-  const params = new URLSearchParams({ idea, topic, style });
+  const params = new URLSearchParams({ idea, topic, style, target_language, image_prompt_language });
   return new EventSource(`${API}/api/pipeline/stream?${params}`);
 }
 

@@ -22,6 +22,8 @@ Example format: ["idea 1", "idea 2", "idea 3", "idea 4", "idea 5", "idea 6", "id
 
 
 from core.model_registry import ModelProfile
+from core.context import GenerationContext
+from core.validator import ArtifactType
 
 class GenerationIdeasFailed(Exception):
     pass
@@ -31,13 +33,15 @@ class IdeaGeneratorAgent(BaseAgent):
         super().__init__(
             system_prompt=SYSTEM_PROMPT,
             profile=ModelProfile.ECONOMY_TEXT,
-            router=router
+            router=router,
+            artifact_type=ArtifactType.IDEAS
         )
 
-    async def generate_ideas(self, topic: str, style: str) -> list[str]:
+    async def generate_ideas(self, context: GenerationContext) -> list[str]:
         prompt = (
-            f"Generate exactly 7 distinct LinkedIn post ideas for the topic: '{topic}'.\n"
-            f"The style should be: {style}.\n\n"
+            f"Generate exactly 7 distinct LinkedIn post ideas for the topic: '{context.topic}'.\n"
+            f"The style should be: {context.style}.\n\n"
+            f"Write all user-facing prose in {context.resolved_target_language.value}. Preserve technical identifiers.\n"
             "Respond ONLY with a valid JSON array of strings."
         )
         import uuid
@@ -47,7 +51,7 @@ class IdeaGeneratorAgent(BaseAgent):
         full_text = ""
         current_attempt = None
         
-        async for event in self.stream(prompt, attempt_id):
+        async for event in self.stream(prompt, context, attempt_id):
             if isinstance(event, AttemptStarted):
                 current_attempt = event.attempt_id
                 full_text = ""

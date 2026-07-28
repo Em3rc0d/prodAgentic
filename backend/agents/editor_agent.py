@@ -1,4 +1,5 @@
 from typing import AsyncGenerator
+from core.context import GenerationContext
 from .base_agent import BaseAgent
 
 SYSTEM_PROMPT = """You are a world-class editor who specializes in making technical LinkedIn content go viral.
@@ -21,29 +22,33 @@ Forbidden phrases to eliminate:
 - Any sentence starting with "I believe" or "I think"
 
 Rules:
-- Keep the core structure (hook → context → insights → takeaway → CTA → image prompt)
-- Ensure the post ends with an image prompt in English, separated by a markdown line (***), clearly labeled "🎨 Prompt para la imagen (Midjourney / DALL-E 3):".
+- Keep the core structure (hook → context → insights → takeaway → CTA)
 - Do NOT add new facts or change technical accuracy
 - Do NOT make it longer — aim for equal or shorter
 - The result must sound like a real senior engineer, not a content creator
+- DO NOT generate or include any image prompts. Output only the post itself.
 
-Output: The final, polished post ONLY, including the image prompt at the bottom.
+Output: The final, polished post ONLY.
 No commentary, no "here's the edited version:", no explanation. Just the post."""
 
 
 from core.model_registry import ModelProfile
+from core.validator import ArtifactType
 
 class EditorAgent(BaseAgent):
     def __init__(self, router):
         super().__init__(
             system_prompt=SYSTEM_PROMPT,
             profile=ModelProfile.QUALITY_TEXT,
-            router=router
+            router=router,
+            artifact_type=ArtifactType.FINAL
         )
 
-    async def stream(self, draft: str, attempt_id: str = None, run_id: str = "default-run") -> AsyncGenerator[tuple, None]:
+    async def stream(self, draft: str, context: GenerationContext, attempt_id: str = None) -> AsyncGenerator[tuple, None]:
         prompt = f"""Edit and elevate this LinkedIn post to publication quality:
 
-{draft}"""
-        async for event in super().stream(prompt, attempt_id, run_id):
+{draft}
+
+Do not translate the post to another language. The final post must remain in {context.resolved_target_language.value}. Preserve code, technical identifiers, API names, product names, protocol names and error codes. Do not translate text inside code blocks."""
+        async for event in super().stream(prompt, context, attempt_id):
             yield event
