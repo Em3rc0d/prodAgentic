@@ -48,6 +48,7 @@ class CircuitBreaker:
     expires_at: Optional[datetime] = None
     failure_count: int = 0
     last_failure_category: Optional[str] = None
+    _half_open_probe_active: bool = False
     
     def record_failure(self, category: str, ttl_seconds: int = 60):
         self.state = CircuitState.OPEN
@@ -55,6 +56,7 @@ class CircuitBreaker:
         self.expires_at = self.opened_at + timedelta(seconds=ttl_seconds)
         self.failure_count += 1
         self.last_failure_category = category
+        self._half_open_probe_active = False
         
     def is_allowed(self) -> bool:
         if self.state == CircuitState.CLOSED:
@@ -62,20 +64,28 @@ class CircuitBreaker:
         if self.state == CircuitState.OPEN:
             if datetime.now(timezone.utc) > self.expires_at:
                 self.state = CircuitState.HALF_OPEN
+                self._half_open_probe_active = True
                 return True
             return False
         if self.state == CircuitState.HALF_OPEN:
-            return True
+            if not getattr(self, '_half_open_probe_active', False):
+                self._half_open_probe_active = True
+                return True
+            return False
             
     def record_success(self):
         self.state = CircuitState.CLOSED
         self.opened_at = None
         self.expires_at = None
+        self.failure_count = 0
+        self.last_failure_category = None
+        self._half_open_probe_active = False
 
 class RoutingPolicy:
     max_models_per_stage = 2
     max_retries_per_model = 1
     max_total_attempts = 3
+    allow_direct_provider_fallback_after_n8n_failure = False
 
 class ModelRouter:
     def __init__(self, google_adapter: ProviderAdapter, n8n_adapter: ProviderAdapter = None):
@@ -144,12 +154,10 @@ class ModelRouter:
                             profile_name=profile.value
                         )
                         
-                        first = True
+                        yield AttemptStarted(model_def.model_id, attempt_id, provider_name)
+                        
                         async for chunk_type, chunk_text in stream_gen:
-                            if first:
-                                yield AttemptStarted(model_def.model_id, attempt_id, provider_name)
-                                first = False
-                                successful_start = True
+                            successful_start = True
                             yield ContentChunk(chunk_text, attempt_id)
                             
                         self._record_success(provider_name, model_def.model_id)
@@ -157,16 +165,21 @@ class ModelRouter:
                         return # fully successful
                         
                     except ModelExecutionError as exec_error:
-                        if exec_error.category in (ErrorCode.INVALID_REQUEST, ErrorCode.AUTHENTICATION, ErrorCode.CANCELLED):
-                            # Non-recoverable client error
-                            yield AttemptFailed(exec_error.sanitized_message, attempt_id)
-                            yield RoutingExhausted(f"Terminal error: {exec_error.category.value}")
-                            return
-                            
                         if successful_start:
+                            yield AttemptFailed(exec_error.sanitized_message, attempt_id)
                             yield AttemptResetRequired(exec_error.sanitized_message, attempt_id)
                         else:
                             yield AttemptFailed(exec_error.sanitized_message, attempt_id)
+
+                        if exec_error.category in (
+                            ErrorCode.INVALID_REQUEST, 
+                            ErrorCode.AUTHENTICATION, 
+                            ErrorCode.CANCELLED,
+                            ErrorCode.QUOTA_EXHAUSTED,
+                            ErrorCode.UNKNOWN
+                        ):
+                            yield RoutingExhausted(f"Terminal error: {exec_error.category.value}")
+                            return
                             
                         if exec_error.category == ErrorCode.MODEL_NOT_FOUND:
                             self._get_model_breaker(provider_name, model_def.model_id).record_failure(exec_error.category.value)
@@ -181,13 +194,14 @@ class ModelRouter:
                                 
                             self._get_provider_breaker(provider_name).record_failure(exec_error.category.value)
                             
-                            if provider_name == "n8n" and not self.allow_direct_provider_fallback_after_n8n_failure:
+                            if provider_name == "n8n" and not RoutingPolicy.allow_direct_provider_fallback_after_n8n_failure:
                                 yield RoutingExhausted("n8n provider failed and bypass is disabled")
                                 return
                             
                             break # Move to next provider
                             
+                        # Catch-all unhandled categories -> terminal conservative
+                        yield RoutingExhausted(f"Terminal error: {exec_error.category.value}")
+                        return
+                            
         yield RoutingExhausted("All eligible models and providers exhausted or failed.")
-
-    async def generate(self, profile: ModelProfile, system_prompt: str, prompt: str, run_id: str) -> tuple:
-        raise NotImplementedError("Use stream_generation instead. Sync generate is deprecated.")

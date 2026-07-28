@@ -13,6 +13,7 @@ class ApplicationContainer:
         self.n8n_adapter = None
         self.router = None
         self.pipeline_service = None
+        self.preflight_task = None
 
     def startup(self):
         api_key = os.getenv("GEMINI_API_KEY")
@@ -21,6 +22,9 @@ class ApplicationContainer:
             
         self.client = genai.Client(api_key=api_key)
         self.google_adapter = GoogleDirectAdapter(self.client)
+        
+        from agents.router import RoutingPolicy
+        RoutingPolicy.allow_direct_provider_fallback_after_n8n_failure = os.getenv("N8N_ALLOW_DIRECT_FALLBACK", "false").lower() == "true"
         
         n8n_webhook_url = os.getenv("N8N_WEBHOOK_URL")
         if n8n_webhook_url and "your-domain" not in n8n_webhook_url:

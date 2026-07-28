@@ -101,6 +101,42 @@ class N8nAdapter(ProviderAdapter):
                         sanitized_message="Missing required fields in n8n response"
                     )
                 
+                if data["schema_version"] != "1.0":
+                    raise ModelExecutionError(
+                        category=ErrorCode.PROVIDER_PROTOCOL_ERROR,
+                        provider="n8n", model_id=model, attempt_id=attempt_id,
+                        http_status=res.status_code, provider_error_code=None,
+                        retryable=False, fallback_allowed=False,
+                        sanitized_message=f"Invalid schema_version {data['schema_version']}"
+                    )
+                    
+                if data["provider"] != "n8n":
+                    raise ModelExecutionError(
+                        category=ErrorCode.PROVIDER_PROTOCOL_ERROR,
+                        provider="n8n", model_id=model, attempt_id=attempt_id,
+                        http_status=res.status_code, provider_error_code=None,
+                        retryable=False, fallback_allowed=False,
+                        sanitized_message=f"Invalid provider {data['provider']}"
+                    )
+                    
+                if data["attempt_id"] != attempt_id:
+                    raise ModelExecutionError(
+                        category=ErrorCode.PROVIDER_PROTOCOL_ERROR,
+                        provider="n8n", model_id=model, attempt_id=attempt_id,
+                        http_status=res.status_code, provider_error_code=None,
+                        retryable=False, fallback_allowed=False,
+                        sanitized_message="Mismatch attempt_id"
+                    )
+
+                if data["requested_model"] != model:
+                    raise ModelExecutionError(
+                        category=ErrorCode.MODEL_MISMATCH,
+                        provider="n8n", model_id=model, attempt_id=attempt_id,
+                        http_status=res.status_code, provider_error_code=None,
+                        retryable=False, fallback_allowed=False,
+                        sanitized_message=f"Requested {model} but n8n requested {data['requested_model']}"
+                    )
+                    
                 if data["actual_model"] != model:
                     raise ModelExecutionError(
                         category=ErrorCode.MODEL_MISMATCH,
@@ -110,7 +146,7 @@ class N8nAdapter(ProviderAdapter):
                         sanitized_message=f"Requested {model} but received {data['actual_model']}"
                     )
                     
-                if not data["content"]:
+                if not data["content"] or not data["content"].strip():
                     raise ModelExecutionError(
                         category=ErrorCode.PROVIDER_PROTOCOL_ERROR,
                         provider="n8n", model_id=model, attempt_id=attempt_id,
@@ -143,6 +179,7 @@ class N8nAdapter(ProviderAdapter):
                     res.raise_for_status()
                     
                     has_completed = False
+                    emitted_content = False
                     async for line in res.aiter_lines():
                         if not line:
                             continue
@@ -153,6 +190,33 @@ class N8nAdapter(ProviderAdapter):
                             try:
                                 data = json.loads(data_str)
                                 
+                                if data.get("schema_version") != "1.0":
+                                    raise ModelExecutionError(
+                                        category=ErrorCode.PROVIDER_PROTOCOL_ERROR,
+                                        provider="n8n", model_id=model, attempt_id=attempt_id,
+                                        http_status=res.status_code, provider_error_code=None,
+                                        retryable=False, fallback_allowed=False,
+                                        sanitized_message=f"Invalid schema_version {data.get('schema_version')}"
+                                    )
+                                    
+                                if data.get("attempt_id") != attempt_id:
+                                    raise ModelExecutionError(
+                                        category=ErrorCode.PROVIDER_PROTOCOL_ERROR,
+                                        provider="n8n", model_id=model, attempt_id=attempt_id,
+                                        http_status=res.status_code, provider_error_code=None,
+                                        retryable=False, fallback_allowed=False,
+                                        sanitized_message="Mismatch attempt_id"
+                                    )
+                                    
+                                if data.get("requested_model") != model:
+                                    raise ModelExecutionError(
+                                        category=ErrorCode.MODEL_MISMATCH,
+                                        provider="n8n", model_id=model, attempt_id=attempt_id,
+                                        http_status=res.status_code, provider_error_code=None,
+                                        retryable=False, fallback_allowed=False,
+                                        sanitized_message=f"Requested {model} but chunk has {data.get('requested_model')}"
+                                    )
+                                
                                 if data.get("type") == "completed":
                                     actual_model = data.get("actual_model")
                                     if actual_model != model:
@@ -162,6 +226,15 @@ class N8nAdapter(ProviderAdapter):
                                             http_status=res.status_code, provider_error_code=None,
                                             retryable=False, fallback_allowed=False,
                                             sanitized_message=f"Requested {model} but completed with {actual_model}"
+                                        )
+                                    
+                                    if data.get("finish_reason") not in ("STOP", "stop"):
+                                        raise ModelExecutionError(
+                                            category=ErrorCode.PROVIDER_PROTOCOL_ERROR,
+                                            provider="n8n", model_id=model, attempt_id=attempt_id,
+                                            http_status=res.status_code, provider_error_code=None,
+                                            retryable=False, fallback_allowed=False,
+                                            sanitized_message=f"Invalid finish_reason {data.get('finish_reason')}"
                                         )
                                     has_completed = True
                                     break
@@ -176,7 +249,8 @@ class N8nAdapter(ProviderAdapter):
                                         sanitized_message=f"Requested {model} but chunk has {actual_model}"
                                     )
                                 chunk_text = data.get("text", "")
-                                if chunk_text:
+                                if chunk_text and chunk_text.strip():
+                                    emitted_content = True
                                     yield ("chunk", chunk_text)
                             except json.JSONDecodeError as jde:
                                 raise ModelExecutionError(
@@ -194,6 +268,14 @@ class N8nAdapter(ProviderAdapter):
                             http_status=res.status_code, provider_error_code=None,
                             retryable=False, fallback_allowed=False,
                             sanitized_message="Stream terminated without completed event"
+                        )
+                    if not emitted_content:
+                        raise ModelExecutionError(
+                            category=ErrorCode.PROVIDER_PROTOCOL_ERROR,
+                            provider="n8n", model_id=model, attempt_id=attempt_id,
+                            http_status=res.status_code, provider_error_code=None,
+                            retryable=False, fallback_allowed=False,
+                            sanitized_message="Stream completed without any non-empty content chunks"
                         )
         except ModelExecutionError:
             raise

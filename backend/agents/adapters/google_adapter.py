@@ -79,7 +79,16 @@ class GoogleDirectAdapter(ProviderAdapter):
                 contents=prompt,
                 config=config
             )
-            text = response.text if hasattr(response, 'text') else ""
+            text = response.text if hasattr(response, 'text') and response.text else ""
+            
+            if not text or not text.strip():
+                raise ModelExecutionError(
+                    category=ErrorCode.PROVIDER_PROTOCOL_ERROR,
+                    provider="google", model_id=model, attempt_id=attempt_id,
+                    http_status=None, provider_error_code=None,
+                    retryable=False, fallback_allowed=False,
+                    sanitized_message="Empty model output received from Google"
+                )
             
             return ModelExecutionResult(
                 provider="google",
@@ -91,6 +100,8 @@ class GoogleDirectAdapter(ProviderAdapter):
                 finish_reason="STOP",
                 raw_response=response
             )
+        except ModelExecutionError:
+            raise
         except Exception as e:
             raise self._translate_error(e, model, attempt_id) from e
 
@@ -110,9 +121,22 @@ class GoogleDirectAdapter(ProviderAdapter):
                 config=config
             )
             
+            emitted_content = False
             async for chunk in response:
-                text = chunk.text if hasattr(chunk, 'text') else ""
-                if text:
+                text = chunk.text if hasattr(chunk, 'text') and chunk.text else ""
+                if text and text.strip():
+                    emitted_content = True
                     yield ("chunk", text)
+            
+            if not emitted_content:
+                raise ModelExecutionError(
+                    category=ErrorCode.PROVIDER_PROTOCOL_ERROR,
+                    provider="google", model_id=model, attempt_id=attempt_id,
+                    http_status=None, provider_error_code=None,
+                    retryable=False, fallback_allowed=False,
+                    sanitized_message="Stream finished without yielding any content"
+                )
+        except ModelExecutionError:
+            raise
         except Exception as e:
             raise self._translate_error(e, model, attempt_id) from e

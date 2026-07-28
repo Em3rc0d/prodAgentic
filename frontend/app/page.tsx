@@ -13,7 +13,7 @@ type AppMode =
   | "pipeline_running"
   | "pipeline_done";
 
-type StageStatus = "pending" | "running" | "done";
+type StageStatus = "pending" | "running" | "done" | "failed";
 
 const PIPELINE_STAGES: { key: StageKey; label: string; emoji: string }[] = [
   { key: "research", label: "Research Agent", emoji: "🔎" },
@@ -154,8 +154,11 @@ export default function Home() {
             const sKey = msg.stage_name as StageKey;
             setStageStatus((prev) => ({ ...prev, [sKey]: "done" }));
           } else if (msg.stage === "stage_failed" || msg.stage === "stage.failed") {
+            const rawStage = msg.stage_name;
+            if (rawStage && rawStage !== "unknown") {
+                setStageStatus((prev) => ({ ...prev, [rawStage as StageKey]: "failed" }));
+            }
             setError(msg.reason || "Pipeline encountered a terminal error");
-            setMode("ideas_ready");
             es.close();
           } else if (msg.stage === "complete") {
             setFinalPost(msg.final_post || "");
@@ -377,6 +380,8 @@ export default function Home() {
                   className={`step-name ${
                     stageStatus[s.key] === "done"
                       ? "done"
+                      : stageStatus[s.key] === "failed"
+                      ? "failed"
                       : stageStatus[s.key] === "running"
                       ? "active"
                       : ""
@@ -517,6 +522,8 @@ export default function Home() {
                           ? "active"
                           : status === "done"
                           ? "done"
+                          : status === "failed"
+                          ? "failed"
                           : ""
                       }`}
                     >
@@ -529,6 +536,9 @@ export default function Home() {
                       )}
                       {status === "done" && (
                         <span className="stage-status-badge done">✓ done</span>
+                      )}
+                      {status === "failed" && (
+                        <span className="stage-status-badge" style={{color: "#fca5a5", background: "rgba(239,68,68,0.1)"}}>❌ failed</span>
                       )}
                       {stageModels[s.key] && (
                         <span style={{ marginLeft: 8, fontSize: 11, color: "var(--text-3)", verticalAlign: "middle" }}>

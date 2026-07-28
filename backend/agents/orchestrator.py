@@ -15,6 +15,9 @@ def _sse(stage: str, **kwargs) -> dict:
     """Build a Server-Sent Events payload dict."""
     return {"data": json.dumps({"stage": stage, **kwargs})}
 
+class PipelineAbortError(Exception):
+    pass
+
 class PipelineOrchestrator:
     def __init__(self, router):
         self.router = router
@@ -37,57 +40,62 @@ class PipelineOrchestrator:
             attempt_number = 0
             event_sequence = 0
             
-            async for event in agent_stream_func(run_id=run_id):
+            try:
+                async for event in agent_stream_func(run_id=run_id):
+                    event_sequence += 1
+                    if isinstance(event, AttemptStarted):
+                        attempt_number += 1
+                        yield _sse(
+                            "stage.attempt_started",
+                            stage_name=stage_name,
+                            model_profile=profile,
+                            selected_model=event.model_id,
+                            provider=event.provider,
+                            attempt_id=event.attempt_id,
+                            attempt_number=attempt_number,
+                            run_id=run_id,
+                            event_sequence=event_sequence
+                        )
+                    elif isinstance(event, ContentChunk):
+                        output_ref[0] += event.text
+                        yield _sse(
+                            "stage.chunk",
+                            stage_name=stage_name,
+                            text=event.text,
+                            attempt_id=event.attempt_id,
+                            run_id=run_id,
+                            event_sequence=event_sequence
+                        )
+                    elif isinstance(event, AttemptResetRequired):
+                        yield _sse(
+                            "stage.attempt_reset",
+                            stage_name=stage_name,
+                            reason=event.reason,
+                            attempt_id=event.attempt_id,
+                            run_id=run_id,
+                            event_sequence=event_sequence
+                        )
+                        output_ref[0] = ""
+                    elif isinstance(event, AttemptFailed):
+                        yield _sse(
+                            "stage.attempt_failed",
+                            stage_name=stage_name,
+                            reason=event.reason,
+                            attempt_id=event.attempt_id,
+                            run_id=run_id,
+                            event_sequence=event_sequence
+                        )
+                    elif isinstance(event, AttemptCompleted):
+                        pass
+                    elif isinstance(event, RoutingExhausted):
+                        raise Exception(event.reason)
+                
                 event_sequence += 1
-                if isinstance(event, AttemptStarted):
-                    attempt_number += 1
-                    yield _sse(
-                        "stage.attempt_started",
-                        stage_name=stage_name,
-                        model_profile=profile,
-                        selected_model=event.model_id,
-                        provider=event.provider,
-                        attempt_id=event.attempt_id,
-                        attempt_number=attempt_number,
-                        run_id=run_id,
-                        event_sequence=event_sequence
-                    )
-                elif isinstance(event, ContentChunk):
-                    output_ref[0] += event.text
-                    yield _sse(
-                        "stage.chunk",
-                        stage_name=stage_name,
-                        text=event.text,
-                        attempt_id=event.attempt_id,
-                        run_id=run_id,
-                        event_sequence=event_sequence
-                    )
-                elif isinstance(event, AttemptResetRequired):
-                    yield _sse(
-                        "stage.attempt_reset",
-                        stage_name=stage_name,
-                        reason=event.reason,
-                        attempt_id=event.attempt_id,
-                        run_id=run_id,
-                        event_sequence=event_sequence
-                    )
-                    output_ref[0] = ""
-                elif isinstance(event, AttemptFailed):
-                    yield _sse(
-                        "stage.attempt_failed",
-                        stage_name=stage_name,
-                        reason=event.reason,
-                        attempt_id=event.attempt_id,
-                        run_id=run_id,
-                        event_sequence=event_sequence
-                    )
-                elif isinstance(event, AttemptCompleted):
-                    pass
-                elif isinstance(event, RoutingExhausted):
-                    raise Exception(event.reason)
-            
-            event_sequence += 1
-            yield _sse("stage.completed", stage_name=stage_name, content=output_ref[0], run_id=run_id, event_sequence=event_sequence)
+                yield _sse("stage.completed", stage_name=stage_name, content=output_ref[0], run_id=run_id, event_sequence=event_sequence)
+            except Exception as e:
+                event_sequence += 1
+                yield _sse("stage.failed", stage_name=stage_name, reason=str(e), run_id=run_id, event_sequence=event_sequence)
+                raise PipelineAbortError()
 
         try:
             # Stage 1: Research
@@ -102,6 +110,8 @@ class PipelineOrchestrator:
             def edit_stream(run_id): return self.editor_agent.stream(draft_ref[0], attempt_id=None, run_id=run_id)
             async for event in run_stage(edit_stream, "edit", self.editor_agent.profile.value, final_ref): yield event
             
+        except PipelineAbortError:
+            return
         except Exception as e:
             yield _sse("stage.failed", stage_name="unknown", reason=str(e), run_id=run_id)
             return

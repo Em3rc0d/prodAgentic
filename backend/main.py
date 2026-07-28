@@ -20,8 +20,10 @@ async def lifespan(app: FastAPI):
     await connect_db()
     container.startup()
     app.state.container = container
-    asyncio.create_task(validate_available_models(container.client))
+    container.preflight_task = asyncio.create_task(validate_available_models(container.client))
     yield
+    if container.preflight_task and not container.preflight_task.done():
+        container.preflight_task.cancel()
     await container.shutdown()
     await close_db()
 
@@ -62,13 +64,13 @@ def health_live():
 @app.get("/health/ready")
 def health_ready():
     status = get_profile_readiness()
-    if status == "READY":
-        return {"status": "READY"}
-    elif status == "DEGRADED":
-        return {"status": "DEGRADED", "message": "Some fallbacks or primary models are missing."}
+    if status in ("READY", "READY_WITH_STALE_CACHE"):
+        return {"status": status}
+    elif status in ("DEGRADED", "DEGRADED_WITH_STALE_CACHE"):
+        return {"status": status, "message": "Some fallbacks or primary models are missing."}
     else:
         from fastapi import Response
-        return Response(content=json.dumps({"status": "NOT_READY"}), media_type="application/json", status_code=503)
+        return Response(content=json.dumps({"status": status}), media_type="application/json", status_code=503)
 
 
 if __name__ == "__main__":
