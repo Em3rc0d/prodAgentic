@@ -41,9 +41,9 @@ class EditorAgent(BaseAgent):
             router=router
         )
 
-    async def stream(self, draft: str, attempt_id: str = None) -> AsyncGenerator[tuple, None]:
+    async def stream(self, draft: str, attempt_id: str = None, run_id: str = "default-run") -> AsyncGenerator[tuple, None]:
         prompt = f"""Edit and elevate this LinkedIn post to publication quality:
 
 {draft}"""
-        async for event in super().stream(prompt, attempt_id):
+        async for event in super().stream(prompt, attempt_id, run_id):
             yield event

@@ -37,7 +37,7 @@ class ResearchAgent(BaseAgent):
             router=router
         )
 
-    async def stream(self, idea: str, attempt_id: str = None) -> AsyncGenerator[tuple, None]:
+    async def stream(self, idea: str, attempt_id: str = None, run_id: str = "default-run") -> AsyncGenerator[tuple, None]:
         prompt = f"Research this LinkedIn post idea deeply and practically:\n\n**Idea:** {idea}"
-        async for event in super().stream(prompt, attempt_id):
+        async for event in super().stream(prompt, attempt_id, run_id):
             yield event

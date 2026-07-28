@@ -37,7 +37,7 @@ class ContentWriterAgent(BaseAgent):
             router=router
         )
 
-    async def stream(self, idea: str, research: str, style: str, attempt_id: str = None) -> AsyncGenerator[tuple, None]:
+    async def stream(self, idea: str, research: str, style: str, attempt_id: str = None, run_id: str = "default-run") -> AsyncGenerator[tuple, None]:
         style_map = {
             "story": "Use a narrative structure. Start with a hook, build tension, end with a takeaway.",
             "listicle": "Use bullet points or numbered lists. Be highly actionable.",
@@ -51,5 +51,5 @@ Idea: {idea}
 Research context: {research}
 Style constraint: {style_prompt}"""
         
-        async for event in super().stream(prompt, attempt_id):
+        async for event in super().stream(prompt, attempt_id, run_id):
             yield event
