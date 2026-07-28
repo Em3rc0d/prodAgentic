@@ -15,7 +15,8 @@ async def get_ideas(request: Request, req: IdeasRequest):
     try:
         ideas = await pipeline.generate_ideas(req.topic, req.style)
         return {"ideas": ideas, "topic": req.topic, "style": req.style}
-    except GenerationIdeasFailed:
+    except GenerationIdeasFailed as e:
+        print(f"[ERROR] GenerationIdeasFailed in /api/ideas: {e}")
         raise HTTPException(
             status_code=502,
             detail={

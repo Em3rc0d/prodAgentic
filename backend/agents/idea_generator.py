@@ -74,4 +74,5 @@ class IdeaGeneratorAgent(BaseAgent):
                 
             return valid_ideas
         except json.JSONDecodeError as e:
+            print(f"[ERROR] Idea generator JSON decode error. Text was: {full_text}")
             raise GenerationIdeasFailed(f"JSON parsing error: {e}")

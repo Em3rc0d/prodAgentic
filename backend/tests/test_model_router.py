@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 from agents.adapters.types import ModelExecutionError, ErrorCode, ProviderAdapter
-from agents.router import ModelRouter, CircuitState, AttemptStarted, ContentChunk, RoutingExhausted, AttemptFailed, AttemptResetRequired, RoutingPolicy
+from agents.router import ModelRouter, CircuitState, AttemptStarted, ContentChunk, RoutingExhausted, AttemptFailed, AttemptResetRequired, RoutingPolicy, AttemptCompleted
 from core.model_registry import ModelProfile, REGISTRY
 
 class MockAdapter(ProviderAdapter):
@@ -91,7 +91,9 @@ async def test_circuit_breaker_half_open():
 async def test_google_503_uses_fallback_model():
     google = MockAdapter("google")
     n8n = MockAdapter("n8n")
-    router = ModelRouter(google, n8n)
+    from agents.router import RoutingPolicy
+    policy = RoutingPolicy(allow_direct_provider_fallback_after_n8n_failure=True, max_total_attempts=5)
+    router = ModelRouter(google, n8n, routing_policy=policy)
     
     class FailOnceGoogle(MockAdapter):
         async def stream(self, model: str, prompt: str, **kwargs):
@@ -101,22 +103,34 @@ async def test_google_503_uses_fallback_model():
                 )
             yield ("chunk", f"hello from {model}")
 
+    class FailN8n(MockAdapter):
+        async def stream(self, model: str, prompt: str, **kwargs):
+            raise ModelExecutionError(
+                ErrorCode.SERVICE_UNAVAILABLE, "n8n", model, "attempt-n8n", 503, None, False, False, "Unavailable"
+            )
+            yield
+            yield
+
     router.google_adapter = FailOnceGoogle("google")
-    n8n.should_fail = True
-    n8n.fail_error = ModelExecutionError(
-        ErrorCode.MODEL_NOT_FOUND, "n8n", "gemini-3.6-flash", "attempt-0", 404, None, False, True, "Not found"
-    )
+    router.n8n_adapter = FailN8n("n8n")
 
     events = [evt async for evt in router.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
     
     assert router._get_model_breaker("google", "gemini-3.6-flash").state == CircuitState.OPEN
-    assert any(isinstance(evt, AttemptStarted) and evt.model_id == "gemini-3.5-flash" for evt in events)
+    
+    fallback_started = next((e for e in events if isinstance(e, AttemptStarted) and e.model_id == "gemini-3.5-flash" and e.provider == "google"), None)
+    assert fallback_started is not None
+    
+    assert any(isinstance(e, AttemptCompleted) and e.attempt_id == fallback_started.attempt_id for e in events)
+    assert not any(isinstance(e, RoutingExhausted) for e in events)
 
 @pytest.mark.asyncio
 async def test_google_midstream_failure_resets_and_switches_model():
     google = MockAdapter("google")
     n8n = MockAdapter("n8n")
-    router = ModelRouter(google, n8n)
+    from agents.router import RoutingPolicy
+    policy = RoutingPolicy(allow_direct_provider_fallback_after_n8n_failure=True, max_total_attempts=5)
+    router = ModelRouter(google, n8n, routing_policy=policy)
     
     class MidstreamFailGoogle(MockAdapter):
         async def stream(self, model: str, prompt: str, **kwargs):
@@ -127,15 +141,24 @@ async def test_google_midstream_failure_resets_and_switches_model():
                 )
             yield ("chunk", f"hello from {model}")
 
+    class FailN8n(MockAdapter):
+        async def stream(self, model: str, prompt: str, **kwargs):
+            raise ModelExecutionError(
+                ErrorCode.SERVICE_UNAVAILABLE, "n8n", model, "attempt-n8n", 503, None, False, False, "Unavailable"
+            )
+            yield
+            yield
+
     router.google_adapter = MidstreamFailGoogle("google")
-    n8n.should_fail = True
-    n8n.fail_error = ModelExecutionError(
-        ErrorCode.MODEL_NOT_FOUND, "n8n", "gemini-3.6-flash", "attempt-0", 404, None, False, True, "Not found"
-    )
+    router.n8n_adapter = FailN8n("n8n")
 
     events = [evt async for evt in router.stream_generation(ModelProfile.QUALITY_TEXT, "sys", "prompt", "run-1")]
     
-    # Ensure it emitted AttemptResetRequired for the first attempt
     assert any(isinstance(evt, AttemptResetRequired) for evt in events)
     assert router._get_model_breaker("google", "gemini-3.6-flash").state == CircuitState.OPEN
-    assert any(isinstance(evt, AttemptStarted) and evt.model_id == "gemini-3.5-flash" for evt in events)
+    
+    fallback_started = next((e for e in events if isinstance(e, AttemptStarted) and e.model_id == "gemini-3.5-flash" and e.provider == "google"), None)
+    assert fallback_started is not None
+    
+    assert any(isinstance(e, AttemptCompleted) and e.attempt_id == fallback_started.attempt_id for e in events)
+    assert not any(isinstance(e, RoutingExhausted) for e in events)

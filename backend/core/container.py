@@ -25,17 +25,20 @@ class ApplicationContainer:
             self.client = genai.Client(api_key=api_key)
             self.google_adapter = GoogleDirectAdapter(self.client)
         
-        from agents.router import RoutingPolicy
-        n8n_fallback = str(os.getenv("N8N_ALLOW_DIRECT_FALLBACK", "false")).lower()
-        RoutingPolicy.allow_direct_provider_fallback_after_n8n_failure = n8n_fallback in ("true", "1")
+        from agents.router import ModelRouter, RoutingPolicy
         
         n8n_webhook_url = os.getenv("N8N_WEBHOOK_URL")
         if n8n_webhook_url and "your-domain" not in n8n_webhook_url:
             self.n8n_adapter = N8nAdapter(n8n_webhook_url)
         else:
             self.n8n_adapter = None
-            
-        self.router = ModelRouter(self.google_adapter, self.n8n_adapter)
+        
+        n8n_fallback = os.getenv("N8N_ALLOW_DIRECT_FALLBACK", "").lower()
+        routing_policy = RoutingPolicy()
+        routing_policy.allow_direct_provider_fallback_after_n8n_failure = n8n_fallback in ("true", "1")
+        
+        # Instantiate ModelRouter with policy
+        self.router = ModelRouter(google_adapter=self.google_adapter, n8n_adapter=self.n8n_adapter, routing_policy=routing_policy)
         self.pipeline_service = PipelineOrchestrator(self.router)
 
     async def shutdown(self):

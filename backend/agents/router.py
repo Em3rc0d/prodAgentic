@@ -81,19 +81,20 @@ class CircuitBreaker:
         self.last_failure_category = None
         self._half_open_probe_active = False
 
+@dataclass
 class RoutingPolicy:
-    max_models_per_stage = 2
-    max_retries_per_model = 1
-    max_total_attempts = 3
-    allow_direct_provider_fallback_after_n8n_failure = False
+    max_models_per_stage: int = 2
+    max_retries_per_model: int = 1
+    max_total_attempts: int = 4
+    allow_direct_provider_fallback_after_n8n_failure: bool = False
 
 class ModelRouter:
-    def __init__(self, google_adapter: ProviderAdapter, n8n_adapter: ProviderAdapter = None):
+    def __init__(self, google_adapter: ProviderAdapter, n8n_adapter: ProviderAdapter = None, routing_policy: RoutingPolicy = None):
         self.google_adapter = google_adapter
         self.n8n_adapter = n8n_adapter
+        self.policy = routing_policy or RoutingPolicy()
         self._provider_breakers: dict[str, CircuitBreaker] = {}
         self._model_breakers: dict[str, CircuitBreaker] = {}
-        self.allow_direct_provider_fallback_after_n8n_failure = False
 
     def _get_provider_breaker(self, provider: str) -> CircuitBreaker:
         if provider not in self._provider_breakers:
@@ -123,14 +124,14 @@ class ModelRouter:
         models_tried = 0
         
         for model_def in models:
-            if models_tried >= RoutingPolicy.max_models_per_stage:
+            if models_tried >= self.policy.max_models_per_stage:
                 break
                 
             models_tried += 1
             
             for provider_name, adapter in self._get_adapters():
                 if not self._get_provider_breaker(provider_name).is_allowed():
-                    if provider_name == "n8n" and not self.allow_direct_provider_fallback_after_n8n_failure:
+                    if provider_name == "n8n" and not self.policy.allow_direct_provider_fallback_after_n8n_failure:
                         yield RoutingExhausted("n8n provider circuit is open and bypass is disabled")
                         return
                     continue
@@ -139,7 +140,7 @@ class ModelRouter:
                     continue
                 
                 retries = 0
-                while retries <= RoutingPolicy.max_retries_per_model and total_attempts < RoutingPolicy.max_total_attempts:
+                while retries <= self.policy.max_retries_per_model and total_attempts < self.policy.max_total_attempts:
                     total_attempts += 1
                     attempt_id = str(uuid.uuid4())
                     successful_start = False
@@ -187,14 +188,14 @@ class ModelRouter:
                         
                         # Provider endpoint failures
                         if exec_error.category in (ErrorCode.TIMEOUT, ErrorCode.SERVICE_UNAVAILABLE, ErrorCode.PROVIDER_PROTOCOL_ERROR, ErrorCode.RATE_LIMITED, ErrorCode.MODEL_MISMATCH):
-                            if exec_error.retryable and retries < RoutingPolicy.max_retries_per_model:
+                            if exec_error.retryable and retries < self.policy.max_retries_per_model:
                                 retries += 1
                                 await asyncio.sleep(2 ** retries)
                                 continue # retry same provider/model
                                 
                             self._get_model_breaker(provider_name, model_def.model_id).record_failure(exec_error.category.value)
                             
-                            if provider_name == "n8n" and not RoutingPolicy.allow_direct_provider_fallback_after_n8n_failure:
+                            if provider_name == "n8n" and not self.policy.allow_direct_provider_fallback_after_n8n_failure:
                                 self._get_provider_breaker(provider_name).record_failure(exec_error.category.value)
                                 yield RoutingExhausted("n8n provider failed and bypass is disabled")
                                 return

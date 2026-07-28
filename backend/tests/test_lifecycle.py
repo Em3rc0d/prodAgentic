@@ -22,15 +22,15 @@ def test_n8n_env_accepts_true_false_and_1_0():
     
     os.environ["N8N_ALLOW_DIRECT_FALLBACK"] = "1"
     container.startup()
-    assert RoutingPolicy.allow_direct_provider_fallback_after_n8n_failure is True
+    assert container.router.policy.allow_direct_provider_fallback_after_n8n_failure is True
     
     os.environ["N8N_ALLOW_DIRECT_FALLBACK"] = "true"
     container.startup()
-    assert RoutingPolicy.allow_direct_provider_fallback_after_n8n_failure is True
+    assert container.router.policy.allow_direct_provider_fallback_after_n8n_failure is True
     
     os.environ["N8N_ALLOW_DIRECT_FALLBACK"] = "0"
     container.startup()
-    assert RoutingPolicy.allow_direct_provider_fallback_after_n8n_failure is False
+    assert container.router.policy.allow_direct_provider_fallback_after_n8n_failure is False
 
 @pytest.mark.asyncio
 async def test_shutdown_awaits_cancelled_preflight():
