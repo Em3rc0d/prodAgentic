@@ -63,18 +63,24 @@ async def pipeline_stream(
         },
     )
 
-class VisualRenderRequest(BaseModel):
-    prompt: str
-    aspect_ratio: str = "16:9"
-    style: str = ""
+from models.visual import VisualRenderRequest
 
 @router.post("/visual-renders")
-async def render_visual(req: VisualRenderRequest):
+async def render_visual(req: VisualRenderRequest, request: Request):
     """Render an image from a prompt."""
-    from agents.adapters.image import PollinationsImageAdapter
-    adapter = PollinationsImageAdapter()
+    visual_service = request.app.state.container.visual_service
     try:
-        result = await adapter.render(prompt=req.prompt, aspect_ratio=req.aspect_ratio, style=req.style)
+        result = await visual_service.render(req)
         return result.model_dump()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Fallback for unexpected failures outside service bounds
+        from models.visual import VisualRenderResponse, RenderStatus
+        import uuid
+        err_res = VisualRenderResponse(
+            render_id=str(uuid.uuid4()),
+            status=RenderStatus.FAILED,
+            provider="Unknown",
+            prompt_used=req.prompt,
+            error_message="Internal Server Error"
+        )
+        return err_res.model_dump()

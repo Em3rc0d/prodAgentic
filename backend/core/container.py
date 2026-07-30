@@ -13,6 +13,7 @@ class ApplicationContainer:
         self.n8n_adapter = None
         self.router = None
         self.pipeline_service = None
+        self.visual_service = None
         self.preflight_task = None
 
     def startup(self):
@@ -50,6 +51,10 @@ class ApplicationContainer:
         # Instantiate ModelRouter with policy
         self.router = ModelRouter(google_adapter=self.google_adapter, n8n_adapter=self.n8n_adapter, routing_policy=routing_policy)
         self.pipeline_service = PipelineOrchestrator(self.router)
+
+        from agents.adapters.image import PollinationsImageAdapter
+        from core.visual import VisualRenderService
+        self.visual_service = VisualRenderService(PollinationsImageAdapter())
 
     async def shutdown(self):
         if self.client:

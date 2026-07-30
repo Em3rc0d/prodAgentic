@@ -44,6 +44,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+import os
+from fastapi.staticfiles import StaticFiles
+
+# Ensure static/assets/renders exists before mounting
+os.makedirs("static/assets/renders", exist_ok=True)
+app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
