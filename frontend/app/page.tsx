@@ -1,20 +1,20 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { fetchIdeas, createPipelineStream } from "@/lib/api";
+import { fetchIdeas, createPipelineStream, renderVisual } from "@/lib/api";
 import { AgentActivityIndicator } from "@/components/AgentActivityIndicator";
 
 type Style = "educational" | "storytelling" | "controversial";
 type StageKey = "research" | "write" | "edit" | "visual";
 type AppMode = "idle" | "loading_ideas" | "ideas_ready" | "pipeline_running" | "pipeline_done";
 type StageStatus = "pending" | "running" | "done" | "failed";
-type TabId = "brief" | "content" | "visuals";
+type TabId = "brief" | "ideas" | "research" | "draft" | "final" | "visual" | "diagnostics";
 
-const PIPELINE_STAGES: { key: StageKey; label: string; emoji: string }[] = [
-  { key: "research", label: "Research Agent", emoji: "🔎" },
-  { key: "write", label: "Content Writer", emoji: "✍️" },
-  { key: "edit", label: "Editor Agent", emoji: "🧪" },
-  { key: "visual", label: "Visual Agent", emoji: "🎨" },
+const PIPELINE_STAGES: { key: StageKey; label: string; emoji: string; tab: TabId }[] = [
+  { key: "research", label: "Research Agent", emoji: "🔎", tab: "research" },
+  { key: "write", label: "Content Writer", emoji: "✍️", tab: "draft" },
+  { key: "edit", label: "Editor Agent", emoji: "🧪", tab: "final" },
+  { key: "visual", label: "Visual Agent", emoji: "🎨", tab: "visual" },
 ];
 
 const STYLE_OPTIONS: { value: Style; label: string; icon: string; desc: string }[] = [
@@ -41,7 +41,10 @@ export default function Home() {
   const [ideas, setIdeas] = useState<string[]>([]);
   const [selectedIdea, setSelectedIdea] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  
   const [renderImage, setRenderImage] = useState(false);
+  const [renderedImageUrl, setRenderedImageUrl] = useState<string | null>(null);
+  const [isRendering, setIsRendering] = useState(false);
 
   // Pipeline state
   const [stageStatus, setStageStatus] = useState<Record<StageKey, StageStatus>>({
@@ -57,6 +60,9 @@ export default function Home() {
   const [finalPost, setFinalPost] = useState("");
   const [visualPrompt, setVisualPrompt] = useState("");
   const [copied, setCopied] = useState(false);
+  
+  // Diagnostics event history
+  const [eventHistory, setEventHistory] = useState<Record<string, unknown>[]>([]);
 
   const esRef = useRef<EventSource | null>(null);
   const activeAttemptByStage = useRef<Record<StageKey, string | null>>({
@@ -68,15 +74,29 @@ export default function Home() {
     return () => { if (esRef.current) esRef.current.close(); };
   }, []);
 
+  const resetPipeline = useCallback(() => {
+    setStageStatus({ research: "pending", write: "pending", edit: "pending", visual: "pending" });
+    setStageOutputs({ research: "", write: "", edit: "", visual: "" });
+    setStageModels({ research: null, write: null, edit: null, visual: null });
+    setCurrentStage(null); setFinalPost(""); setVisualPrompt("");
+    setEventHistory([]);
+    activeAttemptByStage.current = { research: null, write: null, edit: null, visual: null };
+    lastSequenceByAttempt.current = {};
+    setRenderedImageUrl(null);
+    setRenderImage(false);
+  }, []);
+
   const handleGenerateIdeas = useCallback(async () => {
     if (!topic.trim()) return;
     setError(null); setMode("loading_ideas"); setIdeas([]); setSelectedIdea(null);
     setFinalPost(""); setVisualPrompt(""); resetPipeline();
+    setActiveTab("brief");
 
     try {
       const result = await fetchIdeas(topic.trim(), style, targetLanguage);
       setIdeas(result);
       setMode("ideas_ready");
+      setActiveTab("ideas");
     } catch (e) {
       setError("Failed to generate ideas. Is the backend running on :8000?");
       setMode("idle");
@@ -86,7 +106,7 @@ export default function Home() {
   const handleSelectIdea = useCallback((idea: string) => {
     if (mode === "pipeline_running") return;
     setSelectedIdea(idea); setMode("pipeline_running"); resetPipeline();
-    setActiveTab("content"); // Switch to content tab when pipeline starts
+    setActiveTab("research");
 
     if (esRef.current) esRef.current.close();
     const es = createPipelineStream(idea, topic, style, targetLanguage, imagePromptLanguage);
@@ -95,6 +115,9 @@ export default function Home() {
     es.onmessage = (e: MessageEvent) => {
       try {
         const msg = JSON.parse(e.data);
+        
+        setEventHistory((prev) => [...prev, { ...msg, _ts: new Date().toISOString() }]);
+
         if (msg.stage === "stage_start" || msg.stage === "stage.attempt_started") {
           const sKey = msg.stage_name as StageKey;
           setCurrentStage(sKey);
@@ -121,6 +144,9 @@ export default function Home() {
           setStageOutputs((prev) => ({ ...prev, [sKey]: prev[sKey] + msg.text }));
         } else if (msg.stage === "stage_done" || msg.stage === "stage.completed") {
           setStageStatus((prev) => ({ ...prev, [msg.stage_name as StageKey]: "done" }));
+          // Auto switch tab if it makes sense
+          const sKey = msg.stage_name as StageKey;
+          if (sKey === "research") setActiveTab("draft");
         } else if (msg.stage === "stage_failed" || msg.stage === "stage.failed") {
           const rawStage = msg.stage_name;
           if (rawStage && rawStage !== "unknown") {
@@ -128,13 +154,23 @@ export default function Home() {
               activeAttemptByStage.current[rawStage as StageKey] = null;
           }
           setCurrentStage(null); setMode("ideas_ready"); setFinalPost("");
-          // Don't close ES if it's visual agent failure, we want to proceed.
-          // Wait, backend will send complete anyway if ignore_failure=True, but 
-          // wait! If backend sends stage.failed it might terminate the stream if not ignored.
-          // In orchestrator, visual agent failure is ignored, and it continues to publish final post.
-        } else if (msg.stage === "complete") {
+        } else if (msg.stage === "pipeline.text_completed") {
           setFinalPost(msg.final_post || "");
-          setVisualPrompt(msg.visual_prompt || "");
+          setMode("pipeline_done"); 
+          setActiveTab("final");
+        } else if (msg.stage === "visual.prompt_started") {
+          setCurrentStage("visual");
+          setStageStatus((prev) => ({ ...prev, visual: "running" }));
+        } else if (msg.stage === "visual.prompt_completed") {
+          setVisualPrompt(msg.content || "");
+          setStageStatus((prev) => ({ ...prev, visual: "done" }));
+          setCurrentStage(null);
+        } else if (msg.stage === "visual.prompt_failed") {
+          setStageStatus((prev) => ({ ...prev, visual: "failed" }));
+          setCurrentStage(null);
+        } else if (msg.stage === "complete") {
+          setFinalPost(msg.final_post || finalPost);
+          if (msg.visual_prompt) setVisualPrompt(msg.visual_prompt);
           setMode("pipeline_done"); setCurrentStage(null); es.close();
         } else if (msg.stage === "error") {
           setError(msg.reason || "Pipeline encountered a terminal error");
@@ -142,21 +178,12 @@ export default function Home() {
         } else if (msg.stage === "end") {
           es.close();
         }
-      } catch {}
+      } catch (err) {}
     };
     es.onerror = () => {
       setError("Pipeline stream interrupted. Check backend logs."); setMode("ideas_ready"); setActiveTab("brief"); setSelectedIdea(null); es.close();
     };
-  }, [topic, style, mode, targetLanguage, imagePromptLanguage]);
-
-  function resetPipeline() {
-    setStageStatus({ research: "pending", write: "pending", edit: "pending", visual: "pending" });
-    setStageOutputs({ research: "", write: "", edit: "", visual: "" });
-    setStageModels({ research: null, write: null, edit: null, visual: null });
-    setCurrentStage(null); setFinalPost(""); setVisualPrompt("");
-    activeAttemptByStage.current = { research: null, write: null, edit: null, visual: null };
-    lastSequenceByAttempt.current = {};
-  }
+  }, [topic, style, mode, targetLanguage, imagePromptLanguage, finalPost, resetPipeline]);
 
   function handleReset() {
     if (esRef.current) esRef.current.close();
@@ -182,32 +209,58 @@ export default function Home() {
           <span className="header-title">AI Content Engine</span>
         </div>
         
-        <div className="workspace-tabs">
-          <button className={`tab-btn ${activeTab === "brief" ? "active" : ""}`} onClick={() => setActiveTab("brief")}>
-            <span className="tab-icon">📝</span> Brief & Settings
-          </button>
-          <button className={`tab-btn ${activeTab === "content" ? "active" : ""}`} onClick={() => setActiveTab("content")}>
-            <span className="tab-icon">✍️</span> Content {mode === "pipeline_running" && currentStage !== "visual" && <AgentActivityIndicator stage={currentStage || "research"} status="running" size={20} />}
-          </button>
-          <button className={`tab-btn ${activeTab === "visuals" ? "active" : ""}`} onClick={() => setActiveTab("visuals")}>
-            <span className="tab-icon">🎨</span> Visuals {mode === "pipeline_running" && currentStage === "visual" && <AgentActivityIndicator stage="visual" status="running" size={20} />}
-          </button>
+        <div className="global-pipeline-summary" style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            {mode === "pipeline_running" && currentStage ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--surface-active)', padding: '4px 12px', borderRadius: '16px', fontSize: '13px' }}>
+                    <AgentActivityIndicator stage={currentStage} status="running" size={20} />
+                    <span>Pipeline: {currentStage.charAt(0).toUpperCase() + currentStage.slice(1)} {stageModels[currentStage] && <span style={{ color: 'var(--text-3)' }}>({stageModels[currentStage]})</span>}</span>
+                </div>
+            ) : mode === "pipeline_done" ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(34,197,94,0.1)', color: 'var(--success)', padding: '4px 12px', borderRadius: '16px', fontSize: '13px' }}>
+                    <span>✅ Pipeline Complete</span>
+                </div>
+            ) : mode === "loading_ideas" ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--surface-active)', padding: '4px 12px', borderRadius: '16px', fontSize: '13px' }}>
+                    <AgentActivityIndicator stage="idea" status="running" size={20} />
+                    <span>Pipeline: Generating Ideas</span>
+                </div>
+            ) : null}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div className="header-model-badge"><div className="model-dot" />Gemini Router</div>
           {mode !== "idle" && <button className="history-tab-btn" onClick={handleReset} style={{ marginLeft: 4 }}>↩ Reset</button>}
         </div>
       </header>
+      
+      <div className="workspace-tabs-bar" style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--surface)', padding: '0 16px' }}>
+        {[
+            { id: "brief", icon: "📝", label: "Brief" },
+            { id: "ideas", icon: "💡", label: "Ideas", disabled: mode === "idle" || ideas.length === 0 },
+            { id: "research", icon: "🔎", label: "Research", disabled: !selectedIdea },
+            { id: "draft", icon: "✍️", label: "Draft", disabled: !selectedIdea },
+            { id: "final", icon: "✨", label: "Final", disabled: !selectedIdea },
+            { id: "visual", icon: "🎨", label: "Visual", disabled: !selectedIdea },
+            { id: "diagnostics", icon: "⚙️", label: "Diagnostics", disabled: !selectedIdea }
+        ].map((t) => (
+            <button 
+                key={t.id} 
+                className={`tab-btn ${activeTab === t.id ? "active" : ""}`} 
+                onClick={() => setActiveTab(t.id as TabId)}
+                disabled={t.disabled}
+                style={{ opacity: t.disabled ? 0.5 : 1, padding: '12px 16px', borderBottom: activeTab === t.id ? '2px solid var(--primary)' : '2px solid transparent', background: 'none', color: activeTab === t.id ? 'var(--text-1)' : 'var(--text-2)', cursor: t.disabled ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+                <span>{t.icon}</span> {t.label}
+            </button>
+        ))}
+      </div>
 
       {error && (
         <div className="global-error-banner">⚠️ {error}</div>
       )}
 
-      <main className="tab-content-area">
+      <main className="tab-content-area" style={{ padding: '24px', overflowY: 'auto' }}>
         {activeTab === "brief" && (
-          <div className="tab-pane brief-pane">
-            <div className="brief-sidebar">
+            <div className="brief-sidebar" style={{ maxWidth: '600px', margin: '0 auto' }}>
               <div className="input-group">
                 <p className="sidebar-section-label">Topic</p>
                 <input id="topic-input" className="topic-input" type="text" placeholder="e.g. Kafka, Spring Boot..." value={topic} onChange={(e) => setTopic(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleGenerateIdeas()} disabled={isRunning} />
@@ -234,19 +287,20 @@ export default function Home() {
                   <option value="en">English</option><option value="es">Español</option><option value="pt">Português</option>
                 </select>
               </div>
+              <div className="input-group">
+                  <p className="sidebar-section-label">Image Prompt Language</p>
+                  <select value={imagePromptLanguage} onChange={(e) => setImagePromptLanguage(e.target.value)} disabled={isRunning} className="language-select">
+                    <option value="en">English</option><option value="es">Español</option><option value="pt">Português</option>
+                  </select>
+                </div>
               <button id="generate-btn" className="btn-generate" onClick={handleGenerateIdeas} disabled={!topic.trim() || isRunning}>
                 {mode === "loading_ideas" ? "⏳ Generating..." : "⚡ Generate Ideas"}
               </button>
             </div>
-            
-            <div className="brief-main">
-              {mode === "idle" && (
-                <div className="hero-idle">
-                  <div className="hero-icon">⚡</div>
-                  <h1 className="hero-title">AI Content Engine</h1>
-                  <p className="hero-desc">Enter a topic, pick a style, and let AI agents craft your content.</p>
-                </div>
-              )}
+        )}
+        
+        {activeTab === "ideas" && (
+            <div style={{ maxWidth: '800px', margin: '0 auto' }}>
               {mode === "loading_ideas" && (
                 <div className="ideas-section">
                   <div className="ideas-header"><span className="ideas-title">Generating ideas...</span><AgentActivityIndicator stage="idea" status="running" size={20} /></div>
@@ -269,97 +323,77 @@ export default function Home() {
                 </div>
               )}
             </div>
-          </div>
         )}
 
-        {activeTab === "content" && (
-          <div className="tab-pane content-pane">
-            <div className="pipeline-sidebar">
-              <p className="sidebar-section-label">Pipeline Status</p>
-              <div className="pipeline-tracker">
-                <div className={`pipeline-step active`}><div className={`step-indicator done`}>✓</div><span className={`step-name done`}>🧠 Idea Generator</span></div>
-                {PIPELINE_STAGES.filter(s => s.key !== 'visual').map((s, i) => (
-                  <div key={s.key} className={`pipeline-step ${currentStage === s.key ? "active" : ""}`}>
-                    <div className={`step-indicator ${stageStatus[s.key]}`}>
-                      {stageStatus[s.key] === "done" ? "✓" : stageStatus[s.key] === "running" ? <AgentActivityIndicator stage={s.key} status="running" size={20} /> : i + 2}
-                    </div>
-                    <span className={`step-name ${stageStatus[s.key] === "done" ? "done" : stageStatus[s.key] === "failed" ? "failed" : stageStatus[s.key] === "running" ? "active" : ""}`}>{s.emoji} {s.label}</span>
-                  </div>
-                ))}
-                <div className={`pipeline-step ${mode === "pipeline_done" ? "active" : ""}`}><div className={`step-indicator ${mode === "pipeline_done" ? "done" : "pending"}`}>{mode === "pipeline_done" ? "✓" : "5"}</div><span className={`step-name ${mode === "pipeline_done" ? "done" : ""}`}>🚀 Ready to Publish</span></div>
-              </div>
+        {activeTab === "research" && (
+            <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+                <div className={`stream-stage-header ${stageStatus.research === "running" ? "active" : stageStatus.research === "done" ? "done" : stageStatus.research === "failed" ? "failed" : ""}`}>
+                    <span className="stage-emoji">🔎</span><span className="stage-label">Research Agent</span>
+                    {stageStatus.research === "running" && <span className="stage-status-badge running">streaming...</span>}
+                    {stageStatus.research === "done" && <span className="stage-status-badge done">✓ done</span>}
+                    {stageStatus.research === "failed" && <span className="stage-status-badge" style={{color: "#fca5a5", background: "rgba(239,68,68,0.1)"}}>❌ failed</span>}
+                    {stageModels.research && <span style={{ marginLeft: 8, fontSize: 11, color: "var(--text-3)" }}>· {stageModels.research}</span>}
+                </div>
+                <div className={`stream-output ${stageStatus.research === "running" ? "active" : ""}`} style={{ minHeight: '300px' }}>{stageOutputs.research}{stageStatus.research === "running" && <span className="typing-cursor" />}</div>
             </div>
-            
-            <div className="content-streams">
-              {!selectedIdea ? (
-                <div className="empty-state">Select an idea in the Brief tab to start generation.</div>
-              ) : (
-                <div className="stream-section">
-                  <div className="selected-idea-banner">💡 &quot;{selectedIdea}&quot;</div>
-                  {PIPELINE_STAGES.filter(s => s.key !== 'visual').map((s) => {
-                    const status = stageStatus[s.key];
-                    if (status === "pending" && !stageOutputs[s.key]) return null;
-                    return (
-                      <div key={s.key}>
-                        <div className={`stream-stage-header ${status === "running" ? "active" : status === "done" ? "done" : status === "failed" ? "failed" : ""}`}>
-                          <span className="stage-emoji">{s.emoji}</span><span className="stage-label">{s.label}</span>
-                          {status === "running" && <span className="stage-status-badge running">streaming...</span>}
-                          {status === "done" && <span className="stage-status-badge done">✓ done</span>}
-                          {status === "failed" && <span className="stage-status-badge" style={{color: "#fca5a5", background: "rgba(239,68,68,0.1)"}}>❌ failed</span>}
-                          {stageModels[s.key] && <span style={{ marginLeft: 8, fontSize: 11, color: "var(--text-3)" }}>· {stageModels[s.key]}</span>}
+        )}
+
+        {activeTab === "draft" && (
+            <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+                <div className={`stream-stage-header ${stageStatus.write === "running" ? "active" : stageStatus.write === "done" ? "done" : stageStatus.write === "failed" ? "failed" : ""}`}>
+                    <span className="stage-emoji">✍️</span><span className="stage-label">Content Writer</span>
+                    {stageStatus.write === "running" && <span className="stage-status-badge running">streaming...</span>}
+                    {stageStatus.write === "done" && <span className="stage-status-badge done">✓ done</span>}
+                    {stageStatus.write === "failed" && <span className="stage-status-badge" style={{color: "#fca5a5", background: "rgba(239,68,68,0.1)"}}>❌ failed</span>}
+                    {stageModels.write && <span style={{ marginLeft: 8, fontSize: 11, color: "var(--text-3)" }}>· {stageModels.write}</span>}
+                </div>
+                <div className={`stream-output ${stageStatus.write === "running" ? "active" : ""}`} style={{ minHeight: '300px' }}>{stageOutputs.write}{stageStatus.write === "running" && <span className="typing-cursor" />}</div>
+            </div>
+        )}
+
+        {activeTab === "final" && (
+            <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+                <div className={`stream-stage-header ${stageStatus.edit === "running" ? "active" : stageStatus.edit === "done" ? "done" : stageStatus.edit === "failed" ? "failed" : ""}`}>
+                    <span className="stage-emoji">🧪</span><span className="stage-label">Editor Agent</span>
+                    {stageStatus.edit === "running" && <span className="stage-status-badge running">streaming...</span>}
+                    {stageStatus.edit === "done" && <span className="stage-status-badge done">✓ done</span>}
+                    {stageStatus.edit === "failed" && <span className="stage-status-badge" style={{color: "#fca5a5", background: "rgba(239,68,68,0.1)"}}>❌ failed</span>}
+                    {stageModels.edit && <span style={{ marginLeft: 8, fontSize: 11, color: "var(--text-3)" }}>· {stageModels.edit}</span>}
+                </div>
+                <div className={`stream-output ${stageStatus.edit === "running" ? "active" : ""}`} style={{ marginBottom: '24px' }}>{stageOutputs.edit}{stageStatus.edit === "running" && <span className="typing-cursor" />}</div>
+                
+                {finalPost && (
+                    <div className="content-preview" style={{ marginTop: '32px' }}>
+                        <div className="preview-header"><span className="preview-header-title">🔗 LinkedIn Preview</span>{wordCount > 0 && <span className="word-count">{wordCount}w</span>}</div>
+                        <div className="preview-content">
+                            <div className="linkedin-mockup">
+                            <div className="linkedin-header"><div className="linkedin-avatar">E</div><div><div className="linkedin-name">You</div><div className="linkedin-meta">Software Engineer · Just now · 🌐</div></div></div>
+                            <div className="linkedin-body">{finalPost}</div>
+                            <div className="linkedin-footer"><span className="li-reaction">👍</span><span className="li-reaction">❤️</span><span className="li-reaction">💡</span></div>
+                            </div>
                         </div>
-                        <div className={`stream-output ${status === "running" ? "active" : ""}`}>{stageOutputs[s.key]}{status === "running" && <span className="typing-cursor" />}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="content-preview">
-              <div className="preview-header"><span className="preview-header-title">🔗 LinkedIn Preview</span>{wordCount > 0 && <span className="word-count">{wordCount}w</span>}</div>
-              {!finalPost ? (
-                <div className="preview-empty"><div className="preview-empty-icon">📝</div><p>Your post will appear here</p></div>
-              ) : (
-                <>
-                  <div className="preview-content">
-                    <div className="linkedin-mockup">
-                      <div className="linkedin-header"><div className="linkedin-avatar">E</div><div><div className="linkedin-name">You</div><div className="linkedin-meta">Software Engineer · Just now · 🌐</div></div></div>
-                      <div className="linkedin-body">{finalPost}</div>
-                      <div className="linkedin-footer"><span className="li-reaction">👍</span><span className="li-reaction">❤️</span><span className="li-reaction">💡</span></div>
+                        <div className="preview-actions">
+                            <button className={`btn-copy ${copied ? "copied" : ""}`} onClick={handleCopy}>{copied ? "✅ Copied!" : "📋 Copy to Clipboard"}</button>
+                        </div>
                     </div>
-                  </div>
-                  <div className="preview-actions">
-                    <button className={`btn-copy ${copied ? "copied" : ""}`} onClick={handleCopy}>{copied ? "✅ Copied!" : "📋 Copy to Clipboard"}</button>
-                  </div>
-                </>
-              )}
+                )}
             </div>
-          </div>
         )}
 
-        {activeTab === "visuals" && (
-          <div className="tab-pane visuals-pane">
-             <div className="brief-sidebar">
-                <div className="input-group">
-                  <p className="sidebar-section-label">Image Prompt Language</p>
-                  <select value={imagePromptLanguage} onChange={(e) => setImagePromptLanguage(e.target.value)} disabled={isRunning} className="language-select">
-                    <option value="en">English</option><option value="es">Español</option><option value="pt">Português</option>
-                  </select>
-                </div>
-             </div>
-             <div className="visuals-main">
+        {activeTab === "visual" && (
+            <div style={{ maxWidth: '800px', margin: '0 auto' }}>
                 <div className="stream-section">
                     <div className={`stream-stage-header ${stageStatus.visual === "running" ? "active" : stageStatus.visual === "done" ? "done" : stageStatus.visual === "failed" ? "failed" : ""}`}>
                         <span className="stage-emoji">🎨</span><span className="stage-label">Visual Agent</span>
                         {stageStatus.visual === "running" && <span className="stage-status-badge running">streaming...</span>}
                         {stageStatus.visual === "done" && <span className="stage-status-badge done">✓ done</span>}
                         {stageStatus.visual === "failed" && <span className="stage-status-badge" style={{color: "#fca5a5", background: "rgba(239,68,68,0.1)"}}>❌ failed</span>}
+                        {stageModels.visual && <span style={{ marginLeft: 8, fontSize: 11, color: "var(--text-3)" }}>· {stageModels.visual}</span>}
                     </div>
                     {stageOutputs.visual && <div className={`stream-output ${stageStatus.visual === "running" ? "active" : ""}`}>{stageOutputs.visual}{stageStatus.visual === "running" && <span className="typing-cursor" />}</div>}
                 </div>
                 {visualPrompt && (
-                  <div className="visual-result">
+                  <div className="visual-result" style={{ marginTop: '24px' }}>
                     <h3 style={{color: 'var(--text-1)', marginBottom: '12px'}}>Generated Visual Prompt</h3>
                     <div className="visual-prompt-box" style={{background: 'var(--surface-active)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-active)', marginBottom: '16px'}}>
                        {visualPrompt}
@@ -369,7 +403,21 @@ export default function Home() {
                         type="checkbox" 
                         id="render-image-toggle"
                         checked={renderImage}
-                        onChange={(e) => setRenderImage(e.target.checked)}
+                        onChange={async (e) => {
+                          const checked = e.target.checked;
+                          setRenderImage(checked);
+                          if (checked && !renderedImageUrl) {
+                            setIsRendering(true);
+                            try {
+                              const result = await renderVisual(visualPrompt, "16:9");
+                              setRenderedImageUrl(result.url);
+                            } catch (err) {
+                              console.error("Failed to render image", err);
+                            } finally {
+                              setIsRendering(false);
+                            }
+                          }
+                        }}
                       />
                       <label htmlFor="render-image-toggle" style={{ color: 'var(--text-2)', fontSize: '14px', cursor: 'pointer' }}>
                         Render image preview (Powered by Pollinations AI)
@@ -377,19 +425,87 @@ export default function Home() {
                     </div>
                     {renderImage && (
                       <div className="image-render-preview" style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface)' }}>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img 
-                          src={`https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt)}?width=800&height=400&nologo=true`} 
-                          alt={visualPrompt}
-                          style={{ width: '100%', display: 'block', aspectRatio: '2/1', objectFit: 'cover' }}
-                        />
+                        {isRendering ? (
+                          <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-3)' }}>
+                            <AgentActivityIndicator stage="visual" status="running" size={20} />
+                            <div style={{ marginTop: '12px' }}>Generating image...</div>
+                          </div>
+                        ) : renderedImageUrl ? (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img 
+                            src={renderedImageUrl} 
+                            alt={visualPrompt}
+                            style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }}
+                          />
+                        ) : (
+                          <div style={{ padding: '40px', textAlign: 'center', color: '#fca5a5' }}>
+                            Failed to generate image.
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
                 )}
-             </div>
-          </div>
+            </div>
         )}
+
+        {activeTab === "diagnostics" && (
+            <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
+                <h2 style={{ color: 'var(--text-1)', marginBottom: '16px' }}>Pipeline Diagnostics</h2>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '32px' }}>
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', padding: '16px' }}>
+                        <h3 style={{ color: 'var(--text-2)', fontSize: '12px', textTransform: 'uppercase', marginBottom: '12px' }}>Model Routing</h3>
+                        {PIPELINE_STAGES.map(s => (
+                            <div key={s.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-active)' }}>
+                                <span style={{ color: 'var(--text-1)' }}>{s.label}</span>
+                                <span style={{ color: stageModels[s.key] ? 'var(--primary)' : 'var(--text-3)', fontFamily: 'monospace' }}>
+                                    {stageModels[s.key] || 'Pending'}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                    
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', padding: '16px' }}>
+                        <h3 style={{ color: 'var(--text-2)', fontSize: '12px', textTransform: 'uppercase', marginBottom: '12px' }}>Status Tracker</h3>
+                        {PIPELINE_STAGES.map(s => (
+                            <div key={s.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-active)' }}>
+                                <span style={{ color: 'var(--text-1)' }}>{s.label}</span>
+                                <span style={{ 
+                                    color: stageStatus[s.key] === 'done' ? 'var(--success)' : 
+                                           stageStatus[s.key] === 'failed' ? '#fca5a5' :
+                                           stageStatus[s.key] === 'running' ? 'var(--primary)' : 'var(--text-3)' 
+                                }}>
+                                    {stageStatus[s.key].toUpperCase()}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div style={{ background: '#1e1e1e', borderRadius: '8px', overflow: 'hidden' }}>
+                    <div style={{ background: '#252526', padding: '8px 16px', borderBottom: '1px solid #333', color: '#ccc', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>SSE Event History</span>
+                        <span>{eventHistory.length} events</span>
+                    </div>
+                    <div style={{ maxHeight: '400px', overflowY: 'auto', padding: '16px', fontFamily: 'monospace', fontSize: '12px', color: '#d4d4d4' }}>
+                        {eventHistory.length === 0 ? (
+                            <div style={{ color: '#666', fontStyle: 'italic' }}>No events recorded yet.</div>
+                        ) : (
+                            eventHistory.map((evt, i) => (
+                                <div key={i} style={{ marginBottom: '8px', borderBottom: '1px solid #333', paddingBottom: '8px' }}>
+                                    <div style={{ color: '#569cd6', marginBottom: '4px' }}>[{new Date(evt._ts as string).toLocaleTimeString()}] {(evt.stage as string) || 'unknown'}</div>
+                                    <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', paddingLeft: '16px', color: '#ce9178' }}>
+                                        {JSON.stringify(evt, (k, v) => k === '_ts' || k === 'stage' ? undefined : v, 2)}
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            </div>
+        )}
+
       </main>
     </div>
   );
