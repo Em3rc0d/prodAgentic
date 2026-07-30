@@ -416,7 +416,7 @@ export default function Home() {
                             if (result.status === "FAILED") {
                               setRenderStatus("FAILED");
                             } else {
-                              setRenderedImageUrl(result.asset_url || result.url);
+                              setRenderedImageUrl(result.asset_url ?? result.url ?? null);
                               setRenderStatus("READY");
                             }
                           } catch (err) {

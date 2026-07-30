@@ -46,11 +46,31 @@ export async function deletePost(postId: string) {
   return res.json();
 }
 
-export async function renderVisual(prompt: string, aspect_ratio: string = "16:9", style: string = ""): Promise<{url: string, prompt_used: string, aspect_ratio: string}> {
+export type RenderStatus = "QUEUED" | "RENDERING" | "READY" | "FAILED" | "CANCELLED";
+
+export interface VisualRenderResponse {
+  render_id: string;
+  status: RenderStatus;
+  provider: string;
+  asset_url?: string;
+  url?: string; // legacy fallback
+  width?: number;
+  height?: number;
+  prompt_used: string;
+  error_message?: string;
+}
+
+export async function renderVisual(
+  prompt: string,
+  aspect_ratio: string = "16:9",
+  style: string = ""
+): Promise<VisualRenderResponse> {
+  const idempotency_key = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const run_id = idempotency_key; // use same value; server generates its own run_id if needed
   const res = await fetch(`${API}/api/visual-renders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, aspect_ratio, style }),
+    body: JSON.stringify({ prompt, aspect_ratio, style, run_id, idempotency_key }),
   });
   if (!res.ok) throw new Error(`Render request failed: ${res.status}`);
   return res.json();
