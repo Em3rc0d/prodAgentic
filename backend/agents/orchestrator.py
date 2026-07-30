@@ -11,7 +11,7 @@ from .editor_agent import EditorAgent
 from .visual_agent import VisualAgent
 from db.mongo import get_db
 from agents.router import AttemptStarted, ContentChunk, AttemptFailed, AttemptResetRequired, AttemptCompleted, RoutingExhausted, ValidationWarning
-from core.context import GenerationContext, LanguageCode
+from core.context import GenerationContext, LanguageCode, TargetLanguageCode, ImagePromptLanguageCode
 from core.language import language_detector
 
 def _sse(stage: str, **kwargs) -> dict:
@@ -32,28 +32,37 @@ class PipelineOrchestrator:
 
     def _resolve_context(self, topic: str, style: str, target_language: str, image_prompt_language: str) -> GenerationContext:
         import os
-        target_lang = LanguageCode(target_language)
+        target_lang = TargetLanguageCode(target_language)
         
         # Always detect source language
         detect_result = language_detector.detect(topic)
         detected_lang = detect_result.language
         confidence = detect_result.confidence
         
-        # Get default language from config
-        default_lang_str = os.environ.get("APP_DEFAULT_LANGUAGE", "es")
+        # Get default language from config - MUST be explicitly set; no silent fallbacks
+        default_lang_str = os.environ.get("APP_DEFAULT_LANGUAGE", "")
+        if not default_lang_str:
+            raise ValueError(
+                "APP_DEFAULT_LANGUAGE is not configured. "
+                "Set it to one of: es, en, pt. No silent fallback is allowed."
+            )
         try:
             default_lang = LanguageCode(default_lang_str)
         except ValueError:
-            default_lang = LanguageCode.ES
-            print(f"[WARN] Invalid APP_DEFAULT_LANGUAGE: {default_lang_str}. Falling back to ES.")
-            
-        if target_lang == LanguageCode.AUTO:
+            raise ValueError(
+                f"APP_DEFAULT_LANGUAGE='{default_lang_str}' is invalid. "
+                f"Must be one of: es, en, pt."
+            )
+
+        if target_lang == TargetLanguageCode.AUTO:
             if detected_lang == LanguageCode.UNKNOWN:
                 resolved_lang = default_lang
             else:
                 resolved_lang = detected_lang
         else:
-            resolved_lang = target_lang
+            resolved_lang = LanguageCode(target_lang.value)
+
+        img_lang = ImagePromptLanguageCode(image_prompt_language)
 
         return GenerationContext(
             run_id=str(uuid.uuid4()),
@@ -62,9 +71,9 @@ class PipelineOrchestrator:
             requested_source_language=LanguageCode.AUTO,
             detected_source_language=detected_lang,
             source_detection_confidence=confidence,
-            requested_target_language=target_lang,
+            requested_target_language=LanguageCode(target_lang.value),
             resolved_target_language=resolved_lang,
-            image_prompt_language=LanguageCode(image_prompt_language)
+            image_prompt_language=img_lang.to_language_code()
         )
 
     async def generate_ideas(self, topic: str, style: str, target_language: str = "es") -> list[str]:

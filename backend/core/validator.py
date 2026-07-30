@@ -1,5 +1,6 @@
 import json
 import re
+import os
 from enum import Enum
 from dataclasses import dataclass
 from typing import Optional
@@ -74,8 +75,8 @@ class LanguageValidator:
         prose = LanguageValidator._extract_prose(text, artifact_type)
         detect_result = language_detector.detect(prose)
         
-        LANGUAGE_MIN_CONFIDENCE = 0.6
-        LANGUAGE_MIN_MARGIN = 0.2
+        LANGUAGE_MIN_CONFIDENCE = float(os.environ.get("LANGUAGE_MIN_CONFIDENCE", "0.6"))
+        LANGUAGE_MIN_MARGIN = float(os.environ.get("LANGUAGE_MIN_MARGIN", "0.2"))
         
         detected = detect_result.language
         conf = detect_result.confidence

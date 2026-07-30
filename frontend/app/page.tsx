@@ -261,7 +261,7 @@ export default function Home() {
         <div className="global-error-banner">⚠️ {error}</div>
       )}
 
-      <main className="tab-content-area" style={{ padding: '24px', overflowY: 'auto' }}>
+      <main className="tab-content-area" style={{ padding: '24px' }}>
         {activeTab === "brief" && (
             <div className="brief-sidebar" style={{ maxWidth: '600px', margin: '0 auto' }}>
               <div className="input-group">
@@ -287,6 +287,7 @@ export default function Home() {
               <div className="input-group">
                 <p className="sidebar-section-label">Target Language</p>
                 <select value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)} disabled={isRunning} className="language-select">
+                  <option value="auto">Auto-detect</option>
                   <option value="en">English</option><option value="es">Español</option><option value="pt">Português</option>
                 </select>
               </div>

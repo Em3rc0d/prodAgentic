@@ -10,6 +10,25 @@ class LanguageCode(Enum):
     PT = "pt"
     UNKNOWN = "unknown"
 
+class TargetLanguageCode(str, Enum):
+    """Language code for the post target audience language. AUTO means detect from topic."""
+    AUTO = "auto"
+    ES = "es"
+    EN = "en"
+    PT = "pt"
+
+    def to_language_code(self) -> "LanguageCode":
+        return LanguageCode(self.value) if self.value != "auto" else LanguageCode.AUTO
+
+class ImagePromptLanguageCode(str, Enum):
+    """Language code for image prompt generation. Always explicit, no AUTO."""
+    ES = "es"
+    EN = "en"
+    PT = "pt"
+
+    def to_language_code(self) -> "LanguageCode":
+        return LanguageCode(self.value)
+
 @dataclass(frozen=True)
 class GenerationContext:
     run_id: str

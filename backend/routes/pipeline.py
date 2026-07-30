@@ -4,7 +4,7 @@ from models.post import IdeasRequest
 from agents.idea_generator import GenerationIdeasFailed
 from pydantic import BaseModel
 
-from core.context import LanguageCode
+from core.context import LanguageCode, TargetLanguageCode, ImagePromptLanguageCode
 
 def get_ready_pipeline_service(request: Request):
     pipeline = request.app.state.container.pipeline_service
@@ -36,8 +36,8 @@ async def pipeline_stream(
     idea: str = Query(..., description="The selected idea to expand"),
     topic: str = Query(..., description="Original topic"),
     style: str = Query("educational", description="Post style: educational | storytelling | controversial"),
-    target_language: LanguageCode = Query(LanguageCode.ES, description="Target language for the post"),
-    image_prompt_language: LanguageCode = Query(LanguageCode.EN, description="Target language for the image prompt"),
+    target_language: TargetLanguageCode = Query(TargetLanguageCode.ES, description="Target language for the post"),
+    image_prompt_language: ImagePromptLanguageCode = Query(ImagePromptLanguageCode.EN, description="Language for the image prompt"),
     pipeline = Depends(get_ready_pipeline_service)
 ):
     """
