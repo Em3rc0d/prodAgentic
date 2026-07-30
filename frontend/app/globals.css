@@ -993,11 +993,7 @@ body::after {
   border: 1px solid var(--border-active);
 }
 
-.tab-content-area {
-  height: calc(100vh - 56px);
-  overflow: hidden;
-  background: var(--bg);
-}
+
 
 .tab-pane {
   display: grid;
@@ -1038,6 +1034,7 @@ body::after {
   border-right: 1px solid var(--border);
 }
 
+
 .content-preview {
   display: flex;
   flex-direction: column;
@@ -1045,8 +1042,19 @@ body::after {
   background: var(--surface);
 }
 
+/* Single primary scroll container — only this element scrolls vertically */
+.tab-content-area {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg);
+}
+
 .tabbed-workspace {
-  display: block; /* Overwrite old grid */
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden; /* Outer shell never scrolls */
 }
 
 @keyframes fade-in {
