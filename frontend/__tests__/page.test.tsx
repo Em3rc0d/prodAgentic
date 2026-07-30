@@ -150,7 +150,7 @@ describe('Page Component', () => {
       if (url.toString().includes('visual-renders')) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ url: 'https://example.com/rendered.png', prompt_used: 'Test', aspect_ratio: '16:9' }),
+          json: () => Promise.resolve({ status: 'READY', asset_url: 'https://example.com/rendered.png', prompt_used: 'Test' }),
         })
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ ideas: ['Idea 1'] }) })
@@ -171,12 +171,12 @@ describe('Page Component', () => {
       }
     })
     
-    expect(screen.getByText('Cyberpunk city')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Cyberpunk city')).toBeInTheDocument()
     
-    // Click render checkbox
-    const renderCheckbox = screen.getByLabelText(/Render image preview/i)
+    // Click render button
+    const renderButton = screen.getByText(/Generar imagen/i)
     await act(async () => {
-      fireEvent.click(renderCheckbox)
+      fireEvent.click(renderButton)
     })
     
     // Verify fetch was called to visual-renders

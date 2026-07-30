@@ -6,7 +6,7 @@ import { AgentActivityIndicator } from "@/components/AgentActivityIndicator";
 
 type Style = "educational" | "storytelling" | "controversial";
 type StageKey = "research" | "write" | "edit" | "visual";
-type AppMode = "idle" | "loading_ideas" | "ideas_ready" | "pipeline_running" | "pipeline_done";
+type AppMode = "idle" | "loading_ideas" | "ideas_ready" | "pipeline_running" | "text_ready" | "pipeline_done";
 type StageStatus = "pending" | "running" | "done" | "failed";
 type TabId = "brief" | "ideas" | "research" | "draft" | "final" | "visual" | "diagnostics";
 
@@ -42,9 +42,8 @@ export default function Home() {
   const [selectedIdea, setSelectedIdea] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   
-  const [renderImage, setRenderImage] = useState(false);
   const [renderedImageUrl, setRenderedImageUrl] = useState<string | null>(null);
-  const [isRendering, setIsRendering] = useState(false);
+  const [renderStatus, setRenderStatus] = useState<"IDLE" | "QUEUED" | "RENDERING" | "READY" | "FAILED">("IDLE");
 
   // Pipeline state
   const [stageStatus, setStageStatus] = useState<Record<StageKey, StageStatus>>({
@@ -83,7 +82,7 @@ export default function Home() {
     activeAttemptByStage.current = { research: null, write: null, edit: null, visual: null };
     lastSequenceByAttempt.current = {};
     setRenderedImageUrl(null);
-    setRenderImage(false);
+    setRenderStatus("IDLE");
   }, []);
 
   const handleGenerateIdeas = useCallback(async () => {
@@ -156,7 +155,7 @@ export default function Home() {
           setCurrentStage(null); setMode("ideas_ready"); setFinalPost("");
         } else if (msg.stage === "pipeline.text_completed") {
           setFinalPost(msg.final_post || "");
-          setMode("pipeline_done"); 
+          setMode("text_ready"); 
           setActiveTab("final");
         } else if (msg.stage === "visual.prompt_started") {
           setCurrentStage("visual");
@@ -214,6 +213,10 @@ export default function Home() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--surface-active)', padding: '4px 12px', borderRadius: '16px', fontSize: '13px' }}>
                     <AgentActivityIndicator stage={currentStage} status="running" size={20} />
                     <span>Pipeline: {currentStage.charAt(0).toUpperCase() + currentStage.slice(1)} {stageModels[currentStage] && <span style={{ color: 'var(--text-3)' }}>({stageModels[currentStage]})</span>}</span>
+                </div>
+            ) : mode === "text_ready" ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', padding: '4px 12px', borderRadius: '16px', fontSize: '13px' }}>
+                    <span>📝 Text Ready</span>
                 </div>
             ) : mode === "pipeline_done" ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(34,197,94,0.1)', color: 'var(--success)', padding: '4px 12px', borderRadius: '16px', fontSize: '13px' }}>
@@ -307,7 +310,7 @@ export default function Home() {
                   <div className="ideas-grid">{[...Array(6)].map((_, i) => (<div key={i} className="skeleton" style={{ height: 72, animationDelay: `${i * 0.1}s` }} />))}</div>
                 </div>
               )}
-              {(mode === "ideas_ready" || mode === "pipeline_running" || mode === "pipeline_done") && ideas.length > 0 && (
+              {(mode === "ideas_ready" || mode === "pipeline_running" || mode === "text_ready" || mode === "pipeline_done") && ideas.length > 0 && (
                 <div className="ideas-section">
                   <div className="ideas-header">
                     <span className="ideas-title">{mode === "ideas_ready" ? "Select an idea to start the pipeline" : "Idea selected"}</span>
@@ -315,7 +318,7 @@ export default function Home() {
                   </div>
                   <div className="ideas-grid">
                     {ideas.map((idea, i) => (
-                      <button key={i} className={`idea-card ${selectedIdea === idea ? "selected" : ""}`} onClick={() => handleSelectIdea(idea)} disabled={mode === "pipeline_running"}>
+                      <button key={i} className={`idea-card ${selectedIdea === idea ? "selected" : ""}`} onClick={() => handleSelectIdea(idea)} disabled={mode === "pipeline_running" || mode === "text_ready" || mode === "pipeline_done"}>
                         <div className="idea-number">#{String(i + 1).padStart(2, "0")}</div>{idea}
                       </button>
                     ))}
@@ -395,42 +398,55 @@ export default function Home() {
                 {visualPrompt && (
                   <div className="visual-result" style={{ marginTop: '24px' }}>
                     <h3 style={{color: 'var(--text-1)', marginBottom: '12px'}}>Generated Visual Prompt</h3>
-                    <div className="visual-prompt-box" style={{background: 'var(--surface-active)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-active)', marginBottom: '16px'}}>
-                       {visualPrompt}
-                    </div>
+                    <textarea 
+                      className="visual-prompt-box" 
+                      style={{background: 'var(--surface-active)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-active)', marginBottom: '16px', width: '100%', minHeight: '100px', color: 'var(--text-1)', fontFamily: 'inherit', resize: 'vertical'}}
+                      value={visualPrompt}
+                      onChange={(e) => setVisualPrompt(e.target.value)}
+                    />
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                      <input 
-                        type="checkbox" 
-                        id="render-image-toggle"
-                        checked={renderImage}
-                        onChange={async (e) => {
-                          const checked = e.target.checked;
-                          setRenderImage(checked);
-                          if (checked && !renderedImageUrl) {
-                            setIsRendering(true);
-                            try {
-                              const result = await renderVisual(visualPrompt, "16:9");
-                              setRenderedImageUrl(result.url);
-                            } catch (err) {
-                              console.error("Failed to render image", err);
-                            } finally {
-                              setIsRendering(false);
+                      <button 
+                        className="btn-generate"
+                        style={{ padding: '8px 16px', borderRadius: '4px', background: 'var(--primary)', color: 'white', border: 'none', cursor: 'pointer' }}
+                        onClick={async () => {
+                          setRenderStatus("RENDERING");
+                          try {
+                            const result = await renderVisual(visualPrompt, "16:9");
+                            if (result.status === "FAILED") {
+                              setRenderStatus("FAILED");
+                            } else {
+                              setRenderedImageUrl(result.asset_url || result.url);
+                              setRenderStatus("READY");
                             }
+                          } catch (err) {
+                            console.error("Failed to render image", err);
+                            setRenderStatus("FAILED");
                           }
                         }}
-                      />
-                      <label htmlFor="render-image-toggle" style={{ color: 'var(--text-2)', fontSize: '14px', cursor: 'pointer' }}>
-                        Render image preview (Powered by Pollinations AI)
-                      </label>
+                        disabled={renderStatus === "RENDERING"}
+                      >
+                        {renderStatus === "RENDERING" ? "Rendering..." : "Generar imagen"}
+                      </button>
+                      <button 
+                        style={{ padding: '8px 16px', borderRadius: '4px', background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)', cursor: 'pointer' }}
+                        onClick={() => navigator.clipboard.writeText(visualPrompt)}
+                      >
+                        Copiar prompt
+                      </button>
+                      {renderStatus !== "IDLE" && (
+                        <span style={{ marginLeft: '8px', fontSize: '13px', color: renderStatus === "FAILED" ? '#fca5a5' : renderStatus === "READY" ? 'var(--success)' : 'var(--text-2)' }}>
+                          Status: {renderStatus}
+                        </span>
+                      )}
                     </div>
-                    {renderImage && (
+                    {renderStatus === "RENDERING" || renderStatus === "READY" || renderStatus === "FAILED" ? (
                       <div className="image-render-preview" style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface)' }}>
-                        {isRendering ? (
+                        {renderStatus === "RENDERING" ? (
                           <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-3)' }}>
                             <AgentActivityIndicator stage="visual" status="running" size={20} />
                             <div style={{ marginTop: '12px' }}>Generating image...</div>
                           </div>
-                        ) : renderedImageUrl ? (
+                        ) : renderStatus === "READY" && renderedImageUrl ? (
                           /* eslint-disable-next-line @next/next/no-img-element */
                           <img 
                             src={renderedImageUrl} 
@@ -443,7 +459,7 @@ export default function Home() {
                           </div>
                         )}
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 )}
             </div>
