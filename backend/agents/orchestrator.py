@@ -10,7 +10,7 @@ from .content_writer import ContentWriterAgent
 from .editor_agent import EditorAgent
 from .visual_agent import VisualAgent
 from db.mongo import get_db
-from agents.router import AttemptStarted, ContentChunk, AttemptFailed, AttemptResetRequired, AttemptCompleted, RoutingExhausted
+from agents.router import AttemptStarted, ContentChunk, AttemptFailed, AttemptResetRequired, AttemptCompleted, RoutingExhausted, ValidationWarning
 from core.context import GenerationContext, LanguageCode
 from core.language import language_detector
 
@@ -31,14 +31,25 @@ class PipelineOrchestrator:
         self.visual_agent = VisualAgent(router)
 
     def _resolve_context(self, topic: str, style: str, target_language: str, image_prompt_language: str) -> GenerationContext:
+        import os
         target_lang = LanguageCode(target_language)
-        detected_lang = LanguageCode.UNKNOWN
-        confidence = 0.0
         
+        # Always detect source language
+        detect_result = language_detector.detect(topic)
+        detected_lang = detect_result.language
+        confidence = detect_result.confidence
+        
+        # Get default language from config
+        default_lang_str = os.environ.get("APP_DEFAULT_LANGUAGE", "es")
+        try:
+            default_lang = LanguageCode(default_lang_str)
+        except ValueError:
+            default_lang = LanguageCode.ES
+            print(f"[WARN] Invalid APP_DEFAULT_LANGUAGE: {default_lang_str}. Falling back to ES.")
+            
         if target_lang == LanguageCode.AUTO:
-            detected_lang = language_detector.detect(topic)
             if detected_lang == LanguageCode.UNKNOWN:
-                resolved_lang = LanguageCode.ES
+                resolved_lang = default_lang
             else:
                 resolved_lang = detected_lang
         else:
@@ -68,7 +79,10 @@ class PipelineOrchestrator:
         final_ref = [""]
         visual_ref = [""]
 
-        async def run_stage(agent_stream_func, stage_name, profile, output_ref, ignore_failure=False):
+        async def run_stage(agent_stream_func, stage_name, profile, output_ref, ignore_failure=False, stage_flags=None):
+            if stage_flags is None:
+                stage_flags = {}
+                
             attempt_number = 0
             event_sequence = 0
             
@@ -117,6 +131,19 @@ class PipelineOrchestrator:
                             run_id=context.run_id,
                             event_sequence=event_sequence
                         )
+                    elif isinstance(event, ValidationWarning):
+                        stage_flags["has_validation_warning"] = True
+                        yield _sse(
+                            "stage.validation_warning",
+                            code=event.code,
+                            stage_name=stage_name,
+                            expected_language=event.expected_language,
+                            detected_language=event.detected_language,
+                            confidence=event.confidence,
+                            reason=event.reason,
+                            run_id=context.run_id,
+                            event_sequence=event_sequence
+                        )
                     elif isinstance(event, AttemptCompleted):
                         pass
                     elif isinstance(event, RoutingExhausted):
@@ -126,6 +153,7 @@ class PipelineOrchestrator:
                 yield _sse("stage.completed", stage_name=stage_name, content=output_ref[0], run_id=context.run_id, event_sequence=event_sequence)
             except Exception as e:
                 event_sequence += 1
+                stage_flags["failed"] = True
                 if ignore_failure:
                     yield _sse(f"{stage_name}.failed", reason=str(e), retryable=True)
                 else:
@@ -139,24 +167,38 @@ class PipelineOrchestrator:
             def writer_stream(ctx): return self.writer_agent.stream(idea, research_ref[0], context=ctx, attempt_id=None)
             async for event in run_stage(writer_stream, "write", self.writer_agent.profile.value, draft_ref): yield event
 
+            final_flags = {}
             def edit_stream(ctx): return self.editor_agent.stream(draft_ref[0], context=ctx, attempt_id=None)
-            async for event in run_stage(edit_stream, "edit", self.editor_agent.profile.value, final_ref): yield event
+            async for event in run_stage(edit_stream, "edit", self.editor_agent.profile.value, final_ref, stage_flags=final_flags): yield event
             
-            final_status = "READY"
+            final_status = "NEEDS_LANGUAGE_REVIEW" if final_flags.get("has_validation_warning") else "READY"
         except PipelineAbortError:
             return
         except Exception as e:
             yield _sse("stage.failed", stage_name="unknown", reason=str(e), run_id=context.run_id)
             return
 
+        yield _sse("pipeline.text_completed", final_status=final_status, final_post=final_ref[0], run_id=context.run_id)
+
         visual_status = "FAILED"
         try:
+            yield _sse("visual.prompt_started", run_id=context.run_id)
+            
             def visual_stream(ctx): return self.visual_agent.stream(final_ref[0], context=ctx, attempt_id=None)
-            async for event in run_stage(visual_stream, "visual", self.visual_agent.profile.value, visual_ref, ignore_failure=True): yield event
-            if visual_ref[0]:
+            
+            visual_flags = {}
+            async for event in run_stage(visual_stream, "visual", self.visual_agent.profile.value, visual_ref, ignore_failure=True, stage_flags=visual_flags):
+                yield event
+                
+            # Only set READY if we actually received stage.completed without failing
+            if visual_ref[0] and not visual_flags.get("failed"):
                 visual_status = "READY"
+                yield _sse("visual.prompt_completed", content=visual_ref[0], run_id=context.run_id)
+            else:
+                yield _sse("visual.prompt_failed", reason="Partial failure or empty output", run_id=context.run_id)
+                
         except Exception as e:
-            pass
+            yield _sse("visual.prompt_failed", reason=str(e), run_id=context.run_id)
 
         # Persist to MongoDB
         post_id = None

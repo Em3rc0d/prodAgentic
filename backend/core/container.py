@@ -16,6 +16,16 @@ class ApplicationContainer:
         self.preflight_task = None
 
     def startup(self):
+        from core.context import LanguageCode
+        
+        self.config_error = None
+        default_lang_str = os.getenv("APP_DEFAULT_LANGUAGE", "es")
+        try:
+            LanguageCode(default_lang_str)
+        except ValueError:
+            self.config_error = f"Invalid APP_DEFAULT_LANGUAGE: {default_lang_str}"
+            logging.error(self.config_error)
+            
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             logging.error("GEMINI_API_KEY not found in environment!")
