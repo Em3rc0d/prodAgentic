@@ -1,10 +1,19 @@
 from lingua import LanguageDetectorBuilder, Language
 from core.context import LanguageCode
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class LanguageDetectionResult:
+    language: LanguageCode
+    confidence: float
+    runner_up_language: Optional[LanguageCode]
+    runner_up_confidence: float
+    margin: float
+    analyzable_characters: int
 
 class LanguageDetectorPort:
     def __init__(self):
-        # We restrict the detector to the languages our application supports
-        # to prevent absurd false positives on technical text
         self.detector = (
             LanguageDetectorBuilder
             .from_languages(
@@ -15,22 +24,41 @@ class LanguageDetectorPort:
             .with_preloaded_language_models()
             .build()
         )
+        self._lang_map = {
+            Language.SPANISH: LanguageCode.ES,
+            Language.ENGLISH: LanguageCode.EN,
+            Language.PORTUGUESE: LanguageCode.PT,
+        }
 
-    def detect(self, text: str) -> LanguageCode:
-        # If text is too short or empty, Lingua might return None or unpredictable results
+    def detect(self, text: str) -> LanguageDetectionResult:
         if not text or len(text.strip()) < 5:
-            return LanguageCode.UNKNOWN
+            return LanguageDetectionResult(LanguageCode.UNKNOWN, 0.0, None, 0.0, 0.0, len(text.strip()) if text else 0)
             
-        result = self.detector.detect_language_of(text)
+        confidences = self.detector.compute_language_confidence_values(text)
         
-        if result == Language.SPANISH:
-            return LanguageCode.ES
-        elif result == Language.ENGLISH:
-            return LanguageCode.EN
-        elif result == Language.PORTUGUESE:
-            return LanguageCode.PT
+        if not confidences:
+            return LanguageDetectionResult(LanguageCode.UNKNOWN, 0.0, None, 0.0, 0.0, len(text.strip()))
+            
+        top_lang = self._lang_map.get(confidences[0].language, LanguageCode.UNKNOWN)
+        top_conf = confidences[0].value
         
-        return LanguageCode.UNKNOWN
+        runner_up_lang = None
+        runner_up_conf = 0.0
+        margin = top_conf
+        
+        if len(confidences) > 1:
+            runner_up_lang = self._lang_map.get(confidences[1].language, LanguageCode.UNKNOWN)
+            runner_up_conf = confidences[1].value
+            margin = top_conf - runner_up_conf
+            
+        return LanguageDetectionResult(
+            language=top_lang,
+            confidence=top_conf,
+            runner_up_language=runner_up_lang,
+            runner_up_confidence=runner_up_conf,
+            margin=margin,
+            analyzable_characters=len(text.strip())
+        )
 
 # Singleton instance initialized at startup
 language_detector = LanguageDetectorPort()

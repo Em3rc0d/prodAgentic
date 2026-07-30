@@ -38,6 +38,25 @@ class AttemptCompleted:
 class RoutingExhausted:
     reason: str
 
+@dataclass
+class ValidationWarning:
+    code: str
+    expected_language: str
+    detected_language: str
+    confidence: float
+    artifact_type: str
+    attempt_id: str
+    reason: str
+
+RouterEvent = (
+    AttemptStarted
+    | ContentChunk
+    | AttemptFailed
+    | AttemptResetRequired
+    | AttemptCompleted
+    | RoutingExhausted
+    | ValidationWarning
+)
 class CircuitState(str, Enum):
     CLOSED = "CLOSED"
     OPEN = "OPEN"
@@ -186,6 +205,17 @@ class ModelRouter:
                         # Validate the language
                         validation_result = LanguageValidator.validate(accumulated_text, request.expected_output_language, request.artifact_type)
                         
+                        if validation_result.status == ValidationStatus.INDETERMINATE:
+                            yield ValidationWarning(
+                                code="LANGUAGE_INDETERMINATE",
+                                expected_language=validation_result.expected_language.value,
+                                detected_language=validation_result.detected_language.value,
+                                confidence=validation_result.confidence,
+                                artifact_type=request.artifact_type.value,
+                                attempt_id=attempt_id,
+                                reason=validation_result.reason
+                            )
+                            
                         if validation_result.status == ValidationStatus.MISMATCH:
                             error_msg = f"LANGUAGE_MISMATCH: {validation_result.reason}"
                             yield AttemptFailed(error_msg, attempt_id)

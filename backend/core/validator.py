@@ -24,6 +24,7 @@ class LanguageValidationResult:
     detected_language: LanguageCode
     status: ValidationStatus
     reason: str
+    confidence: float = 0.0
 
 class LanguageValidator:
     @staticmethod
@@ -68,15 +69,21 @@ class LanguageValidator:
     @staticmethod
     def validate(text: str, expected_code: LanguageCode, artifact_type: ArtifactType) -> LanguageValidationResult:
         if expected_code == LanguageCode.AUTO or expected_code == LanguageCode.UNKNOWN:
-            return LanguageValidationResult(expected_code, LanguageCode.UNKNOWN, ValidationStatus.INDETERMINATE, "Auto or unknown expected language")
+            return LanguageValidationResult(expected_code, LanguageCode.UNKNOWN, ValidationStatus.INDETERMINATE, "Auto or unknown expected language", 0.0)
             
         prose = LanguageValidator._extract_prose(text, artifact_type)
-        detected = language_detector.detect(prose)
+        detect_result = language_detector.detect(prose)
         
-        if detected == LanguageCode.UNKNOWN:
-            return LanguageValidationResult(expected_code, detected, ValidationStatus.INDETERMINATE, "Could not determine language confidently")
+        LANGUAGE_MIN_CONFIDENCE = 0.6
+        LANGUAGE_MIN_MARGIN = 0.2
+        
+        detected = detect_result.language
+        conf = detect_result.confidence
+        
+        if detected == LanguageCode.UNKNOWN or conf < LANGUAGE_MIN_CONFIDENCE or detect_result.margin < LANGUAGE_MIN_MARGIN:
+            return LanguageValidationResult(expected_code, detected, ValidationStatus.INDETERMINATE, "Could not determine language confidently", conf)
             
         if detected == expected_code:
-            return LanguageValidationResult(expected_code, detected, ValidationStatus.MATCH, "Language matches exactly")
+            return LanguageValidationResult(expected_code, detected, ValidationStatus.MATCH, "Language matches exactly", conf)
         else:
-            return LanguageValidationResult(expected_code, detected, ValidationStatus.MISMATCH, f"Expected {expected_code.value} but got {detected.value}")
+            return LanguageValidationResult(expected_code, detected, ValidationStatus.MISMATCH, f"Expected {expected_code.value} but got {detected.value}", conf)

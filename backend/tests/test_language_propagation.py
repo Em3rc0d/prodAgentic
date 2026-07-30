@@ -1,25 +1,28 @@
 import pytest
+import os
 from core.context import GenerationContext, LanguageCode
 from core.language import language_detector
 
-def test_explicit_target_wins():
-    ctx = GenerationContext(
-        run_id="run-1",
-        topic="Hello world",
-        style="listicle",
-        requested_source_language=LanguageCode.AUTO,
-        detected_source_language=LanguageCode.EN,
-        source_detection_confidence=1.0,
-        requested_target_language=LanguageCode.ES,
-        resolved_target_language=LanguageCode.ES,
-        image_prompt_language=LanguageCode.EN
-    )
-    assert ctx.resolved_target_language == LanguageCode.ES
+def test_source_language_is_detected_with_explicit_target():
+    from agents.orchestrator import PipelineOrchestrator
+    orchestrator = PipelineOrchestrator(None)
+    ctx = orchestrator._resolve_context("Este es un texto en español para probar", "listicle", "en", "en")
+    assert ctx.detected_source_language == LanguageCode.ES
+    assert ctx.resolved_target_language == LanguageCode.EN
+    assert ctx.requested_target_language == LanguageCode.EN
 
-def test_auto_resolves_before_ideas():
-    detected = language_detector.detect("Este es un topic en español y quiero ideas")
-    assert detected == LanguageCode.ES
+def test_auto_uses_configured_default_when_indeterminate(monkeypatch):
+    monkeypatch.setenv("APP_DEFAULT_LANGUAGE", "en")
+    from agents.orchestrator import PipelineOrchestrator
+    orchestrator = PipelineOrchestrator(None)
+    ctx = orchestrator._resolve_context("a", "listicle", "auto", "en")
+    assert ctx.detected_source_language == LanguageCode.UNKNOWN
+    assert ctx.resolved_target_language == LanguageCode.EN
 
-def test_low_confidence_uses_configured_default():
-    detected = language_detector.detect("a")
-    assert detected == LanguageCode.UNKNOWN
+def test_invalid_default_language_fails_readiness(monkeypatch):
+    monkeypatch.setenv("APP_DEFAULT_LANGUAGE", "invalid_lang")
+    from core.container import ApplicationContainer
+    container = ApplicationContainer()
+    container.startup()
+    assert container.config_error is not None
+    assert "Invalid APP_DEFAULT_LANGUAGE" in container.config_error
