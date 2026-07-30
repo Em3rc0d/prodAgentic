@@ -45,3 +45,13 @@ export async function deletePost(postId: string) {
   if (!res.ok) throw new Error("Failed to delete post");
   return res.json();
 }
+
+export async function renderVisual(prompt: string, aspect_ratio: string = "16:9", style: string = ""): Promise<{url: string, prompt_used: string, aspect_ratio: string}> {
+  const res = await fetch(`${API}/api/visual-renders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, aspect_ratio, style }),
+  });
+  if (!res.ok) throw new Error(`Render request failed: ${res.status}`);
+  return res.json();
+}

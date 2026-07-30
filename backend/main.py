@@ -77,6 +77,10 @@ def health_ready(request: Request):
         from fastapi import Response
         return Response(content=json.dumps({"status": "NOT_READY", "message": "Missing API Key"}), media_type="application/json", status_code=503)
         
+    if getattr(container, "config_error", None):
+        from fastapi import Response
+        return Response(content=json.dumps({"status": "NOT_READY", "message": container.config_error}), media_type="application/json", status_code=503)
+        
     status = get_profile_readiness()
     if status in ("READY", "READY_WITH_STALE_CACHE"):
         return {"status": status}
