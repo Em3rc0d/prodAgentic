@@ -9,6 +9,11 @@ on:
 jobs:
   backend-test:
     runs-on: ubuntu-latest
+    env:
+      APP_DEFAULT_LANGUAGE: es
+      LANGUAGE_MIN_CONFIDENCE: "0.6"
+      LANGUAGE_MIN_MARGIN: "0.2"
+      IMAGE_RENDER_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -19,12 +24,17 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt || pip install pytest pytest-asyncio google-genai==2.13.0 pydantic motor
-      - name: Run Backend Tests
+          pip install -r requirements-dev.txt || pip install pytest pytest-asyncio google-genai==2.13.0 pydantic motor httpx langdetect
+      - name: Smoke import test
         working-directory: backend
         run: |
-          python -m pytest -q
-          python -m compileall .
+          python -c "import agents.router; import agents.orchestrator; import main; print('Smoke test PASSED')"
+      - name: Compile check
+        working-directory: backend
+        run: python -m compileall .
+      - name: Run Backend Tests
+        working-directory: backend
+        run: python -m pytest -q
 
   frontend-test:
     runs-on: ubuntu-latest
