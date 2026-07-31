@@ -24,7 +24,7 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt || pip install pytest pytest-asyncio google-genai==2.13.0 pydantic motor httpx langdetect
+          pip install -r requirements-dev.txt
       - name: Smoke import test
         working-directory: backend
         run: |
