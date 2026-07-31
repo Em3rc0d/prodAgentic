@@ -43,7 +43,14 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   
   const [renderedImageUrl, setRenderedImageUrl] = useState<string | null>(null);
-  const [renderStatus, setRenderStatus] = useState<"IDLE" | "QUEUED" | "RENDERING" | "READY" | "FAILED">("IDLE");
+  const [renderStatus, setRenderStatus] = useState<"IDLE" | "QUEUED" | "RENDERING" | "READY" | "FAILED" | "CANCELLED">("IDLE");
+
+  // Stable rendering states
+  const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
+  const [selectedRatio, setSelectedRatio] = useState<string>("16:9");
+  const [selectedStyle, setSelectedStyle] = useState<string>("");
+  const [renderIntentId, setRenderIntentId] = useState<string>("");
+  const [lastParams, setLastParams] = useState<{ prompt: string; ratio: string; style: string } | null>(null);
 
   // Pipeline state
   const [stageStatus, setStageStatus] = useState<Record<StageKey, StageStatus>>({
@@ -83,6 +90,9 @@ export default function Home() {
     lastSequenceByAttempt.current = {};
     setRenderedImageUrl(null);
     setRenderStatus("IDLE");
+    setPipelineRunId(null);
+    setRenderIntentId("");
+    setLastParams(null);
   }, []);
 
   const handleGenerateIdeas = useCallback(async () => {
@@ -116,6 +126,10 @@ export default function Home() {
         const msg = JSON.parse(e.data);
         
         setEventHistory((prev) => [...prev, { ...msg, _ts: new Date().toISOString() }]);
+
+        if (msg.run_id) {
+          setPipelineRunId(msg.run_id);
+        }
 
         if (msg.stage === "stage_start" || msg.stage === "stage.attempt_started") {
           const sKey = msg.stage_name as StageKey;
@@ -405,6 +419,40 @@ export default function Home() {
                       value={visualPrompt}
                       onChange={(e) => setVisualPrompt(e.target.value)}
                     />
+                    
+                    {/* Approved Aspect Ratio and Style Selectors */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                      <div>
+                        <label htmlFor="aspect-ratio-select" style={{ display: 'block', color: 'var(--text-2)', fontSize: '13px', marginBottom: '6px' }}>Aspect Ratio</label>
+                        <select 
+                          id="aspect-ratio-select"
+                          value={selectedRatio} 
+                          onChange={(e) => setSelectedRatio(e.target.value)} 
+                          style={{ width: '100%', padding: '8px', borderRadius: '4px', background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }}
+                        >
+                          <option value="16:9">16:9 (Landscape)</option>
+                          <option value="1:1">1:1 (Square)</option>
+                          <option value="4:5">4:5 (Portrait)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label htmlFor="visual-style-select" style={{ display: 'block', color: 'var(--text-2)', fontSize: '13px', marginBottom: '6px' }}>Visual Style</label>
+                        <select 
+                          id="visual-style-select"
+                          value={selectedStyle} 
+                          onChange={(e) => setSelectedStyle(e.target.value)} 
+                          style={{ width: '100%', padding: '8px', borderRadius: '4px', background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }}
+                        >
+                          <option value="">Default (None)</option>
+                          <option value="technical_editorial">Technical Editorial</option>
+                          <option value="cinematic">Cinematic</option>
+                          <option value="minimal">Minimal</option>
+                          <option value="illustration">Illustration</option>
+                          <option value="photorealistic">Photorealistic</option>
+                        </select>
+                      </div>
+                    </div>
+
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
                       <button 
                         className="btn-generate"
@@ -412,21 +460,53 @@ export default function Home() {
                         onClick={async () => {
                           setRenderStatus("RENDERING");
                           try {
-                            const result = await renderVisual(visualPrompt, "16:9");
-                            if (result.status === "FAILED") {
-                              setRenderStatus("FAILED");
-                            } else {
-                              setRenderedImageUrl(result.asset_url ?? result.url ?? null);
-                              setRenderStatus("READY");
+                            const currentParams = { prompt: visualPrompt, ratio: selectedRatio, style: selectedStyle };
+                            let intentId = renderIntentId;
+                            if (!lastParams || lastParams.prompt !== currentParams.prompt || lastParams.ratio !== currentParams.ratio || lastParams.style !== currentParams.style) {
+                              intentId = `intent-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                              setRenderIntentId(intentId);
+                              setLastParams(currentParams);
+                            }
+                            
+                            const actualRunId = pipelineRunId || `run-fallback-${Date.now()}`;
+                            const idempotencyKey = `${actualRunId}-${intentId}`;
+
+                            const result = await renderVisual(
+                              visualPrompt, 
+                              selectedRatio, 
+                              selectedStyle, 
+                              actualRunId, 
+                              idempotencyKey
+                            );
+                            
+                            switch (result.status) {
+                              case "QUEUED":
+                                setRenderStatus("QUEUED");
+                                break;
+                              case "RENDERING":
+                                setRenderStatus("RENDERING");
+                                break;
+                              case "READY":
+                                setRenderedImageUrl(result.asset_url ?? result.url ?? null);
+                                setRenderStatus("READY");
+                                break;
+                              case "FAILED":
+                                setRenderStatus("FAILED");
+                                break;
+                              case "CANCELLED":
+                                setRenderStatus("CANCELLED");
+                                break;
+                              default:
+                                setRenderStatus("FAILED");
                             }
                           } catch (err) {
                             console.error("Failed to render image", err);
                             setRenderStatus("FAILED");
                           }
                         }}
-                        disabled={renderStatus === "RENDERING"}
+                        disabled={renderStatus === "RENDERING" || renderStatus === "QUEUED"}
                       >
-                        {renderStatus === "RENDERING" ? "Rendering..." : "Generar imagen"}
+                        {renderStatus === "RENDERING" || renderStatus === "QUEUED" ? "Rendering..." : "Generar imagen"}
                       </button>
                       <button 
                         style={{ padding: '8px 16px', borderRadius: '4px', background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)', cursor: 'pointer' }}
@@ -440,20 +520,25 @@ export default function Home() {
                         </span>
                       )}
                     </div>
-                    {renderStatus === "RENDERING" || renderStatus === "READY" || renderStatus === "FAILED" ? (
+                    
+                    {["RENDERING", "READY", "FAILED", "QUEUED", "CANCELLED"].includes(renderStatus) ? (
                       <div className="image-render-preview" style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface)' }}>
-                        {renderStatus === "RENDERING" ? (
+                        {renderStatus === "RENDERING" || renderStatus === "QUEUED" ? (
                           <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-3)' }}>
                             <AgentActivityIndicator stage="visual" status="running" size={20} />
-                            <div style={{ marginTop: '12px' }}>Generating image...</div>
+                            <div style={{ marginTop: '12px' }}>{renderStatus === "QUEUED" ? "Queued..." : "Generating image..."}</div>
                           </div>
                         ) : renderStatus === "READY" && renderedImageUrl ? (
                           /* eslint-disable-next-line @next/next/no-img-element */
                           <img 
                             src={renderedImageUrl} 
                             alt={visualPrompt}
-                            style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }}
+                            style={{ width: '100%', display: 'block', aspectRatio: selectedRatio.replace(':', '/'), objectFit: 'cover' }}
                           />
+                        ) : renderStatus === "CANCELLED" ? (
+                          <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-3)' }}>
+                            Rendering cancelled.
+                          </div>
                         ) : (
                           <div style={{ padding: '40px', textAlign: 'center', color: '#fca5a5' }}>
                             Failed to generate image.
@@ -505,7 +590,7 @@ export default function Home() {
                         <span>SSE Event History</span>
                         <span>{eventHistory.length} events</span>
                     </div>
-                    <div style={{ maxHeight: '400px', overflowY: 'auto', padding: '16px', fontFamily: 'monospace', fontSize: '12px', color: '#d4d4d4' }}>
+                    <div style={{ padding: '16px', fontFamily: 'monospace', fontSize: '12px', color: '#d4d4d4' }}>
                         {eventHistory.length === 0 ? (
                             <div style={{ color: '#666', fontStyle: 'italic' }}>No events recorded yet.</div>
                         ) : (

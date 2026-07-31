@@ -63,14 +63,16 @@ export interface VisualRenderResponse {
 export async function renderVisual(
   prompt: string,
   aspect_ratio: string = "16:9",
-  style: string = ""
+  style: string = "",
+  run_id?: string,
+  idempotency_key?: string
 ): Promise<VisualRenderResponse> {
-  const idempotency_key = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const run_id = idempotency_key; // use same value; server generates its own run_id if needed
+  const finalIdempotencyKey = idempotency_key || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const finalRunId = run_id || finalIdempotencyKey;
   const res = await fetch(`${API}/api/visual-renders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, aspect_ratio, style, run_id, idempotency_key }),
+    body: JSON.stringify({ prompt, aspect_ratio, style, run_id: finalRunId, idempotency_key: finalIdempotencyKey }),
   });
   if (!res.ok) throw new Error(`Render request failed: ${res.status}`);
   return res.json();

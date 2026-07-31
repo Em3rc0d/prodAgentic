@@ -33,32 +33,23 @@ class PipelineOrchestrator:
     def _resolve_context(self, topic: str, style: str, target_language: str, image_prompt_language: str) -> GenerationContext:
         import os
         target_lang = TargetLanguageCode(target_language)
-        
+
         # Always detect source language
         detect_result = language_detector.detect(topic)
         detected_lang = detect_result.language
         confidence = detect_result.confidence
-        
-        # Get default language from config - MUST be explicitly set; no silent fallbacks
+
+        # Single authoritative config: ApplicationSettings.load() already validated this at startup
+        # Read here as a pass-through; ValueError propagates naturally if not set
         default_lang_str = os.environ.get("APP_DEFAULT_LANGUAGE", "")
         if not default_lang_str:
             raise ValueError(
-                "APP_DEFAULT_LANGUAGE is not configured. "
-                "Set it to one of: es, en, pt. No silent fallback is allowed."
+                "APP_DEFAULT_LANGUAGE is required. Set it to one of: es, en, pt"
             )
-        try:
-            default_lang = LanguageCode(default_lang_str)
-        except ValueError:
-            raise ValueError(
-                f"APP_DEFAULT_LANGUAGE='{default_lang_str}' is invalid. "
-                f"Must be one of: es, en, pt."
-            )
+        default_lang = LanguageCode(default_lang_str)
 
         if target_lang == TargetLanguageCode.AUTO:
-            if detected_lang == LanguageCode.UNKNOWN:
-                resolved_lang = default_lang
-            else:
-                resolved_lang = detected_lang
+            resolved_lang = detected_lang if detected_lang != LanguageCode.UNKNOWN else default_lang
         else:
             resolved_lang = LanguageCode(target_lang.value)
 
