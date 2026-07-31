@@ -7,6 +7,8 @@ export const metadata: Metadata = {
     "Generate viral LinkedIn posts automatically using 5 specialized AI agents.",
 };
 
+import Sidebar from "@/components/Sidebar";
+
 export default function RootLayout({
   children,
 }: {
@@ -14,7 +16,14 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <div className="app-shell">
+          <Sidebar />
+          <main className="main-content">
+            {children}
+          </main>
+        </div>
+      </body>
     </html>
   );
 }

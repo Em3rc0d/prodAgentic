@@ -1061,3 +1061,200 @@ body::after {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* ─── Sidebar Component ────────────────────────────────────────────────────── */
+.sidebar {
+  background: var(--bg-1);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 16px;
+  height: 100vh;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 32px;
+  padding: 0 8px;
+}
+
+.workspace-badge {
+  background: rgba(124, 58, 237, 0.15);
+  color: var(--accent-light);
+  font-size: 10px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.sidebar-nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.sidebar-section-title {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  margin-bottom: 12px;
+  padding: 0 8px;
+}
+
+.sidebar-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar-link {
+  display: block;
+  padding: 10px 12px;
+  color: var(--text-2);
+  text-decoration: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 220ms ease;
+}
+
+.sidebar-link:hover {
+  background: var(--surface-hover);
+  color: var(--text-1);
+}
+
+.sidebar-link.active {
+  background: rgba(124, 58, 237, 0.15);
+  color: var(--text-0);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.user-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  background: var(--bg-3);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.user-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.user-plan {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* ─── Main Content Shell ───────────────────────────────────────────────────── */
+.main-content {
+  flex: 1;
+  background: var(--bg-0);
+  overflow-y: auto;
+  position: relative;
+  padding: 40px;
+}
+
+/* ─── Semantic Orb ─────────────────────────────────────────────────────────── */
+.orb-container {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.orb-container.sm { width: 16px; height: 16px; }
+.orb-container.md { width: 32px; height: 32px; }
+.orb-container.lg { width: 64px; height: 64px; }
+
+.orb-core {
+  width: 50%;
+  height: 50%;
+  border-radius: 50%;
+  position: relative;
+  transition: all 320ms ease;
+}
+
+.orb-core.working {
+  background: #fff;
+  box-shadow: 0 0 12px #fff, 0 0 24px var(--accent-light);
+}
+
+.orb-pulse {
+  position: absolute;
+  inset: -100%;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--accent-light) 0%, transparent 70%);
+  opacity: 0.6;
+  animation: orb-pulse-anim 2s ease-in-out infinite;
+}
+
+.orb-core.done {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+
+.orb-stable-glow {
+  position: absolute;
+  inset: -50%;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--success-dim) 0%, transparent 70%);
+}
+
+.orb-core.waiting {
+  background: var(--text-3);
+  box-shadow: inset 0 0 4px rgba(0,0,0,0.5);
+}
+
+.orb-core.failed {
+  background: var(--error);
+  box-shadow: 0 0 12px var(--error);
+}
+
+@keyframes orb-pulse-anim {
+  0% { transform: scale(0.8); opacity: 0.4; }
+  50% { transform: scale(1.2); opacity: 0.8; }
+  100% { transform: scale(0.8); opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb-pulse {
+    animation: none;
+    transform: scale(1.1);
+    opacity: 0.5;
+  }
+}
