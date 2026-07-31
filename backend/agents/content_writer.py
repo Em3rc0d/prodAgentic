@@ -1,4 +1,5 @@
 from typing import AsyncGenerator
+from core.context import GenerationContext
 from .base_agent import BaseAgent
 
 SYSTEM_PROMPT = """You are a senior LinkedIn technical writer known for posts that go viral among engineers.
@@ -17,7 +18,6 @@ Required Structure:
 3. INSIGHTS — Core knowledge (3–5 bullets or short punchy paragraphs)
 4. TAKEAWAY — The one thing to remember, stated boldly
 5. CTA — A real question that sparks comments
-6. IMAGE PROMPT — A detailed prompt in English to generate a matching image (Midjourney/DALL-E style) placed at the very end.
 
 Hard Constraints:
 - 150–220 words MAX
@@ -27,27 +27,33 @@ Hard Constraints:
 - No repetition of ideas across sections"""
 
 
+from core.model_registry import ModelProfile
+from core.validator import ArtifactType
+
 class ContentWriterAgent(BaseAgent):
-    def __init__(self):
-        super().__init__(SYSTEM_PROMPT)
+    def __init__(self, router):
+        super().__init__(
+            system_prompt=SYSTEM_PROMPT,
+            profile=ModelProfile.ECONOMY_TEXT,
+            router=router,
+            artifact_type=ArtifactType.DRAFT
+        )
 
-    async def stream(self, idea: str, research: str, style: str) -> AsyncGenerator[str, None]:
+    async def stream(self, idea: str, research: str, context: GenerationContext, attempt_id: str = None) -> AsyncGenerator[tuple, None]:
         style_map = {
-            "educational": "educational and clear — teach something valuable",
-            "storytelling": "storytelling — open with a personal experience or failure",
-            "controversial": "controversial and opinionated — take a strong stance",
+            "story": "Use a narrative structure. Start with a hook, build tension, end with a takeaway.",
+            "listicle": "Use bullet points or numbered lists. Be highly actionable.",
+            "opinion": "Take a strong stance on an industry topic. Defend it with facts from the research."
         }
-        style_description = style_map.get(style, style)
+        style_prompt = style_map.get(context.style, "Write in a professional but engaging tone.")
 
-        prompt = f"""Write a LinkedIn post for this idea:
+        prompt = f"""Write a LinkedIn post.
 
-**Idea:** {idea}
-**Style:** {style_description}
+Idea: {idea}
+Research context: {research}
+Style constraint: {style_prompt}
 
-**Research to draw from:**
-{research}
-
-Write the complete post now. Follow the structure precisely."""
-
-        async for chunk in super().stream(prompt):
-            yield chunk
+Write all user-facing prose in {context.resolved_target_language.value}. Preserve code, technical identifiers, API names, product names, protocol names and error codes. Do not translate text inside code blocks."""
+        
+        async for event in super().stream(prompt, context, attempt_id):
+            yield event

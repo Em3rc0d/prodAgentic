@@ -21,31 +21,62 @@ Output ONLY a valid JSON array of exactly 7 strings. No markdown, no explanation
 Example format: ["idea 1", "idea 2", "idea 3", "idea 4", "idea 5", "idea 6", "idea 7"]"""
 
 
+from core.model_registry import ModelProfile
+from core.context import GenerationContext
+from core.validator import ArtifactType
+
+class GenerationIdeasFailed(Exception):
+    pass
+
 class IdeaGeneratorAgent(BaseAgent):
-    def __init__(self):
-        super().__init__(SYSTEM_PROMPT)
-
-    def generate_ideas(self, topic: str, style: str) -> list[str]:
-        prompt = (
-            f"Generate 7 viral LinkedIn post ideas about: {topic}\n"
-            f"Writing style preference: {style}\n\n"
-            f"Return ONLY the JSON array of 7 strings."
+    def __init__(self, router):
+        super().__init__(
+            system_prompt=SYSTEM_PROMPT,
+            profile=ModelProfile.ECONOMY_TEXT,
+            router=router,
+            artifact_type=ArtifactType.IDEAS
         )
-        raw = self.generate(prompt)
 
-        # Robust JSON extraction
+    async def generate_ideas(self, context: GenerationContext) -> list[str]:
+        prompt = (
+            f"Generate exactly 7 distinct LinkedIn post ideas for the topic: '{context.topic}'.\n"
+            f"The style should be: {context.style}.\n\n"
+            f"Write all user-facing prose in {context.resolved_target_language.value}. Preserve technical identifiers.\n"
+            "Respond ONLY with a valid JSON array of strings."
+        )
+        import uuid
+        from agents.router import AttemptStarted, ContentChunk, RoutingExhausted, AttemptResetRequired
+        
+        attempt_id = str(uuid.uuid4())
+        full_text = ""
+        current_attempt = None
+        
+        async for event in self.stream(prompt, context, attempt_id):
+            if isinstance(event, AttemptStarted):
+                current_attempt = event.attempt_id
+                full_text = ""
+            elif isinstance(event, AttemptResetRequired):
+                full_text = ""
+            elif isinstance(event, ContentChunk):
+                if event.attempt_id == current_attempt:
+                    full_text += event.text
+            elif isinstance(event, RoutingExhausted):
+                raise GenerationIdeasFailed(f"Failed to generate ideas: {event.reason}")
+                
         try:
-            import json
             import re
-            match = re.search(r"\[.*?\]", raw, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-            return json.loads(raw.strip())
-        except Exception:
-            # Fallback: parse line by line
-            lines = [
-                l.strip().strip('"').strip("'").strip("- ").strip()
-                for l in raw.split("\n")
-                if l.strip()
-            ]
-            return [l for l in lines if len(l) > 15][:7]
+            import json
+            cleaned_text = re.sub(r"```json\n|\n```|```", "", full_text).strip()
+            
+            ideas = json.loads(cleaned_text)
+            if not isinstance(ideas, list):
+                raise GenerationIdeasFailed("Output is not a JSON array")
+            
+            valid_ideas = [i.strip() for i in ideas if isinstance(i, str) and i.strip()]
+            if len(valid_ideas) != 7:
+                raise GenerationIdeasFailed(f"Expected 7 valid ideas, got {len(valid_ideas)}")
+                
+            return valid_ideas
+        except json.JSONDecodeError as e:
+            print(f"[ERROR] Idea generator JSON decode error. Text was: {full_text}")
+            raise GenerationIdeasFailed(f"JSON parsing error: {e}")

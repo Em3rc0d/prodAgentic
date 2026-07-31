@@ -876,3 +876,188 @@ body::after {
   background: var(--border);
   margin: 4px 0;
 }
+
+/* ─── Responsive Overrides ─────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .app-shell {
+    grid-template-columns: 240px 1fr;
+  }
+  .preview-panel {
+    display: none; /* Hide preview on tablet for simplicity or move it to bottom */
+  }
+}
+
+@media (max-width: 768px) {
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow-y: auto;
+  }
+  
+  .app-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 16px;
+    max-height: none;
+  }
+  
+  .main-content {
+    overflow-y: visible;
+    padding: 16px;
+  }
+  
+  .ideas-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .stream-stage-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  
+  .stage-status-badge {
+    white-space: nowrap;
+  }
+  
+  /* Wrap long model names */
+  .stream-stage-header span {
+    word-break: break-all;
+  }
+  
+  .preview-panel {
+    display: flex;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+}
+.linkedin-visual-prompt {
+  margin-top: 16px;
+  background-color: var(--surface-active);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.visual-prompt-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+.visual-prompt-body {
+  font-size: 13px;
+  color: var(--text-1);
+  font-style: italic;
+  white-space: pre-wrap;
+}
+
+/* Tabbed Workspace Styles */
+.workspace-tabs {
+  display: flex;
+  gap: 8px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.tab-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-btn.active {
+  color: var(--accent-light);
+  background: var(--surface-active);
+  border: 1px solid var(--border-active);
+}
+
+
+
+.tab-pane {
+  display: grid;
+  height: 100%;
+  animation: fade-in 0.3s ease;
+}
+
+.brief-pane {
+  grid-template-columns: var(--sidebar-w) 1fr;
+}
+
+.content-pane {
+  grid-template-columns: var(--sidebar-w) 1fr var(--preview-w);
+}
+
+.visuals-pane {
+  grid-template-columns: var(--sidebar-w) 1fr;
+}
+
+.brief-sidebar, .pipeline-sidebar {
+  border-right: 1px solid var(--border);
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+  background: rgba(3, 3, 7, 0.4);
+}
+
+.brief-main, .visuals-main {
+  padding: 32px;
+  overflow-y: auto;
+}
+
+.content-streams {
+  padding: 32px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+
+.content-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--surface);
+}
+
+/* Single primary scroll container — only this element scrolls vertically */
+.tab-content-area {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg);
+}
+
+.tabbed-workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden; /* Outer shell never scrolls */
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

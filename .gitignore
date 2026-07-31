@@ -14,3 +14,10 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+*.bak
+
+# Scratch and debug scripts
+fix_*.py
+rewrite_*.py
+update_*.py
+backend/scratch/
