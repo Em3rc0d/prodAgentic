@@ -51,6 +51,7 @@ export default function Home() {
   const [selectedStyle, setSelectedStyle] = useState<string>("");
   const [renderIntentId, setRenderIntentId] = useState<string>("");
   const [lastParams, setLastParams] = useState<{ prompt: string; ratio: string; style: string } | null>(null);
+  const [hasUnsupportedClaims, setHasUnsupportedClaims] = useState<boolean>(false);
 
   // Pipeline state
   const [stageStatus, setStageStatus] = useState<Record<StageKey, StageStatus>>({
@@ -83,6 +84,7 @@ export default function Home() {
   const resetPipeline = useCallback(() => {
     setStageStatus({ research: "pending", write: "pending", edit: "pending", visual: "pending" });
     setStageOutputs({ research: "", write: "", edit: "", visual: "" });
+    setHasUnsupportedClaims(false);
     setStageModels({ research: null, write: null, edit: null, visual: null });
     setCurrentStage(null); setFinalPost(""); setVisualPrompt("");
     setEventHistory([]);
@@ -169,6 +171,9 @@ export default function Home() {
           setCurrentStage(null); setMode("ideas_ready"); setFinalPost("");
         } else if (msg.stage === "pipeline.text_completed") {
           setFinalPost(msg.final_post || "");
+          if (msg.unsupported_claims) {
+             setHasUnsupportedClaims(true);
+          }
           setMode("text_ready"); 
           setActiveTab("final");
         } else if (msg.stage === "visual.prompt_started") {
@@ -382,6 +387,15 @@ export default function Home() {
                 
                 {finalPost && (
                     <div className="content-preview" style={{ marginTop: '32px' }}>
+                        {hasUnsupportedClaims && (
+                            <div style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b', padding: '12px 16px', borderRadius: '8px', border: '1px solid rgba(245,158,11,0.2)', marginBottom: '16px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span>⚠️</span>
+                                <div>
+                                    <strong style={{ display: 'block', marginBottom: '2px' }}>NEEDS REVIEW: Unsupported Claims Detected</strong>
+                                    <span style={{ opacity: 0.9 }}>The safety validator detected facts or numbers in this copy that are not backed by the Research agent. Human verification is required before publishing.</span>
+                                </div>
+                            </div>
+                        )}
                         <div className="preview-header"><span className="preview-header-title">🔗 LinkedIn Preview</span>{wordCount > 0 && <span className="word-count">{wordCount}w</span>}</div>
                         <div className="preview-content">
                             <div className="linkedin-mockup">

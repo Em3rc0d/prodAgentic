@@ -13,6 +13,33 @@ from db.mongo import get_db
 from agents.router import AttemptStarted, ContentChunk, AttemptFailed, AttemptResetRequired, AttemptCompleted, RoutingExhausted, ValidationWarning
 from core.context import GenerationContext, LanguageCode, TargetLanguageCode, ImagePromptLanguageCode
 from core.language import language_detector
+import re
+
+def extract_research_claims(research_text: str) -> list[str]:
+    """Extracts claim IDs from the research output like [Claim: C1]."""
+    return re.findall(r'\[Claim:\s*([A-Za-z0-9_-]+)\]', research_text)
+
+def validate_and_strip_claims(final_text: str, valid_claims: list[str]) -> tuple[str, bool]:
+    """
+    Strips claim tags from final_text.
+    Returns (clean_text, has_unsupported_claims_or_heuristics).
+    """
+    has_violation = False
+    
+    # 1. Check if the writer used any invalid claims
+    used_claims = re.findall(r'\[Claim:\s*([A-Za-z0-9_-]+)\]', final_text)
+    for c in used_claims:
+        if c not in valid_claims:
+            has_violation = True
+            
+    # 2. Heuristic check: are there numbers/stats but no claims cited anywhere?
+    # A simple heuristic: if there's a percentage or dollar sign, and no valid claims cited
+    if (re.search(r'\d+%', final_text) or re.search(r'\$\d+', final_text)) and not used_claims:
+        has_violation = True
+
+    # 3. Strip the tags to return clean text for the user
+    clean_text = re.sub(r'\s*\[Claim:\s*[A-Za-z0-9_-]+\]', '', final_text)
+    return clean_text, has_violation
 
 def _sse(stage: str, **kwargs) -> dict:
     """Build a Server-Sent Events payload dict."""
@@ -171,14 +198,26 @@ class PipelineOrchestrator:
             def edit_stream(ctx): return self.editor_agent.stream(draft_ref[0], context=ctx, attempt_id=None)
             async for event in run_stage(edit_stream, "edit", self.editor_agent.profile.value, final_ref, stage_flags=final_flags): yield event
             
-            final_status = "NEEDS_LANGUAGE_REVIEW" if final_flags.get("has_validation_warning") else "READY"
+            # Claims Validation
+            valid_claims = extract_research_claims(research_ref[0])
+            clean_text, has_violation = validate_and_strip_claims(final_ref[0], valid_claims)
+            final_ref[0] = clean_text  # Provide clean text to visual & UI
+            final_flags["unsupported_claims_flag"] = has_violation
+            
+            if final_flags.get("has_validation_warning"):
+                final_status = "NEEDS_LANGUAGE_REVIEW"
+            elif has_violation:
+                final_status = "NEEDS_CONTENT_REVIEW"
+            else:
+                final_status = "READY"
+                
         except PipelineAbortError:
             return
         except Exception as e:
             yield _sse("stage.failed", stage_name="unknown", reason=str(e), run_id=context.run_id)
             return
 
-        yield _sse("pipeline.text_completed", final_status=final_status, final_post=final_ref[0], run_id=context.run_id)
+        yield _sse("pipeline.text_completed", final_status=final_status, final_post=final_ref[0], run_id=context.run_id, unsupported_claims=final_flags.get("unsupported_claims_flag", False))
 
         visual_status = "FAILED"
         try:
@@ -205,6 +244,7 @@ class PipelineOrchestrator:
         try:
             db = get_db()
             if db is not None:
+                db_status = "NEEDS_REVIEW" if final_flags.get("has_validation_warning") or final_flags.get("unsupported_claims_flag") else "DRAFT"
                 doc = {
                     "topic": topic,
                     "style": style,
@@ -213,7 +253,11 @@ class PipelineOrchestrator:
                     "draft_content": draft_ref[0],
                     "final_content": final_ref[0],
                     "visual_prompt": visual_ref[0] if visual_status == "READY" else None,
-                    "status": "DRAFT",
+                    "status": db_status,
+                    "unsupported_claims_flag": final_flags.get("unsupported_claims_flag", False),
+                    "claims": [],
+                    "sources": [],
+                    "evidence": [],
                     "created_at": datetime.now(timezone.utc),
                     "performance": {"likes": 0, "impressions": 0, "comments": 0},
                 }

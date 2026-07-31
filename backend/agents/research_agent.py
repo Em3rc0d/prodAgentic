@@ -25,7 +25,12 @@ Output format (use this exact structure, translating the headings to the target 
 - [3 specific mistakes engineers actually make, with consequences]
 
 ## [Actionable Advice]
-[2-3 immediately applicable tips with concrete steps]"""
+[2-3 immediately applicable tips with concrete steps]
+
+## [Claims & Evidence]
+Provide specific facts/stats you found, formatted EXACTLY as:
+- [Claim: C1] [The fact] (Source: [URL or domain])
+- [Claim: C2] ..."""
 
 
 from core.model_registry import ModelProfile

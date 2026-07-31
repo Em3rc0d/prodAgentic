@@ -24,7 +24,8 @@ Hard Constraints:
 - First line must work as a standalone hook if truncated
 - No generic openers: "In today's world...", "As engineers, we...", "Have you ever..."
 - No filler: "It's important to note that...", "At the end of the day..."
-- No repetition of ideas across sections"""
+- No repetition of ideas across sections
+- PROVENANCE RULE: Any time you use a specific fact or statistic from the Research, you MUST append its exact claim ID inline, like this: "85% of users prefer dark mode [Claim: C1]." If you state a fact without a claim ID, the post will be rejected."""
 
 
 from core.model_registry import ModelProfile
