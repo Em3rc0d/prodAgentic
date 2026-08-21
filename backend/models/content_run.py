@@ -36,6 +36,24 @@ class StageSnapshot(BaseModel):
     completed_at: Optional[datetime] = None
 
 
+class VisualArtifactSnapshot(BaseModel):
+    """Authoritative rendered-media snapshot owned by a ContentRun."""
+
+    render_id: str
+    status: str
+    provider: str
+    asset_url: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    prompt_used: str
+    requested_prompt: str
+    aspect_ratio: str
+    style: str
+    idempotency_key: str
+    error_message: Optional[str] = None
+    rendered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class ContentRun(BaseModel):
     run_id: str
     topic: str
@@ -49,6 +67,7 @@ class ContentRun(BaseModel):
     final_status: Optional[str] = None
     final_content: Optional[str] = None
     visual_prompt: Optional[str] = None
+    visual_render: Optional[VisualArtifactSnapshot] = None
     post_id: Optional[str] = None
     failure_stage: Optional[str] = None
     failure_reason: Optional[str] = None

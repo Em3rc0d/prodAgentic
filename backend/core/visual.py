@@ -32,8 +32,12 @@ class VisualRenderService:
         # kill switch — env-controlled or passed at construction
         self.kill_switch_active = not image_render_enabled
 
-        # Idempotency store (in-memory; replace with Redis for multi-worker)
-        self._idempotency_store: dict[str, VisualRenderResponse] = {}
+        # Idempotency store. Each key is permanently bound to one render intent so
+        # a reused key can never return an old image for a changed prompt/ratio/style.
+        self._idempotency_store: dict[
+            str,
+            tuple[tuple[str, str, str], VisualRenderResponse],
+        ] = {}
 
         # Circuit breaker
         self.failure_count = 0
@@ -42,6 +46,10 @@ class VisualRenderService:
 
         # Concurrency semaphore
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_RENDERS)
+
+    @staticmethod
+    def _intent_signature(req: VisualRenderRequest) -> tuple[str, str, str]:
+        return (req.prompt, req.aspect_ratio.value, req.style.value)
 
     async def render(self, req: VisualRenderRequest) -> VisualRenderResponse:
         # Kill switch
@@ -54,9 +62,19 @@ class VisualRenderService:
                 "Image rendering temporarily unavailable (circuit open).", req
             )
 
-        # Idempotency
-        if req.idempotency_key in self._idempotency_store:
-            return self._idempotency_store[req.idempotency_key]
+        # Idempotency. Same key + same intent returns the exact prior result.
+        # Same key + different intent is a contract violation and must never return
+        # a stale artifact that could later be approved as current evidence.
+        signature = self._intent_signature(req)
+        cached = self._idempotency_store.get(req.idempotency_key)
+        if cached is not None:
+            cached_signature, cached_response = cached
+            if cached_signature != signature:
+                return self._failed_response(
+                    "Idempotency key is already bound to a different render request.",
+                    req,
+                )
+            return cached_response
 
         # Prompt length guardrail
         if not req.prompt or not req.prompt.strip():
@@ -96,7 +114,7 @@ class VisualRenderService:
                     prompt_used=result.prompt_used,
                 )
 
-                self._idempotency_store[req.idempotency_key] = response
+                self._idempotency_store[req.idempotency_key] = (signature, response)
                 return response
 
             except Exception as e:

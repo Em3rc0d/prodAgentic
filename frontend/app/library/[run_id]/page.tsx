@@ -2,9 +2,15 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { ContentRun, editContentRun, fetchContentRun } from "@/lib/api";
+import {
+  ContentRun,
+  editContentRun,
+  fetchContentRun,
+  renderVisual,
+  resolveBackendAssetUrl,
+} from "@/lib/api";
 
 const STAGE_ORDER = ["research", "write", "edit", "visual"] as const;
 
@@ -27,19 +33,27 @@ export default function ContentRunDetailPage() {
   const [run, setRun] = useState<ContentRun | null>(null);
   const [finalContent, setFinalContent] = useState("");
   const [visualPrompt, setVisualPrompt] = useState("");
+  const [renderRatio, setRenderRatio] = useState("16:9");
+  const [renderStyle, setRenderStyle] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [rendering, setRendering] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const hydrate = useCallback((value: ContentRun) => {
+    setRun(value);
+    setFinalContent(value.final_content ?? "");
+    setVisualPrompt(value.visual_prompt ?? "");
+    if (value.visual_render?.aspect_ratio) setRenderRatio(value.visual_render.aspect_ratio);
+    if (value.visual_render?.style !== undefined) setRenderStyle(value.visual_render.style);
+  }, []);
 
   useEffect(() => {
     let active = true;
     fetchContentRun(runId)
       .then((value) => {
-        if (!active) return;
-        setRun(value);
-        setFinalContent(value.final_content ?? "");
-        setVisualPrompt(value.visual_prompt ?? "");
+        if (active) hydrate(value);
       })
       .catch((err: Error) => {
         if (active) setError(err.message);
@@ -50,7 +64,7 @@ export default function ContentRunDetailPage() {
     return () => {
       active = false;
     };
-  }, [runId]);
+  }, [hydrate, runId]);
 
   const editable = run?.status === "TEXT_READY" || run?.status === "READY_FOR_REVIEW";
 
@@ -58,6 +72,9 @@ export default function ContentRunDetailPage() {
     if (!run) return false;
     return finalContent !== (run.final_content ?? "") || visualPrompt !== (run.visual_prompt ?? "");
   }, [finalContent, visualPrompt, run]);
+
+  const persistedAssetUrl = resolveBackendAssetUrl(run?.visual_render?.asset_url);
+  const persistedRenderReady = run?.visual_render?.status === "READY" && Boolean(persistedAssetUrl);
 
   async function handleSave() {
     if (!run || !editable || !dirty || !finalContent.trim()) return;
@@ -69,14 +86,46 @@ export default function ContentRunDetailPage() {
         final_content: finalContent,
         visual_prompt: visualPrompt,
       });
-      setRun(updated);
-      setFinalContent(updated.final_content ?? "");
-      setVisualPrompt(updated.visual_prompt ?? "");
+      hydrate(updated);
       setSaveMessage("Saved");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save ContentRun");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleRender() {
+    if (!run || !editable || !visualPrompt.trim()) return;
+    setRendering(true);
+    setSaveMessage(null);
+    setError(null);
+    try {
+      let current = run;
+      if (dirty) {
+        current = await editContentRun(run.run_id, {
+          final_content: finalContent,
+          visual_prompt: visualPrompt,
+        });
+        hydrate(current);
+      }
+
+      const intentId = `library-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      await renderVisual(
+        visualPrompt,
+        renderRatio,
+        renderStyle,
+        current.run_id,
+        `${current.run_id}-${intentId}`
+      );
+
+      const refreshed = await fetchContentRun(current.run_id);
+      hydrate(refreshed);
+      setSaveMessage(refreshed.visual_render?.status === "READY" ? "Visual rendered and attached" : "Render attempt saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to render visual");
+    } finally {
+      setRendering(false);
     }
   }
 
@@ -164,7 +213,32 @@ export default function ContentRunDetailPage() {
 
           <div style={{ display: "grid", gap: 18, alignContent: "start" }}>
             <div style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: 18 }}>
-              <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Visual prompt</h2>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                <h2 style={{ margin: 0, fontSize: 18 }}>Visual artifact</h2>
+                <span style={{ color: "var(--text-3)", fontSize: 11 }}>
+                  {run.visual_render ? run.visual_render.status : "NO RENDER"}
+                </span>
+              </div>
+
+              {persistedRenderReady && persistedAssetUrl ? (
+                <div style={{ marginBottom: 14 }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={persistedAssetUrl}
+                    alt={run.visual_render?.prompt_used || visualPrompt || "Generated visual"}
+                    style={{ width: "100%", display: "block", borderRadius: 8, border: "1px solid var(--border)" }}
+                  />
+                </div>
+              ) : run.visual_render?.status === "FAILED" ? (
+                <div style={{ marginBottom: 14, padding: 12, borderRadius: 8, background: "var(--surface-active)", color: "var(--text-2)", fontSize: 12 }}>
+                  Last render failed{run.visual_render.error_message ? `: ${run.visual_render.error_message}` : "."}
+                </div>
+              ) : (
+                <div style={{ marginBottom: 14, padding: 12, borderRadius: 8, border: "1px dashed var(--border)", color: "var(--text-3)", fontSize: 12 }}>
+                  No current rendered artifact. Approval cannot treat a stale image as current evidence.
+                </div>
+              )}
+
               <textarea
                 value={visualPrompt}
                 onChange={(event) => setVisualPrompt(event.target.value)}
@@ -172,7 +246,7 @@ export default function ContentRunDetailPage() {
                 placeholder="No visual prompt persisted"
                 style={{
                   width: "100%",
-                  minHeight: 170,
+                  minHeight: 150,
                   resize: "vertical",
                   background: "var(--surface-active)",
                   color: "var(--text-1)",
@@ -180,8 +254,64 @@ export default function ContentRunDetailPage() {
                   borderRadius: 8,
                   padding: 12,
                   fontFamily: "inherit",
+                  marginBottom: 12,
                 }}
               />
+
+              {editable && (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                    <select
+                      aria-label="Visual aspect ratio"
+                      value={renderRatio}
+                      onChange={(event) => setRenderRatio(event.target.value)}
+                      style={{ background: "var(--surface-active)", color: "var(--text-1)", border: "1px solid var(--border)", borderRadius: 8, padding: 9 }}
+                    >
+                      <option value="16:9">16:9</option>
+                      <option value="1:1">1:1</option>
+                      <option value="4:5">4:5</option>
+                    </select>
+                    <select
+                      aria-label="Visual style"
+                      value={renderStyle}
+                      onChange={(event) => setRenderStyle(event.target.value)}
+                      style={{ background: "var(--surface-active)", color: "var(--text-1)", border: "1px solid var(--border)", borderRadius: 8, padding: 9 }}
+                    >
+                      <option value="">Default</option>
+                      <option value="technical_editorial">Technical Editorial</option>
+                      <option value="cinematic">Cinematic</option>
+                      <option value="minimal">Minimal</option>
+                      <option value="illustration">Illustration</option>
+                      <option value="photorealistic">Photorealistic</option>
+                    </select>
+                  </div>
+                  <button
+                    onClick={handleRender}
+                    disabled={rendering || !visualPrompt.trim() || !finalContent.trim()}
+                    style={{
+                      width: "100%",
+                      border: "1px solid var(--border-active)",
+                      borderRadius: 8,
+                      padding: "10px 12px",
+                      background: "var(--surface-active)",
+                      color: "var(--text-1)",
+                      cursor: rendering || !visualPrompt.trim() || !finalContent.trim() ? "not-allowed" : "pointer",
+                      opacity: rendering || !visualPrompt.trim() || !finalContent.trim() ? 0.55 : 1,
+                    }}
+                  >
+                    {rendering ? "Rendering…" : persistedRenderReady ? "Render replacement" : "Render image"}
+                  </button>
+                </>
+              )}
+
+              {run.visual_render && (
+                <dl style={{ margin: "12px 0 0", display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 10px", fontSize: 11, color: "var(--text-3)" }}>
+                  <dt>Provider</dt><dd style={{ margin: 0 }}>{run.visual_render.provider}</dd>
+                  <dt>Ratio</dt><dd style={{ margin: 0 }}>{run.visual_render.aspect_ratio}</dd>
+                  <dt>Style</dt><dd style={{ margin: 0 }}>{run.visual_render.style || "default"}</dd>
+                  <dt>Rendered</dt><dd style={{ margin: 0 }}>{formatDate(run.visual_render.rendered_at)}</dd>
+                </dl>
+              )}
             </div>
 
             <div style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: 18 }}>
@@ -201,15 +331,15 @@ export default function ContentRunDetailPage() {
             {saveMessage && <span style={{ color: "var(--text-2)", fontSize: 13 }}>{saveMessage}</span>}
             <button
               onClick={handleSave}
-              disabled={!dirty || saving || !finalContent.trim()}
+              disabled={!dirty || saving || rendering || !finalContent.trim()}
               style={{
                 border: "1px solid var(--border-active)",
                 borderRadius: 8,
                 padding: "10px 16px",
                 background: "var(--surface-active)",
                 color: "var(--text-1)",
-                cursor: !dirty || saving || !finalContent.trim() ? "not-allowed" : "pointer",
-                opacity: !dirty || saving || !finalContent.trim() ? 0.55 : 1,
+                cursor: !dirty || saving || rendering || !finalContent.trim() ? "not-allowed" : "pointer",
+                opacity: !dirty || saving || rendering || !finalContent.trim() ? 0.55 : 1,
               }}
             >
               {saving ? "Saving…" : "Save review edits"}
