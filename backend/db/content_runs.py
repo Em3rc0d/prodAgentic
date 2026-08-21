@@ -56,6 +56,7 @@ class ContentRunRepository:
             "final_status": None,
             "final_content": None,
             "visual_prompt": None,
+            "visual_render": None,
             "post_id": None,
             "failure_stage": None,
             "failure_reason": None,
@@ -166,6 +167,42 @@ class ContentRunRepository:
                 "updated_at": now,
             }},
         )
+
+    async def record_visual_render(self, req, result) -> bool:
+        """Attach a visual render attempt to its existing ContentRun.
+
+        Returns False for fallback/nonexistent run IDs. Rendering itself remains
+        independent of MongoDB and must not fail solely because persistence is down.
+        """
+        collection = self._collection()
+        if collection is None:
+            return False
+
+        now = _now()
+        snapshot = {
+            "render_id": result.render_id,
+            "status": result.status.value if hasattr(result.status, "value") else str(result.status),
+            "provider": result.provider,
+            "asset_url": result.asset_url,
+            "width": result.width,
+            "height": result.height,
+            "prompt_used": result.prompt_used,
+            "requested_prompt": req.prompt,
+            "aspect_ratio": req.aspect_ratio.value if hasattr(req.aspect_ratio, "value") else str(req.aspect_ratio),
+            "style": req.style.value if hasattr(req.style, "value") else str(req.style),
+            "idempotency_key": req.idempotency_key,
+            "error_message": result.error_message,
+            "rendered_at": now,
+        }
+        update_result = await collection.update_one(
+            {"run_id": req.run_id},
+            {"$set": {
+                "visual_prompt": req.prompt,
+                "visual_render": snapshot,
+                "updated_at": now,
+            }},
+        )
+        return bool(update_result.matched_count)
 
     async def mark_failed(self, run_id: str, stage: str, reason: str):
         collection = self._collection()
