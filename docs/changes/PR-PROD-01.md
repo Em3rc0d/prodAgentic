@@ -27,12 +27,12 @@ prodAgentic is a single-admin first release. Authentication establishes the oper
 ## Certification performed
 
 - backend compilation: pass
-- new auth/session regression tests: 5 pass
-- existing backend suite exercised: 62 pass; pre-existing environment/configuration failures remain and are not represented as green
+- auth/session unit and HTTP boundary regression tests: 7 pass
+- complete backend suite: 78 pass with the required language and isolated test-proxy contract
 - frontend lint: no new errors
 - frontend tests: 22 pass
 - Next.js 16 production build: pass
 
 ## Remaining merge gate
 
-Add HTTP-level negative-path tests for unauthenticated access and CSRF enforcement, resolve or isolate the pre-existing backend suite environment failures, run CI, and keep the PR draft until all required checks are green.
+Run GitHub CI and keep the PR draft until every required check is green.

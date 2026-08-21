@@ -1,8 +1,10 @@
 import time
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
-from core.auth import AuthConfigurationError, AuthSettings, SessionManager, SessionValidationError
+from core.auth import AuthConfigurationError, AuthSettings, SessionManager, SessionValidationError, router, security_boundary
 
 
 def settings(**changes):
@@ -49,3 +51,42 @@ def test_enabled_auth_fails_closed_on_weak_secrets(monkeypatch):
     monkeypatch.setenv("PRODAGENTIC_SESSION_SECRET", "short")
     with pytest.raises(AuthConfigurationError):
         AuthSettings.from_env()
+
+
+@pytest.fixture
+def http_client():
+    app = FastAPI()
+    auth_settings = settings(cookie_secure=False)
+    app.state.auth_settings = auth_settings
+    app.state.session_manager = SessionManager(auth_settings)
+    app.middleware("http")(security_boundary)
+    app.include_router(router, prefix="/api")
+
+    @app.get("/api/protected")
+    async def protected_read():
+        return {"ok": True}
+
+    @app.post("/api/protected")
+    async def protected_write():
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        yield client
+
+
+def test_http_boundary_rejects_unauthenticated_access(http_client):
+    response = http_client.get("/api/protected")
+    assert response.status_code == 401
+    assert response.headers["x-frame-options"] == "DENY"
+
+
+def test_http_boundary_rejects_missing_csrf_and_accepts_bound_token(http_client):
+    login_response = http_client.post("/api/auth/login", json={"username": "admin", "password": "correct-horse-battery"})
+    assert login_response.status_code == 200
+    assert "HttpOnly" in login_response.headers["set-cookie"]
+    csrf_token = login_response.json()["csrf_token"]
+
+    assert http_client.get("/api/protected").status_code == 200
+    assert http_client.post("/api/protected").status_code == 403
+    assert http_client.post("/api/protected", headers={"X-CSRF-Token": "wrong"}).status_code == 403
+    assert http_client.post("/api/protected", headers={"X-CSRF-Token": csrf_token}).status_code == 200

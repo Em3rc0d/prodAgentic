@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 
@@ -147,6 +148,42 @@ def set_session_cookie(response: Response, settings: AuthSettings, token: str) -
         key=COOKIE_NAME, value=token, max_age=settings.ttl_seconds, httponly=True,
         secure=settings.cookie_secure, samesite=settings.cookie_samesite, path="/",
     )
+
+
+def apply_security_headers(response: Response, path: str) -> Response:
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+    if path.startswith("/api/auth"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+async def security_boundary(request: Request, call_next):
+    path = request.url.path
+    settings = getattr(request.app.state, "auth_settings", None)
+    manager = getattr(request.app.state, "session_manager", None)
+    is_public = path in PUBLIC_PATHS or path.startswith("/docs") or path == "/openapi.json"
+
+    if settings is None or manager is None:
+        if not is_public:
+            return apply_security_headers(JSONResponse({"detail": "Authentication is not initialized"}, status_code=503), path)
+    elif settings.enabled and not is_public:
+        try:
+            session = manager.verify(request.cookies.get(COOKIE_NAME))
+        except SessionValidationError as exc:
+            response = JSONResponse({"detail": str(exc)}, status_code=401)
+            response.delete_cookie(COOKIE_NAME, path="/", secure=settings.cookie_secure, httponly=True, samesite=settings.cookie_samesite)
+            return apply_security_headers(response, path)
+
+        if request.method not in SAFE_METHODS:
+            supplied_csrf = request.headers.get("X-CSRF-Token", "")
+            if not supplied_csrf or not hmac.compare_digest(supplied_csrf, session["csrf"]):
+                return apply_security_headers(JSONResponse({"detail": "Invalid CSRF token"}, status_code=403), path)
+
+    return apply_security_headers(await call_next(request), path)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
