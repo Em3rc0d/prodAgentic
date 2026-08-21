@@ -2,27 +2,31 @@ from pydantic import BaseModel, Field
 from enum import Enum
 from typing import Optional
 
+
 class AspectRatio(str, Enum):
     """Approved aspect ratios — must match ASPECT_RATIO_DIMENSIONS in image.py."""
-    SQUARE    = "1:1"
-    PORTRAIT  = "4:5"
+    SQUARE = "1:1"
+    PORTRAIT = "4:5"
     WIDESCREEN = "16:9"
+
 
 class VisualStyle(str, Enum):
     """Approved styles — must match APPROVED_STYLES in image.py."""
     TECHNICAL_EDITORIAL = "technical_editorial"
-    CINEMATIC           = "cinematic"
-    MINIMAL             = "minimal"
-    ILLUSTRATION        = "illustration"
-    PHOTOREALISTIC      = "photorealistic"
-    DEFAULT             = ""
+    CINEMATIC = "cinematic"
+    MINIMAL = "minimal"
+    ILLUSTRATION = "illustration"
+    PHOTOREALISTIC = "photorealistic"
+    DEFAULT = ""
+
 
 class RenderStatus(str, Enum):
-    QUEUED    = "QUEUED"
+    QUEUED = "QUEUED"
     RENDERING = "RENDERING"
-    READY     = "READY"
-    FAILED    = "FAILED"
+    READY = "READY"
+    FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+
 
 class VisualRenderRequest(BaseModel):
     run_id: str = Field(..., min_length=1, max_length=256)
@@ -31,11 +35,13 @@ class VisualRenderRequest(BaseModel):
     aspect_ratio: AspectRatio = AspectRatio.WIDESCREEN
     style: VisualStyle = VisualStyle.DEFAULT
 
+
 class VisualRenderResponse(BaseModel):
     render_id: str
     status: RenderStatus
     provider: str
     asset_url: Optional[str] = None
+    asset_sha256: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
     prompt_used: str
