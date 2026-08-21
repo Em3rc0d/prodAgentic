@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import httpx
 import uuid
 import os
@@ -29,22 +30,17 @@ class VisualRenderService:
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
-        # kill switch — env-controlled or passed at construction
         self.kill_switch_active = not image_render_enabled
 
-        # Idempotency store. Each key is permanently bound to one render intent so
-        # a reused key can never return an old image for a changed prompt/ratio/style.
+        # Each key is permanently bound to one render intent.
         self._idempotency_store: dict[
             str,
             tuple[tuple[str, str, str], VisualRenderResponse],
         ] = {}
 
-        # Circuit breaker
         self.failure_count = 0
         self.max_failures = 3
         self.circuit_open_until: float = 0.0
-
-        # Concurrency semaphore
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_RENDERS)
 
     @staticmethod
@@ -52,19 +48,14 @@ class VisualRenderService:
         return (req.prompt, req.aspect_ratio.value, req.style.value)
 
     async def render(self, req: VisualRenderRequest) -> VisualRenderResponse:
-        # Kill switch
         if self.kill_switch_active:
             return self._failed_response("Image rendering is disabled (IMAGE_RENDER_ENABLED=false).", req)
 
-        # Circuit breaker
         if time.time() < self.circuit_open_until:
             return self._failed_response(
                 "Image rendering temporarily unavailable (circuit open).", req
             )
 
-        # Idempotency. Same key + same intent returns the exact prior result.
-        # Same key + different intent is a contract violation and must never return
-        # a stale artifact that could later be approved as current evidence.
         signature = self._intent_signature(req)
         cached = self._idempotency_store.get(req.idempotency_key)
         if cached is not None:
@@ -76,7 +67,6 @@ class VisualRenderService:
                 )
             return cached_response
 
-        # Prompt length guardrail
         if not req.prompt or not req.prompt.strip():
             return self._failed_response("Prompt must not be empty.", req)
         if len(req.prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
@@ -88,20 +78,15 @@ class VisualRenderService:
 
         async with self._semaphore:
             try:
-                # 1. Trigger render from provider
                 result = await self.provider.render(req.prompt, req.aspect_ratio.value, req.style.value)
-
-                # 2. Fetch image bytes with guardrails
                 image_bytes = await self._fetch_image(result.url)
 
-                # 3. Persist asset
                 filename = f"{render_id}.png"
                 file_path = self.storage_dir / filename
                 file_path.write_bytes(image_bytes)
 
                 asset_url = f"/assets/renders/{filename}"
-
-                # Reset circuit breaker on success
+                asset_sha256 = hashlib.sha256(image_bytes).hexdigest()
                 self.failure_count = 0
 
                 response = VisualRenderResponse(
@@ -109,6 +94,7 @@ class VisualRenderService:
                     status=RenderStatus.READY,
                     provider=self.provider.__class__.__name__,
                     asset_url=asset_url,
+                    asset_sha256=asset_sha256,
                     width=result.width,
                     height=result.height,
                     prompt_used=result.prompt_used,
@@ -131,11 +117,10 @@ class VisualRenderService:
         last_exception: Exception | None = None
 
         async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SECONDS) as client:
-            for attempt in range(3):  # 1 initial + 2 retries
+            for attempt in range(3):
                 try:
                     resp = await client.get(url)
 
-                    # Retry on 429 or 5xx
                     if resp.status_code == 429 or resp.status_code >= 500:
                         logger.warning(f"HTTP {resp.status_code} on attempt {attempt + 1}, retrying…")
                         await asyncio.sleep(2 ** attempt)
@@ -143,21 +128,16 @@ class VisualRenderService:
 
                     resp.raise_for_status()
 
-                    # Content-Type guard
                     content_type = resp.headers.get("content-type", "").split(";")[0].strip()
                     if content_type not in ALLOWED_CONTENT_TYPES:
-                        # Pollinations doesn't always return correct headers — skip strict check
-                        # but log it
                         logger.warning(f"Unexpected content-type: {content_type!r}")
 
-                    # Size guard
                     content = resp.content
                     if len(content) > MAX_DOWNLOAD_BYTES:
                         raise ValueError(
                             f"Response exceeds {MAX_DOWNLOAD_BYTES // (1024*1024)}MB limit"
                         )
 
-                    # Basic image magic-bytes check
                     if not self._looks_like_image(content):
                         raise ValueError("Response bytes do not match any known image format")
 
@@ -172,19 +152,14 @@ class VisualRenderService:
 
     @staticmethod
     def _looks_like_image(data: bytes) -> bool:
-        """Check magic bytes for common image formats."""
         if len(data) < 4:
             return False
-        # PNG
         if data[:8] == b"\x89PNG\r\n\x1a\n":
             return True
-        # JPEG
         if data[:2] == b"\xff\xd8":
             return True
-        # WebP
         if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
             return True
-        # GIF
         if data[:6] in (b"GIF87a", b"GIF89a"):
             return True
         return False
