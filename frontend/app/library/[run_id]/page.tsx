@@ -81,12 +81,12 @@ export default function ContentRunDetailPage() {
   }
 
   if (loading) {
-    return <main style={{ minHeight: "100vh", padding: 48, background: "var(--background)", color: "var(--text-1)" }}>Loading ContentRun…</main>;
+    return <main style={{ height: "100vh", overflowY: "auto", padding: 48, background: "var(--bg-0)", color: "var(--text-1)" }}>Loading ContentRun…</main>;
   }
 
   if (error && !run) {
     return (
-      <main style={{ minHeight: "100vh", padding: 48, background: "var(--background)", color: "var(--text-1)" }}>
+      <main style={{ height: "100vh", overflowY: "auto", padding: 48, background: "var(--bg-0)", color: "var(--text-1)" }}>
         <Link href="/library" style={{ color: "var(--text-2)" }}>← Content Library</Link>
         <p>{error}</p>
       </main>
@@ -98,8 +98,9 @@ export default function ContentRunDetailPage() {
   return (
     <main
       style={{
-        minHeight: "100vh",
-        background: "var(--background)",
+        height: "100vh",
+        overflowY: "auto",
+        background: "var(--bg-0)",
         color: "var(--text-1)",
         padding: "40px 24px 110px",
       }}
