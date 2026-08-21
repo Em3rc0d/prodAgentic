@@ -65,8 +65,9 @@ export default function ContentLibraryPage() {
   return (
     <main
       style={{
-        minHeight: "100vh",
-        background: "var(--background)",
+        height: "100vh",
+        overflowY: "auto",
+        background: "var(--bg-0)",
         color: "var(--text-1)",
         padding: "48px 24px 96px",
       }}
