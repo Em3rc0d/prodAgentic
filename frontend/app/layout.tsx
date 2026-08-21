@@ -7,13 +7,7 @@ export const metadata: Metadata = {
   description: "Controlled agentic content production for professional identities.",
 };
 
-const navLink = {
-  color: "var(--text-1)",
-  textDecoration: "none",
-  padding: "8px 10px",
-  borderRadius: 7,
-  fontSize: 13,
-} as const;
+const navLink = { color: "var(--text-1)", textDecoration: "none", padding: "8px 10px", borderRadius: 7, fontSize: 13 } as const;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -24,7 +18,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Link href="/" style={navLink}>Create</Link>
           <Link href="/library" style={navLink}>Library</Link>
           <Link href="/profiles" style={navLink}>Profiles</Link>
-          <Link href="/publishing" style={{ ...navLink, background: "var(--surface-active)" }}>Publish</Link>
+          <Link href="/publishing" style={navLink}>Publish</Link>
+          <Link href="/scheduling" style={{ ...navLink, background: "var(--surface-active)" }}>Schedule</Link>
         </nav>
       </body>
     </html>
