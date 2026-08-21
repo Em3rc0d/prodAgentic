@@ -7,6 +7,7 @@ from agents.idea_generator import GenerationIdeasFailed
 
 from core.context import TargetLanguageCode, ImagePromptLanguageCode
 from db.content_runs import ContentRunRepository
+from db.mongo import get_db
 
 
 logger = logging.getLogger(__name__)
@@ -19,23 +20,59 @@ def get_ready_pipeline_service(request: Request):
     return pipeline
 
 
+async def _resolve_content_profile(profile_id: str | None):
+    db = get_db()
+    if db is None:
+        if profile_id:
+            raise HTTPException(status_code=503, detail="MongoDB required for explicit content profile")
+        return None, None
+
+    collection = db["content_profiles"]
+    if profile_id:
+        doc = await collection.find_one({"profile_id": profile_id, "archived": {"$ne": True}})
+        if doc is None:
+            raise HTTPException(status_code=404, detail="Active content profile not found")
+    else:
+        doc = await collection.find_one({"is_default": True, "archived": {"$ne": True}})
+
+    if doc is None:
+        return None, None
+
+    snapshot = {key: value for key, value in doc.items() if key != "_id"}
+    return doc["profile_id"], snapshot
+
+
 router = APIRouter(tags=["pipeline"])
 
 
 @router.post("/ideas")
 async def get_ideas(req: IdeasRequest, pipeline=Depends(get_ready_pipeline_service)):
-    """Generate 7 LinkedIn post ideas for a given topic and style."""
     try:
-        ideas = await pipeline.generate_ideas(req.topic, req.style, req.target_language.value)
-        return {"ideas": ideas, "topic": req.topic, "style": req.style}
+        profile_id, profile_snapshot = await _resolve_content_profile(req.content_profile_id)
+        if profile_snapshot is None:
+            ideas = await pipeline.generate_ideas(req.topic, req.style, req.target_language.value)
+        else:
+            ideas = await pipeline.generate_ideas(
+                req.topic,
+                req.style,
+                req.target_language.value,
+                profile_id,
+                profile_snapshot,
+            )
+        return {
+            "ideas": ideas,
+            "topic": req.topic,
+            "style": req.style,
+            "content_profile_id": profile_id,
+        }
     except GenerationIdeasFailed as e:
         print(f"[ERROR] GenerationIdeasFailed in /api/ideas: {e}")
         raise HTTPException(
             status_code=502,
             detail={
                 "error": "IDEA_GENERATION_FAILED",
-                "message": "The model routing policy could not produce seven valid ideas."
-            }
+                "message": "The model routing policy could not produce seven valid ideas.",
+            },
         )
 
 
@@ -43,18 +80,35 @@ async def get_ideas(req: IdeasRequest, pipeline=Depends(get_ready_pipeline_servi
 async def pipeline_stream(
     idea: str = Query(..., description="The selected idea to expand"),
     topic: str = Query(..., description="Original topic"),
-    style: str = Query("educational", description="Post style: educational | storytelling | controversial"),
-    target_language: TargetLanguageCode = Query(TargetLanguageCode.ES, description="Target language for the post"),
-    image_prompt_language: ImagePromptLanguageCode = Query(ImagePromptLanguageCode.EN, description="Language for the image prompt"),
-    pipeline=Depends(get_ready_pipeline_service)
+    style: str = Query("educational", description="Post style"),
+    target_language: TargetLanguageCode = Query(TargetLanguageCode.ES),
+    image_prompt_language: ImagePromptLanguageCode = Query(ImagePromptLanguageCode.EN),
+    content_profile_id: str | None = Query(None),
+    pipeline=Depends(get_ready_pipeline_service),
 ):
-    """
-    SSE endpoint that streams the full Research → Write → Edit pipeline.
-    Connect with EventSource on the frontend.
-    """
+    profile_id, profile_snapshot = await _resolve_content_profile(content_profile_id)
 
     async def event_generator():
-        async for event in pipeline.run_pipeline_stream(idea, topic, style, target_language, image_prompt_language):
+        if profile_snapshot is None:
+            stream = pipeline.run_pipeline_stream(
+                idea,
+                topic,
+                style,
+                target_language,
+                image_prompt_language,
+            )
+        else:
+            stream = pipeline.run_pipeline_stream(
+                idea,
+                topic,
+                style,
+                target_language,
+                image_prompt_language,
+                profile_id,
+                profile_snapshot,
+            )
+
+        async for event in stream:
             data = event.get("data", "{}")
             yield f"data: {data}\n\n"
         yield 'data: {"stage": "end"}\n\n'
@@ -66,7 +120,6 @@ async def pipeline_stream(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
         },
     )
 
@@ -76,7 +129,6 @@ from models.visual import VisualRenderRequest
 
 @router.post("/visual-renders")
 async def render_visual(req: VisualRenderRequest, request: Request):
-    """Render an image and attach its snapshot to a reviewable ContentRun when possible."""
     visual_service = request.app.state.container.visual_service
     run_repository = ContentRunRepository()
     try:
@@ -99,7 +151,7 @@ async def render_visual(req: VisualRenderRequest, request: Request):
             status=RenderStatus.FAILED,
             provider="Unknown",
             prompt_used=req.prompt,
-            error_message="Internal Server Error"
+            error_message="Internal Server Error",
         )
         try:
             await run_repository.record_visual_render(req, err_res)

@@ -9,12 +9,13 @@ export function resolveBackendAssetUrl(assetUrl?: string | null): string | null 
 export async function fetchIdeas(
   topic: string,
   style: string,
-  target_language: string = "es"
+  target_language: string = "es",
+  content_profile_id?: string
 ): Promise<string[]> {
   const res = await fetch(`${API}/api/ideas`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topic, style, target_language }),
+    body: JSON.stringify({ topic, style, target_language, content_profile_id }),
   });
   if (!res.ok) throw new Error(`Ideas request failed: ${res.status}`);
   const data = await res.json();
@@ -26,9 +27,11 @@ export function createPipelineStream(
   topic: string,
   style: string,
   target_language: string = "es",
-  image_prompt_language: string = "en"
+  image_prompt_language: string = "en",
+  content_profile_id?: string
 ): EventSource {
   const params = new URLSearchParams({ idea, topic, style, target_language, image_prompt_language });
+  if (content_profile_id) params.set("content_profile_id", content_profile_id);
   return new EventSource(`${API}/api/pipeline/stream?${params}`);
 }
 
@@ -39,9 +42,7 @@ export async function fetchPosts() {
 }
 
 export async function updatePostStatus(postId: string, status: string) {
-  const res = await fetch(`${API}/api/posts/${postId}/status?status=${status}`, {
-    method: "PATCH",
-  });
+  const res = await fetch(`${API}/api/posts/${postId}/status?status=${status}`, { method: "PATCH" });
   if (!res.ok) throw new Error("Failed to update status");
   return res.json();
 }
@@ -49,6 +50,67 @@ export async function updatePostStatus(postId: string, status: string) {
 export async function deletePost(postId: string) {
   const res = await fetch(`${API}/api/posts/${postId}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete post");
+  return res.json();
+}
+
+export interface ContentProfile {
+  profile_id: string;
+  name: string;
+  display_name?: string | null;
+  positioning?: string | null;
+  audience: string[];
+  voice: string[];
+  core_topics: string[];
+  excluded_topics: string[];
+  target_language: "es" | "en" | "pt";
+  image_prompt_language: "es" | "en" | "pt";
+  min_words: number;
+  max_words: number;
+  preferred_style: string;
+  visual_enabled: boolean;
+  default_aspect_ratio: "16:9" | "1:1" | "4:5";
+  default_visual_style: string;
+  forbidden_claims: string[];
+  banned_phrases: string[];
+  brand_constraints: string[];
+  is_default: boolean;
+  version: number;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ContentProfileInput = Omit<ContentProfile, "profile_id" | "version" | "archived" | "created_at" | "updated_at">;
+
+export async function fetchContentProfiles(): Promise<{ profiles: ContentProfile[]; count: number }> {
+  const res = await fetch(`${API}/api/content-profiles`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch content profiles: ${res.status}`);
+  return res.json();
+}
+
+export async function createContentProfile(profile: ContentProfileInput): Promise<ContentProfile> {
+  const res = await fetch(`${API}/api/content-profiles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profile),
+  });
+  if (!res.ok) throw new Error(`Failed to create content profile: ${res.status}`);
+  return res.json();
+}
+
+export async function updateContentProfile(profileId: string, changes: Partial<ContentProfileInput> & { archived?: boolean }): Promise<ContentProfile> {
+  const res = await fetch(`${API}/api/content-profiles/${encodeURIComponent(profileId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+  });
+  if (!res.ok) throw new Error(`Failed to update content profile: ${res.status}`);
+  return res.json();
+}
+
+export async function setDefaultContentProfile(profileId: string): Promise<ContentProfile> {
+  const res = await fetch(`${API}/api/content-profiles/${encodeURIComponent(profileId)}/default`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to set default profile: ${res.status}`);
   return res.json();
 }
 
@@ -88,16 +150,8 @@ export async function renderVisual(
 }
 
 export type ContentRunStatus =
-  | "GENERATING"
-  | "TEXT_READY"
-  | "READY_FOR_REVIEW"
-  | "APPROVED"
-  | "SCHEDULED"
-  | "PUBLISHING"
-  | "PUBLISHED"
-  | "FAILED"
-  | "CANCELLED"
-  | "ARCHIVED";
+  | "GENERATING" | "TEXT_READY" | "READY_FOR_REVIEW" | "APPROVED" | "SCHEDULED"
+  | "PUBLISHING" | "PUBLISHED" | "FAILED" | "CANCELLED" | "ARCHIVED";
 
 export type ContentRunStageStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
 
@@ -148,6 +202,8 @@ export interface ContentRun {
   style: string;
   idea: string;
   status: ContentRunStatus;
+  content_profile_id?: string | null;
+  content_profile_snapshot?: Record<string, unknown> | null;
   requested_target_language?: string | null;
   resolved_target_language?: string | null;
   image_prompt_language?: string | null;
@@ -182,10 +238,7 @@ export async function fetchContentRun(runId: string): Promise<ContentRun> {
   return res.json();
 }
 
-export async function editContentRun(
-  runId: string,
-  changes: { final_content?: string; visual_prompt?: string }
-): Promise<ContentRun> {
+export async function editContentRun(runId: string, changes: { final_content?: string; visual_prompt?: string }): Promise<ContentRun> {
   const res = await fetch(`${API}/api/content-runs/${encodeURIComponent(runId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },

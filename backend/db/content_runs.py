@@ -16,11 +16,7 @@ def _now():
 
 
 class ContentRunRepository:
-    """Persistence boundary for authoritative generation runs.
-
-    All methods degrade to a no-op when MongoDB is unavailable so the existing
-    generation pipeline can continue operating without persistence.
-    """
+    """Persistence boundary for authoritative generation runs."""
 
     @staticmethod
     def _collection():
@@ -53,6 +49,8 @@ class ContentRunRepository:
             "style": context.style,
             "idea": idea,
             "status": ContentRunStatus.GENERATING.value,
+            "content_profile_id": context.content_profile_id,
+            "content_profile_snapshot": context.content_profile_snapshot,
             "requested_target_language": context.requested_target_language.value,
             "resolved_target_language": context.resolved_target_language.value,
             "image_prompt_language": context.image_prompt_language.value,
@@ -100,10 +98,7 @@ class ContentRunRepository:
             {"run_id": run_id},
             {
                 "$inc": {f"stages.{stage}.attempt_failures": 1},
-                "$set": {
-                    f"stages.{stage}.last_error": reason,
-                    "updated_at": now,
-                },
+                "$set": {f"stages.{stage}.last_error": reason, "updated_at": now},
             },
         )
 
@@ -138,10 +133,7 @@ class ContentRunRepository:
                 "failure_stage": stage,
                 "failure_reason": reason,
             })
-        await collection.update_one(
-            {"run_id": run_id},
-            {"$set": fields},
-        )
+        await collection.update_one({"run_id": run_id}, {"$set": fields})
 
     async def mark_text_ready(self, run_id: str, final_content: str, final_status: str):
         collection = self._collection()
@@ -174,7 +166,6 @@ class ContentRunRepository:
         )
 
     async def record_visual_render(self, req, result) -> bool:
-        """Attach a visual render attempt to a reviewable existing ContentRun."""
         collection = self._collection()
         if collection is None:
             return False
@@ -197,15 +188,8 @@ class ContentRunRepository:
             "rendered_at": now,
         }
         update_result = await collection.update_one(
-            {
-                "run_id": req.run_id,
-                "status": {"$in": list(_REVIEWABLE_STATUSES)},
-            },
-            {"$set": {
-                "visual_prompt": req.prompt,
-                "visual_render": snapshot,
-                "updated_at": now,
-            }},
+            {"run_id": req.run_id, "status": {"$in": list(_REVIEWABLE_STATUSES)}},
+            {"$set": {"visual_prompt": req.prompt, "visual_render": snapshot, "updated_at": now}},
         )
         return bool(update_result.matched_count)
 
