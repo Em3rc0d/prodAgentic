@@ -55,10 +55,27 @@ def test_visual_render_success(client):
     assert data["prompt_used"] == "cyberpunk city cinematic"
 
 
-def test_visual_render_idempotency(client):
+def test_visual_render_same_idempotency_key_same_intent_returns_same_artifact(client):
     req = {
         "run_id": "test-run",
         "idempotency_key": "key-unique-2",
+        "prompt": "first prompt",
+        "aspect_ratio": "16:9",
+        "style": "minimal",
+    }
+    res1 = client.post("/api/visual-renders", json=req).json()
+    res2 = client.post("/api/visual-renders", json=req).json()
+
+    assert res1["status"] == "READY"
+    assert res2["status"] == "READY"
+    assert res1["render_id"] == res2["render_id"]
+    assert res1["asset_url"] == res2["asset_url"]
+
+
+def test_visual_render_reused_idempotency_key_rejects_changed_intent(client):
+    req = {
+        "run_id": "test-run",
+        "idempotency_key": "key-unique-conflict",
         "prompt": "first prompt",
     }
     res1 = client.post("/api/visual-renders", json=req).json()
@@ -66,9 +83,11 @@ def test_visual_render_idempotency(client):
     req["prompt"] = "second prompt"
     res2 = client.post("/api/visual-renders", json=req).json()
 
-    assert res1["render_id"] == res2["render_id"]
-    assert res1["prompt_used"] == res2["prompt_used"]
-    assert res1["prompt_used"] == "first prompt"
+    assert res1["status"] == "READY"
+    assert res2["status"] == "FAILED"
+    assert res2["render_id"] != res1["render_id"]
+    assert "idempotency key" in res2["error_message"].lower()
+    assert "different render request" in res2["error_message"].lower()
 
 
 def test_visual_render_validation_error(client):
