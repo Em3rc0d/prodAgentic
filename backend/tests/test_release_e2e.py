@@ -1,13 +1,19 @@
 import copy
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 
 import pytest
+import httpx
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 import routes.content_runs as content_run_routes
 import routes.scheduling as scheduling_routes
 from core.publication import PublicationCoordinator
 from core.scheduler import run_due_schedules_once
+from core.auth import AuthSettings, SessionManager, router as auth_router, security_boundary
+from core.linkedin import LinkedInPublisher
 from models.content_run import ContentRunApprovalRequest, ContentRunEditRequest, ContentRunScheduleRequest, ContentRunStatus
 
 
@@ -111,7 +117,7 @@ class FakeLinkedInConfig:
         return cls()
 
 
-def generated_run():
+def generated_run(visual_render=None):
     now = datetime.now(timezone.utc)
     return {
         "run_id": "release-run-001",
@@ -127,7 +133,7 @@ def generated_run():
         },
         "final_content": "Generated draft requiring human review.",
         "visual_prompt": "A controlled workflow with explicit authority boundaries",
-        "visual_render": None,
+        "visual_render": visual_render,
         "approval": None,
         "schedule": None,
         "publication": None,
@@ -137,8 +143,22 @@ def generated_run():
 
 
 @pytest.mark.asyncio
-async def test_release_lifecycle_reopen_edit_approve_schedule_publish_exactly_once(monkeypatch):
-    db = FakeDb(generated_run())
+async def test_release_lifecycle_reopen_edit_approve_schedule_publish_exactly_once(monkeypatch, tmp_path):
+    image_bytes = b"release-approved-image-bytes"
+    renders = tmp_path / "renders"
+    renders.mkdir()
+    asset = renders / "release.png"
+    asset.write_bytes(image_bytes)
+    visual_render = {
+        "render_id": "render-release-001",
+        "status": "READY",
+        "provider": "injected-renderer",
+        "asset_url": "/assets/renders/release.png",
+        "asset_sha256": hashlib.sha256(image_bytes).hexdigest(),
+        "requested_prompt": "A controlled workflow with explicit authority boundaries",
+        "prompt_used": "A controlled workflow with explicit authority boundaries",
+    }
+    db = FakeDb(generated_run(visual_render=visual_render))
     monkeypatch.setattr(content_run_routes, "get_db", lambda: db)
     monkeypatch.setattr(scheduling_routes, "get_db", lambda: db)
     monkeypatch.setattr(scheduling_routes, "LinkedInPublisherConfig", FakeLinkedInConfig)
@@ -158,10 +178,11 @@ async def test_release_lifecycle_reopen_edit_approve_schedule_publish_exactly_on
 
     approved = await content_run_routes.approve_content_run(
         "release-run-001",
-        ContentRunApprovalRequest(include_visual=False),
+        ContentRunApprovalRequest(include_visual=True),
     )
     assert approved["status"] == ContentRunStatus.APPROVED.value
     assert approved["approval"]["final_content"] == "Human-reviewed final content."
+    assert approved["approval"]["visual_render"]["asset_sha256"] == visual_render["asset_sha256"]
     approved_bundle = approved["approval"]["bundle_sha256"]
 
     scheduled_for = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -176,18 +197,29 @@ async def test_release_lifecycle_reopen_edit_approve_schedule_publish_exactly_on
     db["content_runs"].docs["release-run-001"]["schedule"]["scheduled_for"] = datetime.now(timezone.utc) - timedelta(seconds=1)
     publish_calls = []
 
-    class InjectedPublisher:
-        def __init__(self, config):
-            assert config.author_urn == FakeLinkedInConfig.author_urn
+    def linkedin_handler(request: httpx.Request):
+        publish_calls.append((request.method, str(request.url)))
+        if str(request.url) == "https://api.linkedin.com/rest/images?action=initializeUpload":
+            return httpx.Response(200, json={"value": {"uploadUrl": "https://upload.release.test/image", "image": "urn:li:image:release-proof"}})
+        if str(request.url) == "https://upload.release.test/image":
+            assert request.content == image_bytes
+            return httpx.Response(201)
+        if str(request.url) == "https://api.linkedin.com/rest/posts":
+            body = json.loads(request.content)
+            assert body["commentary"] == "Human-reviewed final content."
+            assert body["content"]["media"]["id"] == "urn:li:image:release-proof"
+            return httpx.Response(201, headers={"x-restli-id": "urn:li:share:release-proof"})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
-        async def publish(self, approval):
-            publish_calls.append(approval["bundle_sha256"])
-            return SimpleNamespace(post_urn="urn:li:share:release-proof", image_urn=None)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(linkedin_handler))
+
+    def publisher_factory(config):
+        return LinkedInPublisher(config, client=client, asset_root=str(tmp_path))
 
     def coordinator_factory(supplied_db):
         return PublicationCoordinator(
             supplied_db,
-            publisher_factory=InjectedPublisher,
+            publisher_factory=publisher_factory,
             config_factory=FakeLinkedInConfig.from_env,
         )
 
@@ -199,5 +231,101 @@ async def test_release_lifecycle_reopen_edit_approve_schedule_publish_exactly_on
     assert published["schedule"]["status"] == "COMPLETED"
     assert published["publication"]["status"] == "PUBLISHED"
     assert published["publication"]["external_post_urn"] == "urn:li:share:release-proof"
+    assert published["publication"]["external_image_urn"] == "urn:li:image:release-proof"
     assert published["publication"]["bundle_sha256"] == approved_bundle
-    assert publish_calls == [approved_bundle]
+    assert [method for method, _url in publish_calls] == ["POST", "PUT", "POST"]
+    await client.aclose()
+
+
+def test_authenticated_http_reopen_edit_approve_and_schedule(monkeypatch):
+    db = FakeDb(generated_run())
+    monkeypatch.setattr(content_run_routes, "get_db", lambda: db)
+    monkeypatch.setattr(scheduling_routes, "get_db", lambda: db)
+    monkeypatch.setattr(scheduling_routes, "LinkedInPublisherConfig", FakeLinkedInConfig)
+
+    app = FastAPI()
+    auth_settings = AuthSettings(
+        enabled=True,
+        admin_user="release-admin",
+        admin_password="release-password-strong",
+        session_secret="release-session-secret-that-is-long-enough",
+        ttl_seconds=3600,
+        cookie_secure=False,
+        cookie_samesite="lax",
+    )
+    app.state.auth_settings = auth_settings
+    app.state.session_manager = SessionManager(auth_settings)
+    app.middleware("http")(security_boundary)
+    app.include_router(auth_router, prefix="/api")
+    app.include_router(content_run_routes.router, prefix="/api")
+    app.include_router(scheduling_routes.router, prefix="/api")
+
+    with TestClient(app) as client:
+        assert client.get("/api/content-runs/release-run-001").status_code == 401
+        login = client.post("/api/auth/login", json={"username": "release-admin", "password": "release-password-strong"})
+        assert login.status_code == 200
+        csrf = login.json()["csrf_token"]
+        headers = {"X-CSRF-Token": csrf}
+
+        reopened = client.get("/api/content-runs/release-run-001")
+        assert reopened.status_code == 200
+        assert reopened.json()["status"] == ContentRunStatus.READY_FOR_REVIEW.value
+
+        assert client.patch(
+            "/api/content-runs/release-run-001",
+            headers=headers,
+            json={"final_content": "HTTP-reviewed final content."},
+        ).status_code == 200
+        approved = client.post(
+            "/api/content-runs/release-run-001/approve",
+            headers=headers,
+            json={"include_visual": False},
+        )
+        assert approved.status_code == 200
+        assert approved.json()["approval"]["final_content"] == "HTTP-reviewed final content."
+
+        scheduled = client.post(
+            "/api/content-runs/release-run-001/schedule",
+            headers=headers,
+            json={"scheduled_for": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()},
+        )
+        assert scheduled.status_code == 200
+        assert scheduled.json()["status"] == ContentRunStatus.SCHEDULED.value
+
+
+@pytest.mark.asyncio
+async def test_approved_visual_tampering_stops_before_external_request(monkeypatch, tmp_path):
+    original = b"original-approved-image"
+    renders = tmp_path / "renders"
+    renders.mkdir()
+    asset = renders / "release.png"
+    asset.write_bytes(original)
+    visual_render = {
+        "render_id": "render-release-tamper",
+        "status": "READY",
+        "provider": "injected-renderer",
+        "asset_url": "/assets/renders/release.png",
+        "asset_sha256": hashlib.sha256(original).hexdigest(),
+        "requested_prompt": "A controlled workflow with explicit authority boundaries",
+        "prompt_used": "A controlled workflow with explicit authority boundaries",
+    }
+    db = FakeDb(generated_run(visual_render=visual_render))
+    monkeypatch.setattr(content_run_routes, "get_db", lambda: db)
+    approved = await content_run_routes.approve_content_run(
+        "release-run-001", ContentRunApprovalRequest(include_visual=True)
+    )
+    asset.write_bytes(b"tampered-after-approval")
+    called = False
+
+    def handler(_request: httpx.Request):
+        nonlocal called
+        called = True
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        publisher = LinkedInPublisher(
+            FakeLinkedInConfig(), client=client, asset_root=str(tmp_path)
+        )
+        with pytest.raises(Exception, match="byte digest"):
+            await publisher.publish(approved["approval"])
+    assert called is False

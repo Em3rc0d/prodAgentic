@@ -21,10 +21,14 @@ The release harness proves:
 
 The injected publisher returns a deterministic test URN. This certifies prodAgentic's orchestration, lifecycle, atomic claim, and evidence persistence. It does **not** prove that LinkedIn accepted or displayed a real post.
 
+## Second closed slice
+
+- Authenticated HTTP boundary proves login, session cookie, CSRF, reopen, edit, approval, and scheduling through the real routers.
+- Real MongoDB 7 CI service proves approved profile/run/schedule evidence survives client-process replacement.
+- The visual release journey approves a persisted byte digest, uploads exactly those bytes through the injected provider, and stores image/post evidence.
+- Tampering after approval stops before any external request.
+
 ## Remaining release proof
 
-- Execute the authenticated lifecycle through HTTP rather than direct route calls.
-- Exercise a real MongoDB process and restart/reopen behavior.
-- Include a persisted rendered visual and byte-digest verification in the release journey.
 - Run the complete clean-environment CI gate.
 - Perform one separately authorized real LinkedIn smoke publication as the final external gate.
