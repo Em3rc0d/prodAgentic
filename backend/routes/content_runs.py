@@ -1,10 +1,14 @@
+import hashlib
+import json
+import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query
 
 from db.mongo import get_db
-from models.content_run import ContentRunEditRequest, ContentRunStatus
+from models.content_run import ContentRunApprovalRequest, ContentRunEditRequest, ContentRunStatus
 
 
 router = APIRouter(tags=["content-runs"])
@@ -25,6 +29,60 @@ def _serialize(value):
     if isinstance(value, list):
         return [_serialize(item) for item in value]
     return value
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _sha256_json(value) -> str:
+    canonical = json.dumps(
+        _serialize(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return _sha256_text(canonical)
+
+
+def _build_approval_snapshot(existing: dict, include_visual: bool) -> dict:
+    final_content = existing.get("final_content")
+    if not isinstance(final_content, str) or not final_content.strip():
+        raise HTTPException(status_code=409, detail="Final content is not ready for approval")
+
+    visual_render = None
+    visual_render_sha256 = None
+
+    if include_visual:
+        current_visual = existing.get("visual_render")
+        if not current_visual or current_visual.get("status") != "READY":
+            raise HTTPException(status_code=409, detail="A READY visual artifact is required for visual approval")
+        if not current_visual.get("asset_url") or not current_visual.get("asset_sha256"):
+            raise HTTPException(status_code=409, detail="Visual artifact is missing immutable asset evidence")
+        if current_visual.get("requested_prompt") != (existing.get("visual_prompt") or ""):
+            raise HTTPException(status_code=409, detail="Visual artifact is stale relative to the current visual prompt")
+
+        visual_render = deepcopy(current_visual)
+        visual_render_sha256 = _sha256_json(visual_render)
+
+    final_content_sha256 = _sha256_text(final_content)
+    bundle_sha256 = _sha256_json({
+        "include_visual": include_visual,
+        "final_content_sha256": final_content_sha256,
+        "visual_render_sha256": visual_render_sha256,
+    })
+
+    return {
+        "approval_id": str(uuid.uuid4()),
+        "approved_at": datetime.now(timezone.utc),
+        "source": "explicit_user_action",
+        "include_visual": include_visual,
+        "final_content": final_content,
+        "final_content_sha256": final_content_sha256,
+        "visual_render": visual_render,
+        "visual_render_sha256": visual_render_sha256,
+        "bundle_sha256": bundle_sha256,
+    }
 
 
 @router.get("/content-runs")
@@ -60,11 +118,7 @@ async def get_content_run(run_id: str):
 
 @router.patch("/content-runs/{run_id}")
 async def edit_content_run(run_id: str, req: ContentRunEditRequest):
-    """Persist human edits without rewriting generated provenance.
-
-    Only pre-approval review states are mutable. If the human changes the visual
-    prompt, any previously rendered artifact becomes stale and is invalidated.
-    """
+    """Persist human edits without rewriting generated provenance."""
     db = get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="MongoDB not connected")
@@ -90,12 +144,54 @@ async def edit_content_run(run_id: str, req: ContentRunEditRequest):
 
     await collection.update_one({"run_id": run_id}, {"$set": updates})
 
-    # Keep the legacy post projection coherent while it exists.
     if req.final_content is not None:
         await db["posts"].update_one(
             {"run_id": run_id},
             {"$set": {"final_content": updates["final_content"]}},
         )
+
+    updated = await collection.find_one({"run_id": run_id})
+    return _serialize(updated)
+
+
+@router.post("/content-runs/{run_id}/approve")
+async def approve_content_run(run_id: str, req: ContentRunApprovalRequest):
+    """Freeze the exact publishable bundle behind an explicit human approval action."""
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="MongoDB not connected")
+
+    collection = db["content_runs"]
+    existing = await collection.find_one({"run_id": run_id})
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Content run not found")
+
+    if existing.get("status") != ContentRunStatus.READY_FOR_REVIEW.value:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Only READY_FOR_REVIEW content can be approved; current status is {existing.get('status')}",
+        )
+
+    approval = _build_approval_snapshot(existing, req.include_visual)
+    now = approval["approved_at"]
+
+    # Optimistic concurrency: every review edit and render changes updated_at.
+    # If the run changes after we build the approval snapshot, this query misses
+    # instead of approving a stale revision.
+    result = await collection.update_one(
+        {
+            "run_id": run_id,
+            "status": ContentRunStatus.READY_FOR_REVIEW.value,
+            "updated_at": existing.get("updated_at"),
+        },
+        {"$set": {
+            "status": ContentRunStatus.APPROVED.value,
+            "approval": approval,
+            "updated_at": now,
+        }},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Content run changed while approval was being applied")
 
     updated = await collection.find_one({"run_id": run_id})
     return _serialize(updated)

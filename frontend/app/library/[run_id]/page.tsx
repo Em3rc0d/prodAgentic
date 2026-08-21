@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  approveContentRun,
   ContentRun,
   editContentRun,
   fetchContentRun,
@@ -26,6 +27,11 @@ function formatDate(value?: string | null) {
   }).format(new Date(value));
 }
 
+function shortDigest(value?: string | null) {
+  if (!value) return "—";
+  return `${value.slice(0, 12)}…${value.slice(-8)}`;
+}
+
 export default function ContentRunDetailPage() {
   const params = useParams<{ run_id: string }>();
   const runId = decodeURIComponent(params.run_id);
@@ -38,6 +44,7 @@ export default function ContentRunDetailPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [approving, setApproving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,6 +82,8 @@ export default function ContentRunDetailPage() {
 
   const persistedAssetUrl = resolveBackendAssetUrl(run?.visual_render?.asset_url);
   const persistedRenderReady = run?.visual_render?.status === "READY" && Boolean(persistedAssetUrl);
+  const approvalVisualReady = persistedRenderReady && Boolean(run?.visual_render?.asset_sha256);
+  const interactionBusy = saving || rendering || approving;
 
   async function handleSave() {
     if (!run || !editable || !dirty || !finalContent.trim()) return;
@@ -126,6 +135,22 @@ export default function ContentRunDetailPage() {
       setError(err instanceof Error ? err.message : "Failed to render visual");
     } finally {
       setRendering(false);
+    }
+  }
+
+  async function handleApprove(includeVisual: boolean) {
+    if (!run || run.status !== "READY_FOR_REVIEW" || dirty || interactionBusy) return;
+    setApproving(true);
+    setSaveMessage(null);
+    setError(null);
+    try {
+      const updated = await approveContentRun(run.run_id, includeVisual);
+      hydrate(updated);
+      setSaveMessage(includeVisual ? "Approved: text + visual locked" : "Approved: text-only bundle locked");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to approve ContentRun");
+    } finally {
+      setApproving(false);
     }
   }
 
@@ -287,7 +312,7 @@ export default function ContentRunDetailPage() {
                   </div>
                   <button
                     onClick={handleRender}
-                    disabled={rendering || !visualPrompt.trim() || !finalContent.trim()}
+                    disabled={interactionBusy || !visualPrompt.trim() || !finalContent.trim()}
                     style={{
                       width: "100%",
                       border: "1px solid var(--border-active)",
@@ -295,8 +320,8 @@ export default function ContentRunDetailPage() {
                       padding: "10px 12px",
                       background: "var(--surface-active)",
                       color: "var(--text-1)",
-                      cursor: rendering || !visualPrompt.trim() || !finalContent.trim() ? "not-allowed" : "pointer",
-                      opacity: rendering || !visualPrompt.trim() || !finalContent.trim() ? 0.55 : 1,
+                      cursor: interactionBusy || !visualPrompt.trim() || !finalContent.trim() ? "not-allowed" : "pointer",
+                      opacity: interactionBusy || !visualPrompt.trim() || !finalContent.trim() ? 0.55 : 1,
                     }}
                   >
                     {rendering ? "Rendering…" : persistedRenderReady ? "Render replacement" : "Render image"}
@@ -309,6 +334,7 @@ export default function ContentRunDetailPage() {
                   <dt>Provider</dt><dd style={{ margin: 0 }}>{run.visual_render.provider}</dd>
                   <dt>Ratio</dt><dd style={{ margin: 0 }}>{run.visual_render.aspect_ratio}</dd>
                   <dt>Style</dt><dd style={{ margin: 0 }}>{run.visual_render.style || "default"}</dd>
+                  <dt>Asset hash</dt><dd style={{ margin: 0, fontFamily: "monospace" }}>{shortDigest(run.visual_render.asset_sha256)}</dd>
                   <dt>Rendered</dt><dd style={{ margin: 0 }}>{formatDate(run.visual_render.rendered_at)}</dd>
                 </dl>
               )}
@@ -327,24 +353,93 @@ export default function ContentRunDetailPage() {
         </section>
 
         {editable && (
-          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12, marginBottom: 28 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12, marginBottom: 20 }}>
             {saveMessage && <span style={{ color: "var(--text-2)", fontSize: 13 }}>{saveMessage}</span>}
             <button
               onClick={handleSave}
-              disabled={!dirty || saving || rendering || !finalContent.trim()}
+              disabled={!dirty || interactionBusy || !finalContent.trim()}
               style={{
                 border: "1px solid var(--border-active)",
                 borderRadius: 8,
                 padding: "10px 16px",
                 background: "var(--surface-active)",
                 color: "var(--text-1)",
-                cursor: !dirty || saving || rendering || !finalContent.trim() ? "not-allowed" : "pointer",
-                opacity: !dirty || saving || rendering || !finalContent.trim() ? 0.55 : 1,
+                cursor: !dirty || interactionBusy || !finalContent.trim() ? "not-allowed" : "pointer",
+                opacity: !dirty || interactionBusy || !finalContent.trim() ? 0.55 : 1,
               }}
             >
               {saving ? "Saving…" : "Save review edits"}
             </button>
           </div>
+        )}
+
+        {run.status === "READY_FOR_REVIEW" && (
+          <section style={{ border: "1px solid var(--border-active)", borderRadius: 12, background: "var(--surface)", padding: 20, marginBottom: 28 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div style={{ maxWidth: 650 }}>
+                <h2 style={{ margin: "0 0 8px", fontSize: 20 }}>Human approval gate</h2>
+                <p style={{ margin: 0, color: "var(--text-2)", lineHeight: 1.5 }}>
+                  Approval freezes the exact publishable bundle. After this transition, review edits and visual replacement are blocked.
+                </p>
+                {dirty && <p style={{ margin: "10px 0 0", color: "var(--text-2)", fontSize: 13 }}>Save your current edits before approving.</p>}
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button
+                  onClick={() => handleApprove(false)}
+                  disabled={dirty || interactionBusy || !finalContent.trim()}
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    padding: "10px 14px",
+                    background: "var(--surface-active)",
+                    color: "var(--text-1)",
+                    cursor: dirty || interactionBusy || !finalContent.trim() ? "not-allowed" : "pointer",
+                    opacity: dirty || interactionBusy || !finalContent.trim() ? 0.55 : 1,
+                  }}
+                >
+                  {approving ? "Approving…" : "Approve text only"}
+                </button>
+                <button
+                  onClick={() => handleApprove(true)}
+                  disabled={dirty || interactionBusy || !finalContent.trim() || !approvalVisualReady}
+                  style={{
+                    border: "1px solid var(--border-active)",
+                    borderRadius: 8,
+                    padding: "10px 14px",
+                    background: "var(--surface-active)",
+                    color: "var(--text-1)",
+                    cursor: dirty || interactionBusy || !finalContent.trim() || !approvalVisualReady ? "not-allowed" : "pointer",
+                    opacity: dirty || interactionBusy || !finalContent.trim() || !approvalVisualReady ? 0.55 : 1,
+                  }}
+                >
+                  {approving ? "Approving…" : "Approve text + visual"}
+                </button>
+              </div>
+            </div>
+            {!approvalVisualReady && (
+              <p style={{ margin: "12px 0 0", color: "var(--text-3)", fontSize: 12 }}>
+                Text + visual approval requires a current READY render with an asset digest. Text-only approval remains available.
+              </p>
+            )}
+          </section>
+        )}
+
+        {run.approval && (
+          <section style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: 20, marginBottom: 28 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 18, flexWrap: "wrap" }}>
+              <div>
+                <h2 style={{ margin: "0 0 6px", fontSize: 20 }}>Approved publishable bundle</h2>
+                <p style={{ margin: 0, color: "var(--text-2)" }}>
+                  {run.approval.include_visual ? "Text + visual" : "Text only"} · {formatDate(run.approval.approved_at)}
+                </p>
+              </div>
+              <div style={{ color: "var(--text-3)", fontSize: 12, textAlign: "right", fontFamily: "monospace" }}>
+                <div>Bundle {shortDigest(run.approval.bundle_sha256)}</div>
+                <div>Text {shortDigest(run.approval.final_content_sha256)}</div>
+                {run.approval.visual_render_sha256 && <div>Visual {shortDigest(run.approval.visual_render_sha256)}</div>}
+              </div>
+            </div>
+          </section>
         )}
 
         <section>

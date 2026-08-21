@@ -59,7 +59,8 @@ export interface VisualRenderResponse {
   status: RenderStatus;
   provider: string;
   asset_url?: string;
-  url?: string; // legacy fallback
+  asset_sha256?: string;
+  url?: string;
   width?: number;
   height?: number;
   prompt_used: string;
@@ -116,6 +117,7 @@ export interface ContentRunVisualArtifact {
   status: RenderStatus;
   provider: string;
   asset_url?: string | null;
+  asset_sha256?: string | null;
   width?: number | null;
   height?: number | null;
   prompt_used: string;
@@ -125,6 +127,18 @@ export interface ContentRunVisualArtifact {
   idempotency_key: string;
   error_message?: string | null;
   rendered_at: string;
+}
+
+export interface ContentRunApprovalSnapshot {
+  approval_id: string;
+  approved_at: string;
+  source: "explicit_user_action" | string;
+  include_visual: boolean;
+  final_content: string;
+  final_content_sha256: string;
+  visual_render?: ContentRunVisualArtifact | null;
+  visual_render_sha256?: string | null;
+  bundle_sha256: string;
 }
 
 export interface ContentRun {
@@ -142,6 +156,7 @@ export interface ContentRun {
   final_content?: string | null;
   visual_prompt?: string | null;
   visual_render?: ContentRunVisualArtifact | null;
+  approval?: ContentRunApprovalSnapshot | null;
   post_id?: string | null;
   failure_stage?: string | null;
   failure_reason?: string | null;
@@ -180,6 +195,20 @@ export async function editContentRun(
     const payload = await res.json().catch(() => null);
     const detail = payload?.detail ? `: ${payload.detail}` : "";
     throw new Error(`Failed to save content run (${res.status})${detail}`);
+  }
+  return res.json();
+}
+
+export async function approveContentRun(runId: string, includeVisual: boolean): Promise<ContentRun> {
+  const res = await fetch(`${API}/api/content-runs/${encodeURIComponent(runId)}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ include_visual: includeVisual }),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const detail = payload?.detail ? `: ${payload.detail}` : "";
+    throw new Error(`Failed to approve content run (${res.status})${detail}`);
   }
   return res.json();
 }
