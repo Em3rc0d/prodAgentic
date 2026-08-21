@@ -61,6 +61,7 @@ class ContentRunRepository:
             "final_content": None,
             "visual_prompt": None,
             "visual_render": None,
+            "approval": None,
             "post_id": None,
             "failure_stage": None,
             "failure_reason": None,
@@ -173,12 +174,7 @@ class ContentRunRepository:
         )
 
     async def record_visual_render(self, req, result) -> bool:
-        """Attach a visual render attempt to a reviewable existing ContentRun.
-
-        Returns False when MongoDB is unavailable, the run does not exist, or the
-        run has crossed the approval boundary. Rendering itself stays independent
-        from persistence so a storage outage cannot fabricate a render failure.
-        """
+        """Attach a visual render attempt to a reviewable existing ContentRun."""
         collection = self._collection()
         if collection is None:
             return False
@@ -189,6 +185,7 @@ class ContentRunRepository:
             "status": result.status.value if hasattr(result.status, "value") else str(result.status),
             "provider": result.provider,
             "asset_url": result.asset_url,
+            "asset_sha256": result.asset_sha256,
             "width": result.width,
             "height": result.height,
             "prompt_used": result.prompt_used,
