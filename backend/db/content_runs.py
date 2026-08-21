@@ -116,21 +116,25 @@ class ContentRunRepository:
             }},
         )
 
-    async def mark_stage_failed(self, run_id: str, stage: str, reason: str):
+    async def mark_stage_failed(self, run_id: str, stage: str, reason: str, terminal: bool = True):
         collection = self._collection()
         if collection is None:
             return
         now = _now()
-        await collection.update_one(
-            {"run_id": run_id},
-            {"$set": {
-                f"stages.{stage}.status": StageStatus.FAILED.value,
-                f"stages.{stage}.last_error": reason,
+        fields = {
+            f"stages.{stage}.status": StageStatus.FAILED.value,
+            f"stages.{stage}.last_error": reason,
+            "updated_at": now,
+        }
+        if terminal:
+            fields.update({
                 "status": ContentRunStatus.FAILED.value,
                 "failure_stage": stage,
                 "failure_reason": reason,
-                "updated_at": now,
-            }},
+            })
+        await collection.update_one(
+            {"run_id": run_id},
+            {"$set": fields},
         )
 
     async def mark_text_ready(self, run_id: str, final_content: str, final_status: str):
