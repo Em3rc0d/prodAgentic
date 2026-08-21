@@ -5,6 +5,10 @@ from models.content_run import ContentRunStatus, StageStatus
 
 
 _STAGE_NAMES = ("research", "write", "edit", "visual")
+_REVIEWABLE_STATUSES = (
+    ContentRunStatus.TEXT_READY.value,
+    ContentRunStatus.READY_FOR_REVIEW.value,
+)
 
 
 def _now():
@@ -169,10 +173,11 @@ class ContentRunRepository:
         )
 
     async def record_visual_render(self, req, result) -> bool:
-        """Attach a visual render attempt to its existing ContentRun.
+        """Attach a visual render attempt to a reviewable existing ContentRun.
 
-        Returns False for fallback/nonexistent run IDs. Rendering itself remains
-        independent of MongoDB and must not fail solely because persistence is down.
+        Returns False when MongoDB is unavailable, the run does not exist, or the
+        run has crossed the approval boundary. Rendering itself stays independent
+        from persistence so a storage outage cannot fabricate a render failure.
         """
         collection = self._collection()
         if collection is None:
@@ -195,7 +200,10 @@ class ContentRunRepository:
             "rendered_at": now,
         }
         update_result = await collection.update_one(
-            {"run_id": req.run_id},
+            {
+                "run_id": req.run_id,
+                "status": {"$in": list(_REVIEWABLE_STATUSES)},
+            },
             {"$set": {
                 "visual_prompt": req.prompt,
                 "visual_render": snapshot,
