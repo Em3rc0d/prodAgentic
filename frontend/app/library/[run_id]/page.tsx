@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   ContentRun,
@@ -41,13 +41,13 @@ export default function ContentRunDetailPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  function hydrate(value: ContentRun) {
+  const hydrate = useCallback((value: ContentRun) => {
     setRun(value);
     setFinalContent(value.final_content ?? "");
     setVisualPrompt(value.visual_prompt ?? "");
     if (value.visual_render?.aspect_ratio) setRenderRatio(value.visual_render.aspect_ratio);
     if (value.visual_render?.style !== undefined) setRenderStyle(value.visual_render.style);
-  }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -64,7 +64,7 @@ export default function ContentRunDetailPage() {
     return () => {
       active = false;
     };
-  }, [runId]);
+  }, [hydrate, runId]);
 
   const editable = run?.status === "TEXT_READY" || run?.status === "READY_FOR_REVIEW";
 
@@ -101,8 +101,6 @@ export default function ContentRunDetailPage() {
     setSaveMessage(null);
     setError(null);
     try {
-      // Persist the human prompt first so the newly rendered artifact can never
-      // be attached to a stale visual prompt in the authoritative ContentRun.
       let current = run;
       if (dirty) {
         current = await editContentRun(run.run_id, {
