@@ -1,4 +1,10 @@
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+
+export function resolveBackendAssetUrl(assetUrl?: string | null): string | null {
+  if (!assetUrl) return null;
+  if (/^(https?:|data:|blob:)/i.test(assetUrl)) return assetUrl;
+  return `${API}${assetUrl.startsWith("/") ? "" : "/"}${assetUrl}`;
+}
 
 export async function fetchIdeas(
   topic: string,
@@ -75,7 +81,9 @@ export async function renderVisual(
     body: JSON.stringify({ prompt, aspect_ratio, style, run_id: finalRunId, idempotency_key: finalIdempotencyKey }),
   });
   if (!res.ok) throw new Error(`Render request failed: ${res.status}`);
-  return res.json();
+  const result = await res.json() as VisualRenderResponse;
+  if (result.asset_url) result.asset_url = resolveBackendAssetUrl(result.asset_url) ?? undefined;
+  return result;
 }
 
 export type ContentRunStatus =
@@ -103,6 +111,22 @@ export interface ContentRunStage {
   completed_at?: string | null;
 }
 
+export interface ContentRunVisualArtifact {
+  render_id: string;
+  status: RenderStatus;
+  provider: string;
+  asset_url?: string | null;
+  width?: number | null;
+  height?: number | null;
+  prompt_used: string;
+  requested_prompt: string;
+  aspect_ratio: string;
+  style: string;
+  idempotency_key: string;
+  error_message?: string | null;
+  rendered_at: string;
+}
+
 export interface ContentRun {
   _id?: string;
   run_id: string;
@@ -117,6 +141,7 @@ export interface ContentRun {
   final_status?: string | null;
   final_content?: string | null;
   visual_prompt?: string | null;
+  visual_render?: ContentRunVisualArtifact | null;
   post_id?: string | null;
   failure_stage?: string | null;
   failure_reason?: string | null;
