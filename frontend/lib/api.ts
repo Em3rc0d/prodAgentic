@@ -77,3 +77,84 @@ export async function renderVisual(
   if (!res.ok) throw new Error(`Render request failed: ${res.status}`);
   return res.json();
 }
+
+export type ContentRunStatus =
+  | "GENERATING"
+  | "TEXT_READY"
+  | "READY_FOR_REVIEW"
+  | "APPROVED"
+  | "SCHEDULED"
+  | "PUBLISHING"
+  | "PUBLISHED"
+  | "FAILED"
+  | "CANCELLED"
+  | "ARCHIVED";
+
+export type ContentRunStageStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+
+export interface ContentRunStage {
+  status: ContentRunStageStatus;
+  output?: string | null;
+  selected_model?: string | null;
+  provider?: string | null;
+  attempt_failures?: number;
+  last_error?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface ContentRun {
+  _id?: string;
+  run_id: string;
+  topic: string;
+  style: string;
+  idea: string;
+  status: ContentRunStatus;
+  requested_target_language?: string | null;
+  resolved_target_language?: string | null;
+  image_prompt_language?: string | null;
+  stages: Record<string, ContentRunStage>;
+  final_status?: string | null;
+  final_content?: string | null;
+  visual_prompt?: string | null;
+  post_id?: string | null;
+  failure_stage?: string | null;
+  failure_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContentRunListResponse {
+  runs: ContentRun[];
+  count: number;
+  message?: string;
+}
+
+export async function fetchContentRuns(limit: number = 50): Promise<ContentRunListResponse> {
+  const res = await fetch(`${API}/api/content-runs?limit=${limit}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch content runs: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchContentRun(runId: string): Promise<ContentRun> {
+  const res = await fetch(`${API}/api/content-runs/${encodeURIComponent(runId)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch content run: ${res.status}`);
+  return res.json();
+}
+
+export async function editContentRun(
+  runId: string,
+  changes: { final_content?: string; visual_prompt?: string }
+): Promise<ContentRun> {
+  const res = await fetch(`${API}/api/content-runs/${encodeURIComponent(runId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const detail = payload?.detail ? `: ${payload.detail}` : "";
+    throw new Error(`Failed to save content run (${res.status})${detail}`);
+  }
+  return res.json();
+}

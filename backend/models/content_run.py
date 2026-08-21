@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ContentRunStatus(str, Enum):
@@ -54,3 +54,22 @@ class ContentRun(BaseModel):
     failure_reason: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ContentRunEditRequest(BaseModel):
+    """Human-owned edits allowed before approval.
+
+    Provenance fields, stage outputs, models, and lifecycle status are intentionally
+    absent from this contract so a library edit cannot rewrite execution history.
+    """
+
+    final_content: Optional[str] = Field(default=None, min_length=1)
+    visual_prompt: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_review_edit(self):
+        if self.final_content is None and self.visual_prompt is None:
+            raise ValueError("At least one editable field must be provided")
+        if self.final_content is not None and not self.final_content.strip():
+            raise ValueError("Final content cannot be blank")
+        return self
