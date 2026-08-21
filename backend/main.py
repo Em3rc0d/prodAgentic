@@ -15,6 +15,7 @@ from routes.pipeline import router as pipeline_router
 from routes.posts import router as posts_router
 from routes.content_runs import router as content_runs_router
 from routes.content_profiles import router as content_profiles_router
+from routes.publishing import router as publishing_router
 
 
 load_dotenv()
@@ -45,7 +46,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AI Multi-Agent Content Engine",
-    description="Agentic LinkedIn content pipeline with durable review and approval contracts",
+    description="Agentic LinkedIn content pipeline with durable review, approval and publication contracts",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -73,6 +74,7 @@ app.include_router(pipeline_router, prefix="/api")
 app.include_router(posts_router, prefix="/api")
 app.include_router(content_runs_router, prefix="/api")
 app.include_router(content_profiles_router, prefix="/api")
+app.include_router(publishing_router, prefix="/api")
 
 
 @app.get("/")
@@ -94,19 +96,11 @@ def health_ready(request: Request):
     container = getattr(request.app.state, "container", None)
     if not container or not container.client:
         from fastapi import Response
-        return Response(
-            content=json.dumps({"status": "NOT_READY", "message": "Missing API Key"}),
-            media_type="application/json",
-            status_code=503,
-        )
+        return Response(content=json.dumps({"status": "NOT_READY", "message": "Missing API Key"}), media_type="application/json", status_code=503)
 
     if getattr(container, "config_error", None):
         from fastapi import Response
-        return Response(
-            content=json.dumps({"status": "NOT_READY", "message": container.config_error}),
-            media_type="application/json",
-            status_code=503,
-        )
+        return Response(content=json.dumps({"status": "NOT_READY", "message": container.config_error}), media_type="application/json", status_code=503)
 
     status = get_profile_readiness()
     if status in ("READY", "READY_WITH_STALE_CACHE"):
