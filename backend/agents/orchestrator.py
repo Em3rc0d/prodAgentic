@@ -1,5 +1,4 @@
 import json
-import asyncio
 import uuid
 from typing import AsyncGenerator
 from datetime import datetime, timezone
@@ -15,12 +14,14 @@ from agents.router import AttemptStarted, ContentChunk, AttemptFailed, AttemptRe
 from core.context import GenerationContext, LanguageCode, TargetLanguageCode, ImagePromptLanguageCode
 from core.language import language_detector
 
+
 def _sse(stage: str, **kwargs) -> dict:
-    """Build a Server-Sent Events payload dict."""
     return {"data": json.dumps({"stage": stage, **kwargs})}
+
 
 class PipelineAbortError(Exception):
     pass
+
 
 class PipelineOrchestrator:
     def __init__(self, router):
@@ -33,29 +34,30 @@ class PipelineOrchestrator:
         self.content_runs = ContentRunRepository()
 
     async def _persist(self, method, *args, **kwargs):
-        """Persistence must never become a hidden generation dependency."""
         try:
             return await method(*args, **kwargs)
         except Exception as e:
             print(f"[WARN] ContentRun persistence error: {e}")
             return None
 
-    def _resolve_context(self, topic: str, style: str, target_language: str, image_prompt_language: str) -> GenerationContext:
+    def _resolve_context(
+        self,
+        topic: str,
+        style: str,
+        target_language: str,
+        image_prompt_language: str,
+        content_profile_id: str | None = None,
+        content_profile_snapshot: dict | None = None,
+    ) -> GenerationContext:
         import os
         target_lang = TargetLanguageCode(target_language)
-
-        # Always detect source language
         detect_result = language_detector.detect(topic)
         detected_lang = detect_result.language
         confidence = detect_result.confidence
 
-        # Single authoritative config: ApplicationSettings.load() already validated this at startup
-        # Read here as a pass-through; ValueError propagates naturally if not set
         default_lang_str = os.environ.get("APP_DEFAULT_LANGUAGE", "")
         if not default_lang_str:
-            raise ValueError(
-                "APP_DEFAULT_LANGUAGE is required. Set it to one of: es, en, pt"
-            )
+            raise ValueError("APP_DEFAULT_LANGUAGE is required. Set it to one of: es, en, pt")
         default_lang = LanguageCode(default_lang_str)
 
         if target_lang == TargetLanguageCode.AUTO:
@@ -64,6 +66,9 @@ class PipelineOrchestrator:
             resolved_lang = LanguageCode(target_lang.value)
 
         img_lang = ImagePromptLanguageCode(image_prompt_language)
+        audience = None
+        if content_profile_snapshot and content_profile_snapshot.get("audience"):
+            audience = ", ".join(content_profile_snapshot["audience"])
 
         return GenerationContext(
             run_id=str(uuid.uuid4()),
@@ -74,15 +79,48 @@ class PipelineOrchestrator:
             source_detection_confidence=confidence,
             requested_target_language=LanguageCode(target_lang.value),
             resolved_target_language=resolved_lang,
-            image_prompt_language=img_lang.to_language_code()
+            image_prompt_language=img_lang.to_language_code(),
+            audience=audience,
+            content_profile_id=content_profile_id,
+            content_profile_snapshot=content_profile_snapshot,
         )
 
-    async def generate_ideas(self, topic: str, style: str, target_language: str = "es") -> list[str]:
-        context = self._resolve_context(topic, style, target_language, "en")
+    async def generate_ideas(
+        self,
+        topic: str,
+        style: str,
+        target_language: str = "es",
+        content_profile_id: str | None = None,
+        content_profile_snapshot: dict | None = None,
+    ) -> list[str]:
+        context = self._resolve_context(
+            topic,
+            style,
+            target_language,
+            "en",
+            content_profile_id,
+            content_profile_snapshot,
+        )
         return await self.idea_agent.generate_ideas(context)
 
-    async def run_pipeline_stream(self, idea: str, topic: str, style: str, target_language: str = "es", image_prompt_language: str = "en") -> AsyncGenerator[dict, None]:
-        context = self._resolve_context(topic, style, target_language, image_prompt_language)
+    async def run_pipeline_stream(
+        self,
+        idea: str,
+        topic: str,
+        style: str,
+        target_language: str = "es",
+        image_prompt_language: str = "en",
+        content_profile_id: str | None = None,
+        content_profile_snapshot: dict | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        context = self._resolve_context(
+            topic,
+            style,
+            target_language,
+            image_prompt_language,
+            content_profile_id,
+            content_profile_snapshot,
+        )
         persistence_active = bool(await self._persist(self.content_runs.create, context, idea))
 
         research_ref = [""]
@@ -93,10 +131,8 @@ class PipelineOrchestrator:
         async def run_stage(agent_stream_func, stage_name, profile, output_ref, ignore_failure=False, stage_flags=None):
             if stage_flags is None:
                 stage_flags = {}
-
             attempt_number = 0
             event_sequence = 0
-
             try:
                 async for event in agent_stream_func(context):
                     event_sequence += 1
@@ -118,7 +154,7 @@ class PipelineOrchestrator:
                             attempt_id=event.attempt_id,
                             attempt_number=attempt_number,
                             run_id=context.run_id,
-                            event_sequence=event_sequence
+                            event_sequence=event_sequence,
                         )
                     elif isinstance(event, ContentChunk):
                         output_ref[0] += event.text
@@ -128,7 +164,7 @@ class PipelineOrchestrator:
                             text=event.text,
                             attempt_id=event.attempt_id,
                             run_id=context.run_id,
-                            event_sequence=event_sequence
+                            event_sequence=event_sequence,
                         )
                     elif isinstance(event, AttemptResetRequired):
                         yield _sse(
@@ -137,23 +173,18 @@ class PipelineOrchestrator:
                             reason=event.reason,
                             attempt_id=event.attempt_id,
                             run_id=context.run_id,
-                            event_sequence=event_sequence
+                            event_sequence=event_sequence,
                         )
                         output_ref[0] = ""
                     elif isinstance(event, AttemptFailed):
-                        await self._persist(
-                            self.content_runs.mark_attempt_failed,
-                            context.run_id,
-                            stage_name,
-                            event.reason,
-                        )
+                        await self._persist(self.content_runs.mark_attempt_failed, context.run_id, stage_name, event.reason)
                         yield _sse(
                             "stage.attempt_failed",
                             stage_name=stage_name,
                             reason=event.reason,
                             attempt_id=event.attempt_id,
                             run_id=context.run_id,
-                            event_sequence=event_sequence
+                            event_sequence=event_sequence,
                         )
                     elif isinstance(event, ValidationWarning):
                         stage_flags["has_validation_warning"] = True
@@ -166,7 +197,7 @@ class PipelineOrchestrator:
                             confidence=event.confidence,
                             reason=event.reason,
                             run_id=context.run_id,
-                            event_sequence=event_sequence
+                            event_sequence=event_sequence,
                         )
                     elif isinstance(event, AttemptCompleted):
                         pass
@@ -174,13 +205,14 @@ class PipelineOrchestrator:
                         raise Exception(event.reason)
 
                 event_sequence += 1
-                await self._persist(
-                    self.content_runs.mark_stage_completed,
-                    context.run_id,
-                    stage_name,
-                    output_ref[0],
+                await self._persist(self.content_runs.mark_stage_completed, context.run_id, stage_name, output_ref[0])
+                yield _sse(
+                    "stage.completed",
+                    stage_name=stage_name,
+                    content=output_ref[0],
+                    run_id=context.run_id,
+                    event_sequence=event_sequence,
                 )
-                yield _sse("stage.completed", stage_name=stage_name, content=output_ref[0], run_id=context.run_id, event_sequence=event_sequence)
             except Exception as e:
                 event_sequence += 1
                 stage_flags["failed"] = True
@@ -194,19 +226,41 @@ class PipelineOrchestrator:
                 if ignore_failure:
                     yield _sse(f"{stage_name}.failed", reason=str(e), retryable=True, run_id=context.run_id)
                 else:
-                    yield _sse("stage.failed", stage_name=stage_name, reason=str(e), run_id=context.run_id, event_sequence=event_sequence)
+                    yield _sse(
+                        "stage.failed",
+                        stage_name=stage_name,
+                        reason=str(e),
+                        run_id=context.run_id,
+                        event_sequence=event_sequence,
+                    )
                     raise PipelineAbortError()
 
         try:
-            def research_stream(ctx): return self.research_agent.stream(idea, context=ctx, attempt_id=None)
-            async for event in run_stage(research_stream, "research", self.research_agent.profile.value, research_ref): yield event
+            def research_stream(ctx):
+                return self.research_agent.stream(idea, context=ctx, attempt_id=None)
 
-            def writer_stream(ctx): return self.writer_agent.stream(idea, research_ref[0], context=ctx, attempt_id=None)
-            async for event in run_stage(writer_stream, "write", self.writer_agent.profile.value, draft_ref): yield event
+            async for event in run_stage(research_stream, "research", self.research_agent.profile.value, research_ref):
+                yield event
+
+            def writer_stream(ctx):
+                return self.writer_agent.stream(idea, research_ref[0], context=ctx, attempt_id=None)
+
+            async for event in run_stage(writer_stream, "write", self.writer_agent.profile.value, draft_ref):
+                yield event
 
             final_flags = {}
-            def edit_stream(ctx): return self.editor_agent.stream(draft_ref[0], context=ctx, attempt_id=None)
-            async for event in run_stage(edit_stream, "edit", self.editor_agent.profile.value, final_ref, stage_flags=final_flags): yield event
+
+            def edit_stream(ctx):
+                return self.editor_agent.stream(draft_ref[0], context=ctx, attempt_id=None)
+
+            async for event in run_stage(
+                edit_stream,
+                "edit",
+                self.editor_agent.profile.value,
+                final_ref,
+                stage_flags=final_flags,
+            ):
+                yield event
 
             final_status = "NEEDS_LANGUAGE_REVIEW" if final_flags.get("has_validation_warning") else "READY"
         except PipelineAbortError:
@@ -216,38 +270,52 @@ class PipelineOrchestrator:
             yield _sse("stage.failed", stage_name="unknown", reason=str(e), run_id=context.run_id)
             return
 
-        await self._persist(
-            self.content_runs.mark_text_ready,
-            context.run_id,
-            final_ref[0],
-            final_status,
+        await self._persist(self.content_runs.mark_text_ready, context.run_id, final_ref[0], final_status)
+        yield _sse(
+            "pipeline.text_completed",
+            final_status=final_status,
+            final_post=final_ref[0],
+            run_id=context.run_id,
         )
-        yield _sse("pipeline.text_completed", final_status=final_status, final_post=final_ref[0], run_id=context.run_id)
 
         visual_status = "FAILED"
         try:
-            yield _sse("visual.prompt_started", run_id=context.run_id)
+            profile_visual_enabled = True
+            if content_profile_snapshot is not None:
+                profile_visual_enabled = bool(content_profile_snapshot.get("visual_enabled", True))
 
-            def visual_stream(ctx): return self.visual_agent.stream(final_ref[0], context=ctx, attempt_id=None)
-
-            visual_flags = {}
-            async for event in run_stage(visual_stream, "visual", self.visual_agent.profile.value, visual_ref, ignore_failure=True, stage_flags=visual_flags):
-                yield event
-
-            # Only set READY if we actually received stage.completed without failing
-            if visual_ref[0] and not visual_flags.get("failed"):
-                visual_status = "READY"
-                yield _sse("visual.prompt_completed", content=visual_ref[0], run_id=context.run_id)
+            if not profile_visual_enabled:
+                visual_status = "SKIPPED"
+                yield _sse("visual.prompt_skipped", reason="Disabled by content profile", run_id=context.run_id)
             else:
-                await self._persist(
-                    self.content_runs.mark_stage_failed,
-                    context.run_id,
-                    "visual",
-                    "Partial failure or empty output",
-                    terminal=False,
-                )
-                yield _sse("visual.prompt_failed", reason="Partial failure or empty output", run_id=context.run_id)
+                yield _sse("visual.prompt_started", run_id=context.run_id)
 
+                def visual_stream(ctx):
+                    return self.visual_agent.stream(final_ref[0], context=ctx, attempt_id=None)
+
+                visual_flags = {}
+                async for event in run_stage(
+                    visual_stream,
+                    "visual",
+                    self.visual_agent.profile.value,
+                    visual_ref,
+                    ignore_failure=True,
+                    stage_flags=visual_flags,
+                ):
+                    yield event
+
+                if visual_ref[0] and not visual_flags.get("failed"):
+                    visual_status = "READY"
+                    yield _sse("visual.prompt_completed", content=visual_ref[0], run_id=context.run_id)
+                else:
+                    await self._persist(
+                        self.content_runs.mark_stage_failed,
+                        context.run_id,
+                        "visual",
+                        "Partial failure or empty output",
+                        terminal=False,
+                    )
+                    yield _sse("visual.prompt_failed", reason="Partial failure or empty output", run_id=context.run_id)
         except Exception as e:
             await self._persist(
                 self.content_runs.mark_stage_failed,
@@ -258,8 +326,6 @@ class PipelineOrchestrator:
             )
             yield _sse("visual.prompt_failed", reason=str(e), run_id=context.run_id)
 
-        # Preserve the existing posts collection as a compatibility projection.
-        # ContentRun is now the authoritative generation record.
         post_id = None
         try:
             db = get_db()
@@ -269,6 +335,7 @@ class PipelineOrchestrator:
                     "topic": topic,
                     "style": style,
                     "idea": idea,
+                    "content_profile_id": context.content_profile_id,
                     "research_output": research_ref[0],
                     "draft_content": draft_ref[0],
                     "final_content": final_ref[0],
@@ -294,6 +361,7 @@ class PipelineOrchestrator:
             run_id=context.run_id,
             content_run_status="READY_FOR_REVIEW",
             persistence_active=persistence_active,
+            content_profile_id=context.content_profile_id,
             final_status=final_status,
             visual_status=visual_status,
             post_id=post_id,
