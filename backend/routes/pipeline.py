@@ -49,13 +49,16 @@ router = APIRouter(tags=["pipeline"])
 async def get_ideas(req: IdeasRequest, pipeline=Depends(get_ready_pipeline_service)):
     try:
         profile_id, profile_snapshot = await _resolve_content_profile(req.content_profile_id)
-        ideas = await pipeline.generate_ideas(
-            req.topic,
-            req.style,
-            req.target_language.value,
-            profile_id,
-            profile_snapshot,
-        )
+        if profile_snapshot is None:
+            ideas = await pipeline.generate_ideas(req.topic, req.style, req.target_language.value)
+        else:
+            ideas = await pipeline.generate_ideas(
+                req.topic,
+                req.style,
+                req.target_language.value,
+                profile_id,
+                profile_snapshot,
+            )
         return {
             "ideas": ideas,
             "topic": req.topic,
@@ -86,15 +89,26 @@ async def pipeline_stream(
     profile_id, profile_snapshot = await _resolve_content_profile(content_profile_id)
 
     async def event_generator():
-        async for event in pipeline.run_pipeline_stream(
-            idea,
-            topic,
-            style,
-            target_language,
-            image_prompt_language,
-            profile_id,
-            profile_snapshot,
-        ):
+        if profile_snapshot is None:
+            stream = pipeline.run_pipeline_stream(
+                idea,
+                topic,
+                style,
+                target_language,
+                image_prompt_language,
+            )
+        else:
+            stream = pipeline.run_pipeline_stream(
+                idea,
+                topic,
+                style,
+                target_language,
+                image_prompt_language,
+                profile_id,
+                profile_snapshot,
+            )
+
+        async for event in stream:
             data = event.get("data", "{}")
             yield f"data: {data}\n\n"
         yield 'data: {"stage": "end"}\n\n'
