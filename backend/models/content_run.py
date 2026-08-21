@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ContentRunStatus(str, Enum):
@@ -79,6 +79,19 @@ class PublicationSnapshot(BaseModel):
     error_message: Optional[str] = None
 
 
+class ScheduleSnapshot(BaseModel):
+    schedule_id: str
+    status: str = "SCHEDULED"
+    scheduled_for: datetime
+    approval_id: str
+    bundle_sha256: str
+    created_at: datetime
+    claimed_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+
 class ContentRun(BaseModel):
     run_id: str
     topic: str
@@ -96,6 +109,7 @@ class ContentRun(BaseModel):
     visual_prompt: Optional[str] = None
     visual_render: Optional[VisualArtifactSnapshot] = None
     approval: Optional[ApprovalSnapshot] = None
+    schedule: Optional[ScheduleSnapshot] = None
     publication: Optional[PublicationSnapshot] = None
     post_id: Optional[str] = None
     failure_stage: Optional[str] = None
@@ -119,3 +133,14 @@ class ContentRunEditRequest(BaseModel):
 
 class ContentRunApprovalRequest(BaseModel):
     include_visual: bool
+
+
+class ContentRunScheduleRequest(BaseModel):
+    scheduled_for: datetime
+
+    @field_validator("scheduled_for")
+    @classmethod
+    def require_timezone(cls, value: datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("scheduled_for must include an explicit timezone offset")
+        return value.astimezone(timezone.utc)
