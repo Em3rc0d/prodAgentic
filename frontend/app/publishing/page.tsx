@@ -25,16 +25,26 @@ export default function PublishingPage() {
   const [error, setError] = useState<string | null>(null);
 
   async function reload() {
-    const [runResult, publisherResult] = await Promise.all([
-      fetchContentRuns(100),
-      fetchLinkedInPublisherStatus(),
-    ]);
+    const [runResult, publisherResult] = await Promise.all([fetchContentRuns(100), fetchLinkedInPublisherStatus()]);
     setRuns(runResult.runs as PublishableContentRun[]);
     setPublisher(publisherResult);
   }
 
   useEffect(() => {
-    reload().catch((err: Error) => setError(err.message)).finally(() => setLoading(false));
+    let active = true;
+    Promise.all([fetchContentRuns(100), fetchLinkedInPublisherStatus()])
+      .then(([runResult, publisherResult]) => {
+        if (!active) return;
+        setRuns(runResult.runs as PublishableContentRun[]);
+        setPublisher(publisherResult);
+      })
+      .catch((err: Error) => {
+        if (active) setError(err.message);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
   }, []);
 
   const queue = useMemo(
@@ -64,9 +74,7 @@ export default function PublishingPage() {
         <header style={{ marginBottom: 26 }}>
           <p style={{ margin: 0, color: "var(--text-3)", fontSize: 12, letterSpacing: ".08em" }}>DISTRIBUTION</p>
           <h1 style={{ margin: "6px 0 8px", fontSize: 32 }}>LinkedIn Publishing</h1>
-          <p style={{ margin: 0, color: "var(--text-2)", maxWidth: 760 }}>
-            Only immutable approved bundles can cross this boundary. The publisher never reads mutable draft fields.
-          </p>
+          <p style={{ margin: 0, color: "var(--text-2)", maxWidth: 760 }}>Only immutable approved bundles can cross this boundary. The publisher never reads mutable draft fields.</p>
         </header>
 
         <section style={{ ...card, marginBottom: 18 }}>
@@ -74,14 +82,10 @@ export default function PublishingPage() {
             <div>
               <strong>LinkedIn provider</strong>
               <div style={{ color: "var(--text-3)", marginTop: 5, fontSize: 12 }}>
-                {publisher?.configured
-                  ? `${publisher.author_urn} · API ${publisher.api_version}`
-                  : publisher?.reason ?? "Reading configuration…"}
+                {publisher?.configured ? `${publisher.author_urn} · API ${publisher.api_version}` : publisher?.reason ?? "Reading configuration…"}
               </div>
             </div>
-            <span style={{ color: publisher?.configured ? "var(--success)" : "var(--warning)", fontSize: 12 }}>
-              {publisher?.configured ? "CONFIGURED" : "NOT CONFIGURED"}
-            </span>
+            <span style={{ color: publisher?.configured ? "var(--success)" : "var(--warning)", fontSize: 12 }}>{publisher?.configured ? "CONFIGURED" : "NOT CONFIGURED"}</span>
           </div>
         </section>
 
@@ -103,30 +107,12 @@ export default function PublishingPage() {
                     </div>
                     <h2 style={{ margin: "0 0 5px", fontSize: 18 }}>{run.idea}</h2>
                     <p style={{ margin: 0, color: "var(--text-2)", fontSize: 13 }}>{run.topic}</p>
-                    {run.approval && (
-                      <div style={{ marginTop: 12, color: "var(--text-3)", fontSize: 11 }}>
-                        Approved {formatDate(run.approval.approved_at)} · bundle {run.approval.bundle_sha256.slice(0, 14)}… · {run.approval.include_visual ? "text + visual" : "text only"}
-                      </div>
-                    )}
-                    {publication && (
-                      <div style={{ marginTop: 10, color: "var(--text-3)", fontSize: 11 }}>
-                        Publication: {publication.status} · started {formatDate(publication.started_at)}
-                        {publication.external_post_urn ? ` · ${publication.external_post_urn}` : ""}
-                        {publication.error_message ? ` · ${publication.error_message}` : ""}
-                      </div>
-                    )}
+                    {run.approval && <div style={{ marginTop: 12, color: "var(--text-3)", fontSize: 11 }}>Approved {formatDate(run.approval.approved_at)} · bundle {run.approval.bundle_sha256.slice(0, 14)}… · {run.approval.include_visual ? "text + visual" : "text only"}</div>}
+                    {publication && <div style={{ marginTop: 10, color: "var(--text-3)", fontSize: 11 }}>Publication: {publication.status} · started {formatDate(publication.started_at)}{publication.external_post_urn ? ` · ${publication.external_post_urn}` : ""}{publication.error_message ? ` · ${publication.error_message}` : ""}</div>}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch" }}>
                     <Link href={`/library/${encodeURIComponent(run.run_id)}`} style={{ color: "var(--text-2)", textDecoration: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "9px 12px", textAlign: "center", fontSize: 12 }}>Review evidence</Link>
-                    {run.status === "APPROVED" && (
-                      <button
-                        onClick={() => publish(run)}
-                        disabled={!canPublish}
-                        style={{ border: "1px solid var(--border-active)", borderRadius: 8, padding: "9px 12px", background: "var(--surface-active)", color: "var(--text-1)", cursor: canPublish ? "pointer" : "not-allowed", opacity: canPublish ? 1 : .55 }}
-                      >
-                        {activeId === run.run_id ? "Publishing…" : "Publish to LinkedIn"}
-                      </button>
-                    )}
+                    {run.status === "APPROVED" && <button onClick={() => publish(run)} disabled={!canPublish} style={{ border: "1px solid var(--border-active)", borderRadius: 8, padding: "9px 12px", background: "var(--surface-active)", color: "var(--text-1)", cursor: canPublish ? "pointer" : "not-allowed", opacity: canPublish ? 1 : .55 }}>{activeId === run.run_id ? "Publishing…" : "Publish to LinkedIn"}</button>}
                   </div>
                 </div>
               </article>
