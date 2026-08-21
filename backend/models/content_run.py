@@ -67,7 +67,9 @@ class ContentRunEditRequest(BaseModel):
     visual_prompt: Optional[str] = None
 
     @model_validator(mode="after")
-    def require_at_least_one_edit(self):
+    def validate_review_edit(self):
         if self.final_content is None and self.visual_prompt is None:
             raise ValueError("At least one editable field must be provided")
+        if self.final_content is not None and not self.final_content.strip():
+            raise ValueError("Final content cannot be blank")
         return self
