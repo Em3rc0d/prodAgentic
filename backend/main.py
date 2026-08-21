@@ -10,12 +10,14 @@ from fastapi.staticfiles import StaticFiles
 
 from core.container import ApplicationContainer
 from core.model_registry import validate_available_models, get_profile_readiness
+from core.scheduler import scheduler_loop
 from db.mongo import connect_db, close_db
 from routes.pipeline import router as pipeline_router
 from routes.posts import router as posts_router
 from routes.content_runs import router as content_runs_router
 from routes.content_profiles import router as content_profiles_router
 from routes.publishing import router as publishing_router
+from routes.scheduling import router as scheduling_router
 
 
 load_dotenv()
@@ -30,15 +32,18 @@ async def lifespan(app: FastAPI):
 
     if container.client:
         container.preflight_task = asyncio.create_task(validate_available_models(container.client))
+    container.scheduler_task = asyncio.create_task(scheduler_loop())
 
     yield
 
-    if getattr(container, "preflight_task", None) and not container.preflight_task.done():
-        container.preflight_task.cancel()
-        try:
-            await container.preflight_task
-        except asyncio.CancelledError:
-            pass
+    for task_name in ("preflight_task", "scheduler_task"):
+        task = getattr(container, task_name, None)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     await container.shutdown()
     await close_db()
@@ -46,7 +51,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AI Multi-Agent Content Engine",
-    description="Agentic LinkedIn content pipeline with durable review, approval and publication contracts",
+    description="Agentic LinkedIn content pipeline with durable review, approval, scheduling and publication contracts",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -56,10 +61,7 @@ app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
 
 allowed_origins = [
     origin.strip()
-    for origin in os.environ.get(
-        "CORS_ALLOWED_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000",
-    ).split(",")
+    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
     if origin.strip()
 ]
 app.add_middleware(
@@ -75,15 +77,12 @@ app.include_router(posts_router, prefix="/api")
 app.include_router(content_runs_router, prefix="/api")
 app.include_router(content_profiles_router, prefix="/api")
 app.include_router(publishing_router, prefix="/api")
+app.include_router(scheduling_router, prefix="/api")
 
 
 @app.get("/")
 async def root():
-    return {
-        "message": "AI Multi-Agent Content Engine",
-        "description": "API is running. See /health/ready for status.",
-        "docs": "/docs",
-    }
+    return {"message": "AI Multi-Agent Content Engine", "description": "API is running. See /health/ready for status.", "docs": "/docs"}
 
 
 @app.get("/health/live")
