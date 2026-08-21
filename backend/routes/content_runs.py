@@ -62,8 +62,8 @@ async def get_content_run(run_id: str):
 async def edit_content_run(run_id: str, req: ContentRunEditRequest):
     """Persist human edits without rewriting generated provenance.
 
-    Only pre-approval review states are mutable. Approval/publication slices can
-    therefore rely on this endpoint never changing an immutable published asset.
+    Only pre-approval review states are mutable. If the human changes the visual
+    prompt, any previously rendered artifact becomes stale and is invalidated.
     """
     db = get_db()
     if db is None:
@@ -85,6 +85,8 @@ async def edit_content_run(run_id: str, req: ContentRunEditRequest):
         updates["final_content"] = req.final_content.strip()
     if req.visual_prompt is not None:
         updates["visual_prompt"] = req.visual_prompt
+        if req.visual_prompt != (existing.get("visual_prompt") or ""):
+            updates["visual_render"] = None
 
     await collection.update_one({"run_id": run_id}, {"$set": updates})
 
