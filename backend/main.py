@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from db.mongo import connect_db, close_db
 from routes.pipeline import router as pipeline_router
 from routes.posts import router as posts_router
+from routes.content_runs import router as content_runs_router
 from dotenv import load_dotenv
 import asyncio
 from core.model_registry import validate_available_models, get_profile_readiness
@@ -61,6 +62,7 @@ app.add_middleware(
 
 app.include_router(pipeline_router, prefix="/api")
 app.include_router(posts_router, prefix="/api")
+app.include_router(content_runs_router, prefix="/api")
 
 
 @app.get("/")
