@@ -65,6 +65,20 @@ class ApprovalSnapshot(BaseModel):
     bundle_sha256: str
 
 
+class PublicationSnapshot(BaseModel):
+    provider: str = "linkedin"
+    status: str
+    attempt_id: str
+    approval_id: str
+    bundle_sha256: str
+    author_urn: Optional[str] = None
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    external_post_urn: Optional[str] = None
+    external_image_urn: Optional[str] = None
+    error_message: Optional[str] = None
+
+
 class ContentRun(BaseModel):
     run_id: str
     topic: str
@@ -82,6 +96,7 @@ class ContentRun(BaseModel):
     visual_prompt: Optional[str] = None
     visual_render: Optional[VisualArtifactSnapshot] = None
     approval: Optional[ApprovalSnapshot] = None
+    publication: Optional[PublicationSnapshot] = None
     post_id: Optional[str] = None
     failure_stage: Optional[str] = None
     failure_reason: Optional[str] = None
@@ -90,8 +105,6 @@ class ContentRun(BaseModel):
 
 
 class ContentRunEditRequest(BaseModel):
-    """Human-owned edits allowed before approval."""
-
     final_content: Optional[str] = Field(default=None, min_length=1)
     visual_prompt: Optional[str] = None
 
