@@ -28,13 +28,15 @@ class Post(BaseModel):
     performance: Performance = Field(default_factory=Performance)
 
 
-from core.context import LanguageCode, TargetLanguageCode, ImagePromptLanguageCode
+from core.context import TargetLanguageCode, ImagePromptLanguageCode
+
 
 class IdeasRequest(BaseModel):
     topic: str
     style: str = "educational"
     target_language: TargetLanguageCode = TargetLanguageCode.ES
     image_prompt_language: ImagePromptLanguageCode = ImagePromptLanguageCode.EN
+    content_profile_id: Optional[str] = None
 
 
 class PipelineRequest(BaseModel):
@@ -43,3 +45,4 @@ class PipelineRequest(BaseModel):
     style: str = "educational"
     target_language: TargetLanguageCode = TargetLanguageCode.ES
     image_prompt_language: ImagePromptLanguageCode = ImagePromptLanguageCode.EN
+    content_profile_id: Optional[str] = None
