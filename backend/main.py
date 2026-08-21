@@ -11,7 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from core.container import ApplicationContainer
 from core.model_registry import validate_available_models, get_profile_readiness
 from core.scheduler import scheduler_loop
-from db.mongo import connect_db, close_db
+from core.auth import AuthSettings, SessionManager, security_boundary, router as auth_router
+from db.mongo import connect_db, close_db, database_ready
 from routes.pipeline import router as pipeline_router
 from routes.posts import router as posts_router
 from routes.content_runs import router as content_runs_router
@@ -25,6 +26,9 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    auth_settings = AuthSettings.from_env()
+    app.state.auth_settings = auth_settings
+    app.state.session_manager = SessionManager(auth_settings)
     await connect_db()
     container = ApplicationContainer()
     container.startup()
@@ -72,12 +76,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+app.middleware("http")(security_boundary)
+
 app.include_router(pipeline_router, prefix="/api")
 app.include_router(posts_router, prefix="/api")
 app.include_router(content_runs_router, prefix="/api")
 app.include_router(content_profiles_router, prefix="/api")
 app.include_router(publishing_router, prefix="/api")
 app.include_router(scheduling_router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
 
 
 @app.get("/")
@@ -100,6 +108,10 @@ def health_ready(request: Request):
     if getattr(container, "config_error", None):
         from fastapi import Response
         return Response(content=json.dumps({"status": "NOT_READY", "message": container.config_error}), media_type="application/json", status_code=503)
+
+    if not database_ready():
+        from fastapi import Response
+        return Response(content=json.dumps({"status": "NOT_READY", "message": "Database unavailable"}), media_type="application/json", status_code=503)
 
     status = get_profile_readiness()
     if status in ("READY", "READY_WITH_STALE_CACHE"):

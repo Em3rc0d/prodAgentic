@@ -41,7 +41,7 @@ describe('Content Library', () => {
     expect(idea.closest('a')).toHaveAttribute('href', '/library/run-123')
     expect(global.fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/content-runs?limit=100',
-      { cache: 'no-store' }
+      expect.objectContaining({ cache: 'no-store', credentials: 'include' })
     )
   })
 })

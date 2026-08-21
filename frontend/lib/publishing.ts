@@ -1,4 +1,5 @@
 import type { ContentRun } from './api'
+import { secureFetch } from './auth'
 
 const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -26,13 +27,13 @@ export interface LinkedInPublisherStatus {
 }
 
 export async function fetchLinkedInPublisherStatus(): Promise<LinkedInPublisherStatus> {
-  const res = await fetch(`${API}/api/publishing/linkedin/status`, { cache: 'no-store' })
+  const res = await secureFetch(`${API}/api/publishing/linkedin/status`, { cache: 'no-store' })
   if (!res.ok) throw new Error(`Failed to read LinkedIn publisher status: ${res.status}`)
   return res.json()
 }
 
 export async function publishContentRun(runId: string): Promise<PublishableContentRun> {
-  const res = await fetch(`${API}/api/content-runs/${encodeURIComponent(runId)}/publish`, { method: 'POST' })
+  const res = await secureFetch(`${API}/api/content-runs/${encodeURIComponent(runId)}/publish`, { method: 'POST' })
   if (!res.ok) {
     const payload = await res.json().catch(() => null)
     const detail = payload?.detail ? `: ${payload.detail}` : ''

@@ -106,11 +106,11 @@ export default function Home() {
       setIdeas(result);
       setMode("ideas_ready");
       setActiveTab("ideas");
-    } catch (e) {
+    } catch {
       setError("Failed to generate ideas. Is the backend running on :8000?");
       setMode("idle");
     }
-  }, [topic, style, targetLanguage]);
+  }, [topic, style, targetLanguage, resetPipeline]);
 
   const handleSelectIdea = useCallback((idea: string) => {
     if (mode === "pipeline_running") return;
@@ -191,7 +191,9 @@ export default function Home() {
         } else if (msg.stage === "end") {
           es.close();
         }
-      } catch (err) {}
+      } catch {
+        // Ignore malformed stream frames; the connection-level handler reports terminal failures.
+      }
     };
     es.onerror = () => {
       setError("Pipeline stream interrupted. Check backend logs."); setMode("ideas_ready"); setActiveTab("brief"); setSelectedIdea(null); es.close();

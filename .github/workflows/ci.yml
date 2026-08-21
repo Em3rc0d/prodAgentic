@@ -14,6 +14,7 @@ jobs:
       LANGUAGE_MIN_CONFIDENCE: "0.6"
       LANGUAGE_MIN_MARGIN: "0.2"
       IMAGE_RENDER_ENABLED: "true"
+      PRODAGENTIC_AUTH_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -43,10 +44,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
       - name: Install Dependencies
         working-directory: frontend
-        run: npm ci || npm install
+        run: npm ci
       - name: Run Frontend Lint
         working-directory: frontend
         run: npm run lint

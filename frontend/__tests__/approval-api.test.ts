@@ -36,11 +36,11 @@ describe('ContentRun approval API', () => {
     expect(approved.status).toBe('APPROVED')
     expect(global.fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/content-runs/run-approval/approve',
-      {
+      expect.objectContaining({
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ include_visual: true }),
-      }
+        credentials: 'include',
+      })
     )
   })
 
