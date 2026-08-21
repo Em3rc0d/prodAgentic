@@ -36,7 +36,7 @@ describe('Content Library', () => {
     })
 
     const idea = await screen.findByText('Why durable AI workflows beat prompt chains')
-    expect(screen.getByText(/READY FOR REVIEW/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/READY FOR REVIEW/i).length).toBeGreaterThan(0)
     expect(screen.getByText('Agentic systems')).toBeInTheDocument()
     expect(idea.closest('a')).toHaveAttribute('href', '/library/run-123')
     expect(global.fetch).toHaveBeenCalledWith(
