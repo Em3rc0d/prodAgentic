@@ -175,10 +175,14 @@ async def approve_content_run(run_id: str, req: ContentRunApprovalRequest):
     approval = _build_approval_snapshot(existing, req.include_visual)
     now = approval["approved_at"]
 
+    # Optimistic concurrency: every review edit and render changes updated_at.
+    # If the run changes after we build the approval snapshot, this query misses
+    # instead of approving a stale revision.
     result = await collection.update_one(
         {
             "run_id": run_id,
             "status": ContentRunStatus.READY_FOR_REVIEW.value,
+            "updated_at": existing.get("updated_at"),
         },
         {"$set": {
             "status": ContentRunStatus.APPROVED.value,
