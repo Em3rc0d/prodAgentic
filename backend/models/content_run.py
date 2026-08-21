@@ -37,8 +37,6 @@ class StageSnapshot(BaseModel):
 
 
 class VisualArtifactSnapshot(BaseModel):
-    """Authoritative rendered-media snapshot owned by a ContentRun."""
-
     render_id: str
     status: str
     provider: str
@@ -56,8 +54,6 @@ class VisualArtifactSnapshot(BaseModel):
 
 
 class ApprovalSnapshot(BaseModel):
-    """Immutable publishable bundle created by an explicit human approval action."""
-
     approval_id: str
     approved_at: datetime
     source: str = "explicit_user_action"
@@ -75,6 +71,8 @@ class ContentRun(BaseModel):
     style: str
     idea: str
     status: ContentRunStatus = ContentRunStatus.GENERATING
+    content_profile_id: Optional[str] = None
+    content_profile_snapshot: Optional[dict] = None
     requested_target_language: Optional[str] = None
     resolved_target_language: Optional[str] = None
     image_prompt_language: Optional[str] = None
@@ -107,6 +105,4 @@ class ContentRunEditRequest(BaseModel):
 
 
 class ContentRunApprovalRequest(BaseModel):
-    """Explicit human decision about the exact bundle that becomes publishable."""
-
     include_visual: bool
