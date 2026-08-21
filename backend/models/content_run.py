@@ -54,6 +54,20 @@ class VisualArtifactSnapshot(BaseModel):
     rendered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class ApprovalSnapshot(BaseModel):
+    """Immutable publishable bundle created by an explicit human approval action."""
+
+    approval_id: str
+    approved_at: datetime
+    source: str = "explicit_user_action"
+    include_visual: bool
+    final_content: str
+    final_content_sha256: str
+    visual_render: Optional[VisualArtifactSnapshot] = None
+    visual_render_sha256: Optional[str] = None
+    bundle_sha256: str
+
+
 class ContentRun(BaseModel):
     run_id: str
     topic: str
@@ -68,6 +82,7 @@ class ContentRun(BaseModel):
     final_content: Optional[str] = None
     visual_prompt: Optional[str] = None
     visual_render: Optional[VisualArtifactSnapshot] = None
+    approval: Optional[ApprovalSnapshot] = None
     post_id: Optional[str] = None
     failure_stage: Optional[str] = None
     failure_reason: Optional[str] = None
@@ -92,3 +107,9 @@ class ContentRunEditRequest(BaseModel):
         if self.final_content is not None and not self.final_content.strip():
             raise ValueError("Final content cannot be blank")
         return self
+
+
+class ContentRunApprovalRequest(BaseModel):
+    """Explicit human decision about the exact bundle that becomes publishable."""
+
+    include_visual: bool
