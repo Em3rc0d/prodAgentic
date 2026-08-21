@@ -43,6 +43,7 @@ class VisualArtifactSnapshot(BaseModel):
     status: str
     provider: str
     asset_url: Optional[str] = None
+    asset_sha256: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
     prompt_used: str
@@ -91,11 +92,7 @@ class ContentRun(BaseModel):
 
 
 class ContentRunEditRequest(BaseModel):
-    """Human-owned edits allowed before approval.
-
-    Provenance fields, stage outputs, models, and lifecycle status are intentionally
-    absent from this contract so a library edit cannot rewrite execution history.
-    """
+    """Human-owned edits allowed before approval."""
 
     final_content: Optional[str] = Field(default=None, min_length=1)
     visual_prompt: Optional[str] = None
