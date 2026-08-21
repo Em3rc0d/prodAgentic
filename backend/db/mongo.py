@@ -30,3 +30,7 @@ async def close_db():
 
 def get_db():
     return _db
+
+
+def database_ready() -> bool:
+    return _client is not None and _db is not None

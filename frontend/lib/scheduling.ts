@@ -1,4 +1,5 @@
 import type { ContentRun } from './api'
+import { secureFetch } from './auth'
 
 const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -18,7 +19,7 @@ export interface ScheduleSnapshot {
 export type ScheduledContentRun = ContentRun & { schedule?: ScheduleSnapshot | null }
 
 export async function scheduleContentRun(runId: string, scheduledForIso: string): Promise<ScheduledContentRun> {
-  const res = await fetch(`${API}/api/content-runs/${encodeURIComponent(runId)}/schedule`, {
+  const res = await secureFetch(`${API}/api/content-runs/${encodeURIComponent(runId)}/schedule`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scheduled_for: scheduledForIso }),
@@ -32,7 +33,7 @@ export async function scheduleContentRun(runId: string, scheduledForIso: string)
 }
 
 export async function cancelContentSchedule(runId: string): Promise<ScheduledContentRun> {
-  const res = await fetch(`${API}/api/content-runs/${encodeURIComponent(runId)}/schedule`, { method: 'DELETE' })
+  const res = await secureFetch(`${API}/api/content-runs/${encodeURIComponent(runId)}/schedule`, { method: 'DELETE' })
   if (!res.ok) {
     const payload = await res.json().catch(() => null)
     const detail = payload?.detail ? `: ${payload.detail}` : ''

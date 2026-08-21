@@ -1,3 +1,5 @@
+import { secureFetch } from "./auth";
+
 const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 export function resolveBackendAssetUrl(assetUrl?: string | null): string | null {
@@ -12,7 +14,7 @@ export async function fetchIdeas(
   target_language: string = "es",
   content_profile_id?: string
 ): Promise<string[]> {
-  const res = await fetch(`${API}/api/ideas`, {
+  const res = await secureFetch(`${API}/api/ideas`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ topic, style, target_language, content_profile_id }),
@@ -32,23 +34,23 @@ export function createPipelineStream(
 ): EventSource {
   const params = new URLSearchParams({ idea, topic, style, target_language, image_prompt_language });
   if (content_profile_id) params.set("content_profile_id", content_profile_id);
-  return new EventSource(`${API}/api/pipeline/stream?${params}`);
+  return new EventSource(`${API}/api/pipeline/stream?${params}`, { withCredentials: true });
 }
 
 export async function fetchPosts() {
-  const res = await fetch(`${API}/api/posts`);
+  const res = await secureFetch(`${API}/api/posts`);
   if (!res.ok) throw new Error("Failed to fetch posts");
   return res.json();
 }
 
 export async function updatePostStatus(postId: string, status: string) {
-  const res = await fetch(`${API}/api/posts/${postId}/status?status=${status}`, { method: "PATCH" });
+  const res = await secureFetch(`${API}/api/posts/${postId}/status?status=${status}`, { method: "PATCH" });
   if (!res.ok) throw new Error("Failed to update status");
   return res.json();
 }
 
 export async function deletePost(postId: string) {
-  const res = await fetch(`${API}/api/posts/${postId}`, { method: "DELETE" });
+  const res = await secureFetch(`${API}/api/posts/${postId}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete post");
   return res.json();
 }
@@ -83,13 +85,13 @@ export interface ContentProfile {
 export type ContentProfileInput = Omit<ContentProfile, "profile_id" | "version" | "archived" | "created_at" | "updated_at">;
 
 export async function fetchContentProfiles(): Promise<{ profiles: ContentProfile[]; count: number }> {
-  const res = await fetch(`${API}/api/content-profiles`, { cache: "no-store" });
+  const res = await secureFetch(`${API}/api/content-profiles`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch content profiles: ${res.status}`);
   return res.json();
 }
 
 export async function createContentProfile(profile: ContentProfileInput): Promise<ContentProfile> {
-  const res = await fetch(`${API}/api/content-profiles`, {
+  const res = await secureFetch(`${API}/api/content-profiles`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(profile),
@@ -99,7 +101,7 @@ export async function createContentProfile(profile: ContentProfileInput): Promis
 }
 
 export async function updateContentProfile(profileId: string, changes: Partial<ContentProfileInput> & { archived?: boolean }): Promise<ContentProfile> {
-  const res = await fetch(`${API}/api/content-profiles/${encodeURIComponent(profileId)}`, {
+  const res = await secureFetch(`${API}/api/content-profiles/${encodeURIComponent(profileId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(changes),
@@ -109,7 +111,7 @@ export async function updateContentProfile(profileId: string, changes: Partial<C
 }
 
 export async function setDefaultContentProfile(profileId: string): Promise<ContentProfile> {
-  const res = await fetch(`${API}/api/content-profiles/${encodeURIComponent(profileId)}/default`, { method: "POST" });
+  const res = await secureFetch(`${API}/api/content-profiles/${encodeURIComponent(profileId)}/default`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to set default profile: ${res.status}`);
   return res.json();
 }
@@ -138,7 +140,7 @@ export async function renderVisual(
 ): Promise<VisualRenderResponse> {
   const finalIdempotencyKey = idempotency_key || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const finalRunId = run_id || finalIdempotencyKey;
-  const res = await fetch(`${API}/api/visual-renders`, {
+  const res = await secureFetch(`${API}/api/visual-renders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt, aspect_ratio, style, run_id: finalRunId, idempotency_key: finalIdempotencyKey }),
@@ -227,19 +229,19 @@ export interface ContentRunListResponse {
 }
 
 export async function fetchContentRuns(limit: number = 50): Promise<ContentRunListResponse> {
-  const res = await fetch(`${API}/api/content-runs?limit=${limit}`, { cache: "no-store" });
+  const res = await secureFetch(`${API}/api/content-runs?limit=${limit}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch content runs: ${res.status}`);
   return res.json();
 }
 
 export async function fetchContentRun(runId: string): Promise<ContentRun> {
-  const res = await fetch(`${API}/api/content-runs/${encodeURIComponent(runId)}`, { cache: "no-store" });
+  const res = await secureFetch(`${API}/api/content-runs/${encodeURIComponent(runId)}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch content run: ${res.status}`);
   return res.json();
 }
 
 export async function editContentRun(runId: string, changes: { final_content?: string; visual_prompt?: string }): Promise<ContentRun> {
-  const res = await fetch(`${API}/api/content-runs/${encodeURIComponent(runId)}`, {
+  const res = await secureFetch(`${API}/api/content-runs/${encodeURIComponent(runId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(changes),
@@ -253,7 +255,7 @@ export async function editContentRun(runId: string, changes: { final_content?: s
 }
 
 export async function approveContentRun(runId: string, includeVisual: boolean): Promise<ContentRun> {
-  const res = await fetch(`${API}/api/content-runs/${encodeURIComponent(runId)}/approve`, {
+  const res = await secureFetch(`${API}/api/content-runs/${encodeURIComponent(runId)}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ include_visual: includeVisual }),

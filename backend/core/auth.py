@@ -8,9 +8,13 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel
+
 
 COOKIE_NAME = "prodagentic_session"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+PUBLIC_PATHS = {"/", "/health/live", "/health/ready", "/api/auth/login"}
 
 
 class AuthConfigurationError(ValueError):
@@ -123,3 +127,59 @@ class SessionManager:
         user_ok = hmac.compare_digest(username.encode("utf-8"), self.settings.admin_user.encode("utf-8"))
         password_ok = hmac.compare_digest(password.encode("utf-8"), self.settings.admin_password.encode("utf-8"))
         return user_ok and password_ok
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def _auth_context(request: Request) -> tuple[AuthSettings, SessionManager]:
+    settings = getattr(request.app.state, "auth_settings", None)
+    manager = getattr(request.app.state, "session_manager", None)
+    if settings is None or manager is None:
+        raise HTTPException(status_code=503, detail="Authentication is not initialized")
+    return settings, manager
+
+
+def set_session_cookie(response: Response, settings: AuthSettings, token: str) -> None:
+    response.set_cookie(
+        key=COOKIE_NAME, value=token, max_age=settings.ttl_seconds, httponly=True,
+        secure=settings.cookie_secure, samesite=settings.cookie_samesite, path="/",
+    )
+
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.post("/login")
+async def login(payload: LoginRequest, request: Request, response: Response):
+    settings, manager = _auth_context(request)
+    if not settings.enabled:
+        return {"authenticated": True, "csrf_token": None, "auth_enabled": False}
+    if not manager.credentials_match(payload.username, payload.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token, session = manager.issue()
+    set_session_cookie(response, settings, token)
+    response.headers["Cache-Control"] = "no-store"
+    return {"authenticated": True, "csrf_token": session["csrf"], "expires_at": session["exp"], "auth_enabled": True}
+
+
+@router.get("/session")
+async def session(request: Request):
+    settings, manager = _auth_context(request)
+    if not settings.enabled:
+        return {"authenticated": True, "csrf_token": None, "auth_enabled": False}
+    try:
+        payload = manager.verify(request.cookies.get(COOKIE_NAME))
+    except SessionValidationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return {"authenticated": True, "csrf_token": payload["csrf"], "expires_at": payload["exp"], "auth_enabled": True}
+
+
+@router.post("/logout")
+async def logout(request: Request, response: Response):
+    settings, _ = _auth_context(request)
+    response.delete_cookie(COOKIE_NAME, path="/", secure=settings.cookie_secure, httponly=True, samesite=settings.cookie_samesite)
+    response.headers["Cache-Control"] = "no-store"
+    return {"authenticated": False}

@@ -29,7 +29,7 @@ describe('content profile API', () => {
 
   it('loads the reusable profile library', async () => {
     await fetchContentProfiles()
-    expect(global.fetch).toHaveBeenCalledWith('http://localhost:8000/api/content-profiles', { cache: 'no-store' })
+    expect(global.fetch).toHaveBeenCalledWith('http://localhost:8000/api/content-profiles', expect.objectContaining({ cache: 'no-store', credentials: 'include' }))
   })
 
   it('creates a profile with explicit guardrail payload', async () => {
@@ -44,7 +44,7 @@ describe('content profile API', () => {
     await setDefaultContentProfile('profile-1')
     expect(global.fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/content-profiles/profile-1/default',
-      { method: 'POST' }
+      expect.objectContaining({ method: 'POST', credentials: 'include' })
     )
   })
 })

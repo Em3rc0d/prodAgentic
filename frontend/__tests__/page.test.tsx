@@ -268,7 +268,8 @@ describe('Page Component', () => {
       })
     )
     
-    const firstCallJson = JSON.parse((global.fetch as jest.Mock).mock.calls[1][1].body)
+    const renderCalls = (global.fetch as jest.Mock).mock.calls.filter(([url]) => String(url).includes('/api/visual-renders'))
+    const firstCallJson = JSON.parse(renderCalls[0][1].body)
     const firstKey = firstCallJson.idempotency_key
     expect(firstKey).toContain('test-run-12345')
 
@@ -276,7 +277,8 @@ describe('Page Component', () => {
     await act(async () => {
       fireEvent.click(renderBtn)
     })
-    const secondCallJson = JSON.parse((global.fetch as jest.Mock).mock.calls[2][1].body)
+    const secondRenderCalls = (global.fetch as jest.Mock).mock.calls.filter(([url]) => String(url).includes('/api/visual-renders'))
+    const secondCallJson = JSON.parse(secondRenderCalls[1][1].body)
     expect(secondCallJson.idempotency_key).toBe(firstKey)
 
     // Change Aspect Ratio — should generate new idempotency key (different intent)
@@ -285,7 +287,8 @@ describe('Page Component', () => {
     await act(async () => {
       fireEvent.click(renderBtn)
     })
-    const thirdCallJson = JSON.parse((global.fetch as jest.Mock).mock.calls[3][1].body)
+    const thirdRenderCalls = (global.fetch as jest.Mock).mock.calls.filter(([url]) => String(url).includes('/api/visual-renders'))
+    const thirdCallJson = JSON.parse(thirdRenderCalls[2][1].body)
     expect(thirdCallJson.idempotency_key).not.toBe(firstKey)
   })
 

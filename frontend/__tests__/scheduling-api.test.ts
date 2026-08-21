@@ -18,7 +18,7 @@ describe('scheduling API', () => {
     await cancelContentSchedule('run-1')
     expect(global.fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/content-runs/run-1/schedule',
-      { method: 'DELETE' }
+      expect.objectContaining({ method: 'DELETE', credentials: 'include' })
     )
   })
 })
