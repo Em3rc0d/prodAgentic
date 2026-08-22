@@ -1,7 +1,9 @@
+import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from core.linkedin import LinkedInPublishError, LinkedInPublisher, LinkedInPublisherConfig
+from core.linkedin_oauth import LinkedInOAuthConfigurationError, LinkedInOAuthError, LinkedInOAuthService
 from models.content_run import ContentRunStatus
 
 
@@ -27,7 +29,21 @@ class PublicationCoordinator:
     def __init__(self, db, publisher_factory=None, config_factory=None):
         self.db = db
         self.publisher_factory = publisher_factory or LinkedInPublisher
-        self.config_factory = config_factory or LinkedInPublisherConfig.from_env
+        self.config_factory = config_factory
+
+    async def _resolve_config(self):
+        if self.config_factory is not None:
+            return self.config_factory()
+
+        try:
+            return await LinkedInOAuthService(self.db).publisher_config()
+        except (LinkedInOAuthConfigurationError, LinkedInOAuthError, LinkedInPublishError) as oauth_exc:
+            static_fallback = os.environ.get("LINKEDIN_STATIC_FALLBACK_ENABLED", "false").strip().lower() in {
+                "1", "true", "yes"
+            }
+            if not static_fallback:
+                raise LinkedInPublishError(str(oauth_exc)) from oauth_exc
+            return LinkedInPublisherConfig.from_env()
 
     async def publish_run(self, run_id: str, expected_status: ContentRunStatus = ContentRunStatus.APPROVED):
         collection = self.db["content_runs"]
@@ -58,7 +74,7 @@ class PublicationCoordinator:
             )
 
         try:
-            config = self.config_factory()
+            config = await self._resolve_config()
         except LinkedInPublishError as exc:
             raise PublicationUnavailable(str(exc)) from exc
 
