@@ -109,7 +109,8 @@ async def test_oauth_state_is_session_bound_one_time_and_token_is_encrypted():
         assert "linkedin-real-access-token" not in connection["encrypted_access_token"]
 
         stored = await db["linkedin_connections"].find_one({"_id": "primary"})
-        assert stored["email"] == "member@example.test"
+        assert "email" not in stored
+        assert "email_verified" not in stored
         assert stored["encrypted_access_token"] != "linkedin-real-access-token"
 
         status = await service.status()
@@ -140,7 +141,7 @@ async def test_disconnect_removes_publishing_authority():
             "author_urn": "urn:li:person:member-123",
             "encrypted_access_token": service.cipher.encrypt("secret"),
             "scopes": ["openid", "profile", "email", "w_member_social"],
-            "expires_at": now.replace(year=now.year + 1),
+            "expires_at": now.replace(year=now.year + 1).replace(tzinfo=None),
         },
         upsert=True,
     )
