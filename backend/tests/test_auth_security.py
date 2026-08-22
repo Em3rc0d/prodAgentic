@@ -2,6 +2,7 @@ import time
 
 import pytest
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
 from core.auth import AuthConfigurationError, AuthSettings, SessionManager, SessionValidationError, router, security_boundary
@@ -59,6 +60,13 @@ def http_client():
     auth_settings = settings(cookie_secure=False)
     app.state.auth_settings = auth_settings
     app.state.session_manager = SessionManager(auth_settings)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.middleware("http")(security_boundary)
     app.include_router(router, prefix="/api")
 
@@ -78,6 +86,22 @@ def test_http_boundary_rejects_unauthenticated_access(http_client):
     response = http_client.get("/api/protected")
     assert response.status_code == 401
     assert response.headers["x-frame-options"] == "DENY"
+
+
+def test_http_boundary_allows_unauthenticated_cors_preflight_only(http_client):
+    preflight = http_client.options(
+        "/api/protected",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,x-csrf-token",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+    # Permitting negotiation must not weaken the actual protected operation.
+    assert http_client.post("/api/protected").status_code == 401
 
 
 def test_http_boundary_rejects_missing_csrf_and_accepts_bound_token(http_client):
