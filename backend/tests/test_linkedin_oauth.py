@@ -15,6 +15,11 @@ from core.linkedin_oauth import (
 class FakeCollection:
     def __init__(self):
         self.docs = []
+        self.indexes = []
+
+    async def create_index(self, key, **kwargs):
+        self.indexes.append((key, kwargs))
+        return key
 
     async def insert_one(self, doc):
         self.docs.append(copy.deepcopy(doc))
@@ -54,12 +59,12 @@ class FakeDb:
         return self.collections.setdefault(name, FakeCollection())
 
 
-def settings():
+def settings(token_key="oauth-token-key-that-is-long-enough-for-tests"):
     return LinkedInOAuthSettings(
         client_id="client-id",
         client_secret="client-secret",
         redirect_uri="http://localhost:8000/api/integrations/linkedin/callback",
-        token_key="oauth-token-key-that-is-long-enough-for-tests",
+        token_key=token_key,
         api_version="202607",
         frontend_url="http://localhost:3000",
     )
@@ -99,6 +104,7 @@ async def test_oauth_state_is_session_bound_one_time_and_token_is_encrypted():
         assert query["client_id"] == ["client-id"]
         assert query["redirect_uri"] == [settings().redirect_uri]
         assert set(query["scope"][0].split()) == {"openid", "profile", "email", "w_member_social"}
+        assert db["linkedin_oauth_states"].indexes == [("expires_at", {"expireAfterSeconds": 0})]
 
         with pytest.raises(LinkedInOAuthStateError, match="invalid"):
             await service.complete_authorization("authorization-code", state, "different-session")
@@ -129,7 +135,7 @@ async def test_oauth_state_is_session_bound_one_time_and_token_is_encrypted():
 
 
 @pytest.mark.asyncio
-async def test_disconnect_removes_publishing_authority():
+async def test_disconnect_removes_publishing_authority_and_rotated_key_requires_reconnect():
     db = FakeDb()
     service = LinkedInOAuthService(db, settings=settings())
     now = datetime.now(timezone.utc)
@@ -147,5 +153,14 @@ async def test_disconnect_removes_publishing_authority():
     )
 
     assert (await service.status())["connected"] is True
+
+    rotated = LinkedInOAuthService(
+        db,
+        settings=settings("a-different-oauth-token-key-that-is-long-enough"),
+    )
+    rotated_status = await rotated.status()
+    assert rotated_status["connected"] is False
+    assert rotated_status["status"] == "RECONNECT_REQUIRED"
+
     await service.disconnect()
     assert (await service.status())["connected"] is False
