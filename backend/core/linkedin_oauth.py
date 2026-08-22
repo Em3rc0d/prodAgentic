@@ -116,7 +116,11 @@ class LinkedInOAuthService:
     def _state_digest(state: str) -> str:
         return hashlib.sha256(state.encode("utf-8")).hexdigest()
 
+    async def ensure_indexes(self) -> None:
+        await self.db["linkedin_oauth_states"].create_index("expires_at", expireAfterSeconds=0)
+
     async def create_authorization_url(self, session_id: str) -> str:
+        await self.ensure_indexes()
         state = secrets.token_urlsafe(32)
         now = datetime.now(timezone.utc)
         await self.db["linkedin_oauth_states"].insert_one({
@@ -231,17 +235,32 @@ class LinkedInOAuthService:
         connection = await self.get_connection()
         if not connection:
             return {"configured": True, "connected": False, "status": "NOT_CONNECTED"}
+
         expires_at = _as_utc(connection.get("expires_at"))
-        expired = expires_at is None or expires_at <= datetime.now(timezone.utc)
+        granted = set(connection.get("scopes") or [])
+        required = set(self.settings.scopes)
+        reason = None
+        if expires_at is None or expires_at <= datetime.now(timezone.utc):
+            reason = "LinkedIn connection expired; reconnect LinkedIn"
+        elif not required.issubset(granted):
+            reason = "LinkedIn connection is missing required OAuth scopes"
+        else:
+            try:
+                self.cipher.decrypt(connection.get("encrypted_access_token") or "")
+            except LinkedInOAuthError:
+                reason = "LinkedIn connection cannot be decrypted; reconnect LinkedIn"
+
+        connected = reason is None
         return {
             "configured": True,
-            "connected": not expired,
-            "status": "RECONNECT_REQUIRED" if expired else "CONNECTED",
+            "connected": connected,
+            "status": "CONNECTED" if connected else "RECONNECT_REQUIRED",
+            "reason": reason,
             "display_name": connection.get("display_name"),
             "picture_url": connection.get("picture_url"),
             "author_urn": connection.get("author_urn"),
             "expires_at": expires_at,
-            "scopes": connection.get("scopes") or [],
+            "scopes": sorted(granted),
             "api_version": self.settings.api_version,
         }
 
@@ -259,8 +278,12 @@ class LinkedInOAuthService:
         granted = set(connection.get("scopes") or [])
         if not required.issubset(granted):
             raise LinkedInPublishError("LinkedIn connection is missing required OAuth scopes")
+        try:
+            access_token = self.cipher.decrypt(connection["encrypted_access_token"])
+        except (KeyError, LinkedInOAuthError) as exc:
+            raise LinkedInPublishError("LinkedIn connection cannot be decrypted; reconnect LinkedIn") from exc
         return LinkedInPublisherConfig(
-            access_token=self.cipher.decrypt(connection["encrypted_access_token"]),
+            access_token=access_token,
             author_urn=connection["author_urn"],
             api_version=self.settings.api_version,
         )
