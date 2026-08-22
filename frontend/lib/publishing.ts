@@ -46,7 +46,7 @@ export async function fetchLinkedInPublisherStatus(): Promise<LinkedInPublisherS
   return res.json()
 }
 
-export async function connectLinkedIn(): Promise<void> {
+export async function connectLinkedIn(): Promise<string> {
   const res = await secureFetch(`${API}/api/integrations/linkedin/connect`, { method: 'POST' })
   if (!res.ok) {
     const payload = await res.json().catch(() => null)
@@ -54,7 +54,7 @@ export async function connectLinkedIn(): Promise<void> {
   }
   const payload = await res.json() as { authorization_url?: string }
   if (!payload.authorization_url) throw new Error('LinkedIn authorization URL was not returned')
-  window.location.assign(payload.authorization_url)
+  return payload.authorization_url
 }
 
 export async function disconnectLinkedIn(): Promise<void> {
