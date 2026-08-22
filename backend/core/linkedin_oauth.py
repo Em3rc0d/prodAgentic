@@ -33,7 +33,7 @@ class LinkedInOAuthSettings:
     token_key: str
     api_version: str
     frontend_url: str
-    scopes: tuple[str, ...] = ("openid", "profile", "email", "w_member_social")
+    scopes: tuple[str, ...] = ("openid", "profile", "w_member_social")
 
     @classmethod
     def from_env(cls) -> "LinkedInOAuthSettings":
@@ -49,6 +49,15 @@ class LinkedInOAuthSettings:
             raise LinkedInOAuthConfigurationError(
                 f"LinkedIn OAuth is not configured: missing {', '.join(missing)}"
             )
+        redirect_uri = values["LINKEDIN_REDIRECT_URI"]
+        if not (
+            redirect_uri.startswith("https://")
+            or redirect_uri.startswith("http://localhost:")
+            or redirect_uri.startswith("http://127.0.0.1:")
+        ):
+            raise LinkedInOAuthConfigurationError(
+                "LINKEDIN_REDIRECT_URI must use HTTPS except for localhost development"
+            )
         if len(values["PRODAGENTIC_LINKEDIN_TOKEN_KEY"]) < 32:
             raise LinkedInOAuthConfigurationError(
                 "PRODAGENTIC_LINKEDIN_TOKEN_KEY must be at least 32 characters"
@@ -58,7 +67,7 @@ class LinkedInOAuthSettings:
         return cls(
             client_id=values["LINKEDIN_CLIENT_ID"],
             client_secret=values["LINKEDIN_CLIENT_SECRET"],
-            redirect_uri=values["LINKEDIN_REDIRECT_URI"],
+            redirect_uri=redirect_uri,
             token_key=values["PRODAGENTIC_LINKEDIN_TOKEN_KEY"],
             api_version=values["LINKEDIN_API_VERSION"],
             frontend_url=os.environ.get("FRONTEND_URL", "http://localhost:3000").strip().rstrip("/"),
