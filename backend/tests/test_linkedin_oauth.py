@@ -83,7 +83,7 @@ async def test_oauth_state_is_session_bound_one_time_and_token_is_encrypted():
             return httpx.Response(200, json={
                 "access_token": "linkedin-real-access-token",
                 "expires_in": 5184000,
-                "scope": "openid profile email w_member_social",
+                "scope": "openid profile w_member_social",
             })
         if str(request.url) == LinkedInOAuthService.USERINFO_URL:
             assert request.headers["authorization"] == "Bearer linkedin-real-access-token"
@@ -103,7 +103,7 @@ async def test_oauth_state_is_session_bound_one_time_and_token_is_encrypted():
         state = query["state"][0]
         assert query["client_id"] == ["client-id"]
         assert query["redirect_uri"] == [settings().redirect_uri]
-        assert set(query["scope"][0].split()) == {"openid", "profile", "email", "w_member_social"}
+        assert set(query["scope"][0].split()) == {"openid", "profile", "w_member_social"}
         assert db["linkedin_oauth_states"].indexes == [("expires_at", {"expireAfterSeconds": 0})]
 
         with pytest.raises(LinkedInOAuthStateError, match="invalid"):
@@ -146,7 +146,7 @@ async def test_disconnect_removes_publishing_authority_and_rotated_key_requires_
             "status": "CONNECTED",
             "author_urn": "urn:li:person:member-123",
             "encrypted_access_token": service.cipher.encrypt("secret"),
-            "scopes": ["openid", "profile", "email", "w_member_social"],
+            "scopes": ["openid", "profile", "w_member_social"],
             "expires_at": now.replace(year=now.year + 1).replace(tzinfo=None),
         },
         upsert=True,
