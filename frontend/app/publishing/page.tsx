@@ -108,19 +108,16 @@ export default function PublishingPage() {
 
         <section style={{ ...card, marginBottom: 18 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ display: "flex", gap: 12, alignItems: "center", minWidth: 0 }}>
-              {publisher?.picture_url && <img src={publisher.picture_url} alt="LinkedIn profile" width={42} height={42} style={{ borderRadius: "50%", objectFit: "cover" }} />}
-              <div>
-                <strong>LinkedIn account</strong>
-                <div style={{ color: "var(--text-3)", marginTop: 5, fontSize: 12 }}>
-                  {connected
-                    ? `${publisher?.display_name || publisher?.author_urn} · API ${publisher?.api_version}`
-                    : publisher?.status === "RECONNECT_REQUIRED"
-                      ? `Connection expired${publisher?.expires_at ? ` · ${formatDate(publisher.expires_at)}` : ""}`
-                      : publisher?.reason ?? "No LinkedIn account connected"}
-                </div>
-                {connected && publisher?.expires_at && <div style={{ color: "var(--text-3)", marginTop: 4, fontSize: 11 }}>Token expires {formatDate(publisher.expires_at)}</div>}
+            <div style={{ minWidth: 0 }}>
+              <strong>LinkedIn account</strong>
+              <div style={{ color: "var(--text-3)", marginTop: 5, fontSize: 12 }}>
+                {connected
+                  ? `${publisher?.display_name || publisher?.author_urn} · API ${publisher?.api_version}`
+                  : publisher?.status === "RECONNECT_REQUIRED"
+                    ? `Connection expired${publisher?.expires_at ? ` · ${formatDate(publisher.expires_at)}` : ""}`
+                    : publisher?.reason ?? "No LinkedIn account connected"}
               </div>
+              {connected && publisher?.expires_at && <div style={{ color: "var(--text-3)", marginTop: 4, fontSize: 11 }}>Token expires {formatDate(publisher.expires_at)}</div>}
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <span style={{ color: connected ? "var(--success)" : "var(--warning)", fontSize: 12 }}>
