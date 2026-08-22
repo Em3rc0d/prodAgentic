@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from core.assets import prepare_asset_root
 from core.container import ApplicationContainer
 from core.model_registry import validate_available_models, get_profile_readiness
 from core.scheduler import scheduler_loop
@@ -60,8 +61,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-os.makedirs("static/assets/renders", exist_ok=True)
-app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
+asset_root = prepare_asset_root()
+app.mount("/assets", StaticFiles(directory=str(asset_root)), name="assets")
 
 allowed_origins = [
     origin.strip()

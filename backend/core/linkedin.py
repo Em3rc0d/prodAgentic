@@ -6,6 +6,8 @@ from typing import Any, Optional
 
 import httpx
 
+from core.assets import get_asset_root
+
 
 class LinkedInPublishError(RuntimeError):
     pass
@@ -53,11 +55,15 @@ class LinkedInPublisher:
         self,
         config: LinkedInPublisherConfig,
         client: Optional[httpx.AsyncClient] = None,
-        asset_root: str = "static/assets",
+        asset_root: str | Path | None = None,
     ):
         self.config = config
         self.client = client
-        self.asset_root = Path(asset_root).resolve()
+        self.asset_root = (
+            Path(asset_root).expanduser().resolve()
+            if asset_root is not None
+            else get_asset_root()
+        )
 
     def _api_headers(self) -> dict[str, str]:
         return {

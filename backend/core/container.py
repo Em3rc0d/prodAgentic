@@ -4,6 +4,7 @@ from agents.adapters.google_adapter import GoogleDirectAdapter
 from agents.adapters.n8n_adapter import N8nAdapter
 from agents.router import ModelRouter
 from agents.orchestrator import PipelineOrchestrator
+from core.assets import get_render_storage_dir
 from core.settings import ApplicationSettings
 import logging
 
@@ -60,7 +61,11 @@ class ApplicationContainer:
 
         image_enabled = self.settings.image_render_enabled if self.settings else False
         provider = PollinationsImageAdapter()
-        self.visual_service = VisualRenderService(provider, image_render_enabled=image_enabled)
+        self.visual_service = VisualRenderService(
+            provider,
+            storage_dir=str(get_render_storage_dir()),
+            image_render_enabled=image_enabled,
+        )
 
     async def shutdown(self):
         if self.client:
