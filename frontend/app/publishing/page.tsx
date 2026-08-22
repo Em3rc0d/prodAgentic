@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { fetchContentRuns } from "@/lib/api";
 import {
+  connectLinkedIn,
+  disconnectLinkedIn,
   fetchLinkedInPublisherStatus,
   LinkedInPublisherStatus,
   PublicationSnapshot,
@@ -22,6 +24,7 @@ export default function PublishingPage() {
   const [publisher, setPublisher] = useState<LinkedInPublisherStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [connectionBusy, setConnectionBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function reload() {
@@ -52,6 +55,30 @@ export default function PublishingPage() {
     [runs]
   );
 
+  async function startLinkedInConnection() {
+    setConnectionBusy(true);
+    setError(null);
+    try {
+      await connectLinkedIn();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "LinkedIn connection failed");
+      setConnectionBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    setConnectionBusy(true);
+    setError(null);
+    try {
+      await disconnectLinkedIn();
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "LinkedIn disconnect failed");
+    } finally {
+      setConnectionBusy(false);
+    }
+  }
+
   async function publish(run: PublishableContentRun) {
     setActiveId(run.run_id);
     setError(null);
@@ -67,6 +94,7 @@ export default function PublishingPage() {
   }
 
   const card = { border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: 18 } as const;
+  const connected = publisher?.connected === true;
 
   return (
     <main style={{ height: "100vh", overflowY: "auto", background: "var(--bg-0)", color: "var(--text-1)", padding: "44px 24px 100px" }}>
@@ -74,18 +102,39 @@ export default function PublishingPage() {
         <header style={{ marginBottom: 26 }}>
           <p style={{ margin: 0, color: "var(--text-3)", fontSize: 12, letterSpacing: ".08em" }}>DISTRIBUTION</p>
           <h1 style={{ margin: "6px 0 8px", fontSize: 32 }}>LinkedIn Publishing</h1>
-          <p style={{ margin: 0, color: "var(--text-2)", maxWidth: 760 }}>Only immutable approved bundles can cross this boundary. The publisher never reads mutable draft fields.</p>
+          <p style={{ margin: 0, color: "var(--text-2)", maxWidth: 760 }}>Connect your LinkedIn member account, then publish only immutable approved bundles. The publisher never reads mutable draft fields.</p>
         </header>
 
         <section style={{ ...card, marginBottom: 18 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center" }}>
-            <div>
-              <strong>LinkedIn provider</strong>
-              <div style={{ color: "var(--text-3)", marginTop: 5, fontSize: 12 }}>
-                {publisher?.configured ? `${publisher.author_urn} · API ${publisher.api_version}` : publisher?.reason ?? "Reading configuration…"}
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", minWidth: 0 }}>
+              {publisher?.picture_url && <img src={publisher.picture_url} alt="LinkedIn profile" width={42} height={42} style={{ borderRadius: "50%", objectFit: "cover" }} />}
+              <div>
+                <strong>LinkedIn account</strong>
+                <div style={{ color: "var(--text-3)", marginTop: 5, fontSize: 12 }}>
+                  {connected
+                    ? `${publisher?.display_name || publisher?.author_urn} · API ${publisher?.api_version}`
+                    : publisher?.status === "RECONNECT_REQUIRED"
+                      ? `Connection expired${publisher?.expires_at ? ` · ${formatDate(publisher.expires_at)}` : ""}`
+                      : publisher?.reason ?? "No LinkedIn account connected"}
+                </div>
+                {connected && publisher?.expires_at && <div style={{ color: "var(--text-3)", marginTop: 4, fontSize: 11 }}>Token expires {formatDate(publisher.expires_at)}</div>}
               </div>
             </div>
-            <span style={{ color: publisher?.configured ? "var(--success)" : "var(--warning)", fontSize: 12 }}>{publisher?.configured ? "CONFIGURED" : "NOT CONFIGURED"}</span>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <span style={{ color: connected ? "var(--success)" : "var(--warning)", fontSize: 12 }}>
+                {connected ? "CONNECTED" : publisher?.status === "RECONNECT_REQUIRED" ? "RECONNECT REQUIRED" : "NOT CONNECTED"}
+              </span>
+              {connected ? (
+                <button onClick={disconnect} disabled={connectionBusy} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "9px 12px", background: "transparent", color: "var(--text-2)", cursor: connectionBusy ? "not-allowed" : "pointer" }}>
+                  {connectionBusy ? "Disconnecting…" : "Disconnect"}
+                </button>
+              ) : (
+                <button onClick={startLinkedInConnection} disabled={connectionBusy || publisher?.configured === false} style={{ border: "1px solid var(--border-active)", borderRadius: 8, padding: "9px 12px", background: "var(--surface-active)", color: "var(--text-1)", cursor: connectionBusy ? "not-allowed" : "pointer" }}>
+                  {connectionBusy ? "Connecting…" : publisher?.status === "RECONNECT_REQUIRED" ? "Reconnect LinkedIn" : "Connect LinkedIn"}
+                </button>
+              )}
+            </div>
           </div>
         </section>
 
@@ -96,7 +145,7 @@ export default function PublishingPage() {
         <div style={{ display: "grid", gap: 12 }}>
           {queue.map((run) => {
             const publication = (run.publication ?? null) as PublicationSnapshot | null;
-            const canPublish = run.status === "APPROVED" && publisher?.configured === true && activeId !== run.run_id;
+            const canPublish = run.status === "APPROVED" && connected && activeId !== run.run_id;
             return (
               <article key={run.run_id} style={card}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 18 }}>
@@ -112,7 +161,7 @@ export default function PublishingPage() {
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch" }}>
                     <Link href={`/library/${encodeURIComponent(run.run_id)}`} style={{ color: "var(--text-2)", textDecoration: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "9px 12px", textAlign: "center", fontSize: 12 }}>Review evidence</Link>
-                    {run.status === "APPROVED" && <button onClick={() => publish(run)} disabled={!canPublish} style={{ border: "1px solid var(--border-active)", borderRadius: 8, padding: "9px 12px", background: "var(--surface-active)", color: "var(--text-1)", cursor: canPublish ? "pointer" : "not-allowed", opacity: canPublish ? 1 : .55 }}>{activeId === run.run_id ? "Publishing…" : "Publish to LinkedIn"}</button>}
+                    {run.status === "APPROVED" && <button onClick={() => publish(run)} disabled={!canPublish} style={{ border: "1px solid var(--border-active)", borderRadius: 8, padding: "9px 12px", background: "var(--surface-active)", color: "var(--text-1)", cursor: canPublish ? "pointer" : "not-allowed", opacity: canPublish ? 1 : .55 }}>{activeId === run.run_id ? "Publishing…" : connected ? "Publish to LinkedIn" : "Connect LinkedIn first"}</button>}
                   </div>
                 </div>
               </article>
