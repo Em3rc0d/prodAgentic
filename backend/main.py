@@ -20,6 +20,7 @@ from routes.content_runs import router as content_runs_router
 from routes.content_profiles import router as content_profiles_router
 from routes.publishing import router as publishing_router
 from routes.scheduling import router as scheduling_router
+from routes.linkedin_oauth import router as linkedin_oauth_router
 
 
 load_dotenv()
@@ -86,6 +87,7 @@ app.include_router(content_runs_router, prefix="/api")
 app.include_router(content_profiles_router, prefix="/api")
 app.include_router(publishing_router, prefix="/api")
 app.include_router(scheduling_router, prefix="/api")
+app.include_router(linkedin_oauth_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 
 

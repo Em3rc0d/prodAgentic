@@ -1,9 +1,16 @@
+import os
 from datetime import datetime
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException
 
 from core.linkedin import LinkedInPublishError, LinkedInPublisherConfig
+from core.linkedin_oauth import (
+    LinkedInOAuthConfigurationError,
+    LinkedInOAuthError,
+    LinkedInOAuthService,
+    LinkedInOAuthSettings,
+)
 from core.publication import (
     PublicationConflict,
     PublicationCoordinator,
@@ -31,11 +38,37 @@ def _serialize(value):
 
 @router.get("/publishing/linkedin/status")
 async def linkedin_publisher_status():
-    try:
-        config = LinkedInPublisherConfig.from_env()
-        return {"configured": True, "author_urn": config.author_urn, "api_version": config.api_version}
-    except LinkedInPublishError as exc:
-        return {"configured": False, "reason": str(exc)}
+    """Backward-compatible status route; OAuth connection is the primary authority."""
+    db = get_db()
+    if db is not None:
+        try:
+            status = await LinkedInOAuthService(db, settings=LinkedInOAuthSettings.from_env()).status()
+            return _serialize(status)
+        except (LinkedInOAuthConfigurationError, LinkedInOAuthError):
+            pass
+
+    static_fallback = os.environ.get("LINKEDIN_STATIC_FALLBACK_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes"
+    }
+    if static_fallback:
+        try:
+            config = LinkedInPublisherConfig.from_env()
+            return {
+                "configured": True,
+                "connected": True,
+                "status": "STATIC_FALLBACK",
+                "author_urn": config.author_urn,
+                "api_version": config.api_version,
+            }
+        except LinkedInPublishError as exc:
+            return {"configured": False, "connected": False, "reason": str(exc)}
+
+    return {
+        "configured": False,
+        "connected": False,
+        "status": "NOT_CONFIGURED",
+        "reason": "LinkedIn OAuth is not configured or connected",
+    }
 
 
 @router.post("/content-runs/{run_id}/publish")
