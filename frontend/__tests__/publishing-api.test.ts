@@ -6,12 +6,18 @@ import {
 } from '../lib/publishing'
 
 describe('LinkedIn publishing API', () => {
+  const authorizationUrl = 'https://www.linkedin.com/oauth/v2/authorization?state=opaque'
+
   beforeEach(() => {
-    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ configured: true, csrf_token: 'csrf-test' }) })) as jest.Mock
-    Object.defineProperty(window, 'location', {
-      configurable: true,
-      value: { assign: jest.fn() },
-    })
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        configured: true,
+        authenticated: true,
+        csrf_token: 'csrf-test',
+        authorization_url: authorizationUrl,
+      }),
+    })) as jest.Mock
   })
 
   it('reads OAuth connection readiness without exposing secret material', async () => {
@@ -23,16 +29,11 @@ describe('LinkedIn publishing API', () => {
   })
 
   it('starts LinkedIn OAuth using only the backend-issued authorization URL', async () => {
-    global.fetch = jest.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ authenticated: true, csrf_token: 'csrf-connect' }) })
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ authorization_url: 'https://www.linkedin.com/oauth/v2/authorization?state=opaque' }) })
-
-    await connectLinkedIn()
-    expect(global.fetch).toHaveBeenLastCalledWith(
+    await expect(connectLinkedIn()).resolves.toBe(authorizationUrl)
+    expect(global.fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/integrations/linkedin/connect',
       expect.objectContaining({ method: 'POST', credentials: 'include' })
     )
-    expect(window.location.assign).toHaveBeenCalledWith('https://www.linkedin.com/oauth/v2/authorization?state=opaque')
   })
 
   it('disconnects LinkedIn through the protected backend boundary', async () => {
