@@ -163,6 +163,14 @@ def apply_security_headers(response: Response, path: str) -> Response:
 
 async def security_boundary(request: Request, call_next):
     path = request.url.path
+
+    # CORS preflight carries no application payload and cannot include the
+    # HttpOnly session cookie reliably across browsers. Let CORSMiddleware
+    # negotiate the request; the subsequent operation remains fully subject
+    # to session and CSRF enforcement.
+    if request.method == "OPTIONS":
+        return apply_security_headers(await call_next(request), path)
+
     settings = getattr(request.app.state, "auth_settings", None)
     manager = getattr(request.app.state, "session_manager", None)
     is_public = path in PUBLIC_PATHS or path.startswith("/docs") or path == "/openapi.json"
