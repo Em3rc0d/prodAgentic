@@ -48,6 +48,29 @@ jobs:
       - name: Run Backend Tests
         working-directory: backend
         run: python -m pytest -q
+      - name: Build Production Backend Image
+        run: docker build -t prodagentic-backend:ci ./backend
+      - name: Smoke Production Backend Image
+        run: |
+          docker run -d --name prodagentic-backend-ci \
+            -p 18000:8000 \
+            -e PORT=8000 \
+            -e APP_DEFAULT_LANGUAGE=es \
+            -e LANGUAGE_MIN_CONFIDENCE=0.6 \
+            -e LANGUAGE_MIN_MARGIN=0.2 \
+            -e IMAGE_RENDER_ENABLED=false \
+            -e PRODAGENTIC_AUTH_ENABLED=false \
+            -e SCHEDULER_ENABLED=false \
+            prodagentic-backend:ci
+          trap 'docker logs prodagentic-backend-ci || true; docker rm -f prodagentic-backend-ci || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:18000/health/live; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Production backend image never became live"
+          exit 1
 
   frontend-test:
     runs-on: ubuntu-latest
