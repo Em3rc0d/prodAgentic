@@ -80,6 +80,14 @@ class LinkedInTokenCipher:
             raise LinkedInOAuthError("Stored LinkedIn access token cannot be decrypted") from exc
 
 
+def _as_utc(value: Any) -> Optional[datetime]:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class LinkedInOAuthService:
     AUTHORIZATION_URL = "https://www.linkedin.com/oauth/v2/authorization"
     TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
@@ -133,8 +141,8 @@ class LinkedInOAuthService:
         })
         if not record:
             raise LinkedInOAuthStateError("LinkedIn OAuth state is invalid or was already used")
-        expires_at = record.get("expires_at")
-        if not isinstance(expires_at, datetime) or expires_at <= datetime.now(timezone.utc):
+        expires_at = _as_utc(record.get("expires_at"))
+        if expires_at is None or expires_at <= datetime.now(timezone.utc):
             raise LinkedInOAuthStateError("LinkedIn OAuth state has expired")
 
     async def complete_authorization(self, code: str, state: str, session_id: str) -> dict[str, Any]:
@@ -160,10 +168,12 @@ class LinkedInOAuthService:
             )
         try:
             token_payload = token_response.json()
-            access_token = token_payload["access_token"]
+            access_token = str(token_payload["access_token"]).strip()
             expires_in = int(token_payload["expires_in"])
         except (KeyError, TypeError, ValueError) as exc:
             raise LinkedInOAuthError("LinkedIn token exchange returned an invalid response") from exc
+        if not access_token or expires_in <= 0:
+            raise LinkedInOAuthError("LinkedIn token exchange returned an invalid access token lifetime")
 
         userinfo_response = await self._request(
             "GET",
@@ -203,8 +213,6 @@ class LinkedInOAuthService:
             "author_urn": f"urn:li:person:{member_sub}",
             "display_name": profile.get("name") or "LinkedIn member",
             "picture_url": profile.get("picture"),
-            "email": profile.get("email"),
-            "email_verified": profile.get("email_verified"),
             "encrypted_access_token": self.cipher.encrypt(access_token),
             "scopes": scopes,
             "connected_at": now,
@@ -223,8 +231,8 @@ class LinkedInOAuthService:
         connection = await self.get_connection()
         if not connection:
             return {"configured": True, "connected": False, "status": "NOT_CONNECTED"}
-        expires_at = connection.get("expires_at")
-        expired = not isinstance(expires_at, datetime) or expires_at <= datetime.now(timezone.utc)
+        expires_at = _as_utc(connection.get("expires_at"))
+        expired = expires_at is None or expires_at <= datetime.now(timezone.utc)
         return {
             "configured": True,
             "connected": not expired,
@@ -244,8 +252,8 @@ class LinkedInOAuthService:
         connection = await self.get_connection()
         if not connection:
             raise LinkedInPublishError("LinkedIn account is not connected")
-        expires_at = connection.get("expires_at")
-        if not isinstance(expires_at, datetime) or expires_at <= datetime.now(timezone.utc):
+        expires_at = _as_utc(connection.get("expires_at"))
+        if expires_at is None or expires_at <= datetime.now(timezone.utc):
             raise LinkedInPublishError("LinkedIn connection expired; reconnect LinkedIn")
         required = set(self.settings.scopes)
         granted = set(connection.get("scopes") or [])
