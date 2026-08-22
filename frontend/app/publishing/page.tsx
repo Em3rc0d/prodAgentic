@@ -59,7 +59,8 @@ export default function PublishingPage() {
     setConnectionBusy(true);
     setError(null);
     try {
-      await connectLinkedIn();
+      const authorizationUrl = await connectLinkedIn();
+      window.location.assign(authorizationUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : "LinkedIn connection failed");
       setConnectionBusy(false);
