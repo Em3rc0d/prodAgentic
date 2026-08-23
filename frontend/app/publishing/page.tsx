@@ -13,10 +13,17 @@ import {
   PublishableContentRun,
   publishContentRun,
 } from "@/lib/publishing";
+import styles from "./publishing.module.css";
 
 function formatDate(value?: string | null) {
   if (!value) return "—";
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function initials(name?: string | null) {
+  if (!name) return "LI";
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return `${parts[0]?.[0] ?? "L"}${parts.length > 1 ? parts[parts.length - 1][0] : "I"}`.toUpperCase();
 }
 
 export default function PublishingPage() {
@@ -54,6 +61,8 @@ export default function PublishingPage() {
     () => runs.filter((run) => ["APPROVED", "PUBLISHING", "PUBLISHED"].includes(run.status)),
     [runs]
   );
+  const readyCount = useMemo(() => queue.filter((run) => run.status === "APPROVED").length, [queue]);
+  const connected = publisher?.connected === true;
 
   async function startLinkedInConnection() {
     setConnectionBusy(true);
@@ -94,78 +103,181 @@ export default function PublishingPage() {
     }
   }
 
-  const card = { border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: 18 } as const;
-  const connected = publisher?.connected === true;
+  const statusText = connected
+    ? "Connected"
+    : publisher?.status === "RECONNECT_REQUIRED"
+      ? "Reconnect required"
+      : "Not connected";
 
   return (
-    <main style={{ height: "100vh", overflowY: "auto", background: "var(--bg-0)", color: "var(--text-1)", padding: "44px 24px 100px" }}>
-      <div style={{ maxWidth: 1050, margin: "0 auto" }}>
-        <header style={{ marginBottom: 26 }}>
-          <p style={{ margin: 0, color: "var(--text-3)", fontSize: 12, letterSpacing: ".08em" }}>DISTRIBUTION</p>
-          <h1 style={{ margin: "6px 0 8px", fontSize: 32 }}>LinkedIn Publishing</h1>
-          <p style={{ margin: 0, color: "var(--text-2)", maxWidth: 760 }}>Connect your LinkedIn member account, then publish only immutable approved bundles. The publisher never reads mutable draft fields.</p>
+    <main className={styles.page}>
+      <div className={styles.container}>
+        <div className={styles.eyebrow}>Distribution control</div>
+
+        <header className={styles.hero}>
+          <div>
+            <h1 className={styles.title}>LinkedIn publishing</h1>
+            <p className={styles.subtitle}>
+              Connect once. Approve deliberately. Publish exactly what was reviewed—never a mutable draft.
+            </p>
+          </div>
+          <div className={styles.heroMetric} aria-label={`${readyCount} posts ready to publish`}>
+            <div className={styles.heroMetricValue}>{readyCount}</div>
+            <div className={styles.heroMetricLabel}>Ready to publish</div>
+          </div>
         </header>
 
-        <section style={{ ...card, marginBottom: 18 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ minWidth: 0 }}>
-              <strong>LinkedIn account</strong>
-              <div style={{ color: "var(--text-3)", marginTop: 5, fontSize: 12 }}>
-                {connected
-                  ? `${publisher?.display_name || publisher?.author_urn} · API ${publisher?.api_version}`
-                  : publisher?.status === "RECONNECT_REQUIRED"
-                    ? `Connection expired${publisher?.expires_at ? ` · ${formatDate(publisher.expires_at)}` : ""}`
-                    : publisher?.reason ?? "No LinkedIn account connected"}
+        <section className={styles.grid}>
+          <article className={`${styles.panel} ${styles.accountCard}`}>
+            <div className={styles.accountTop}>
+              <div className={styles.accountIdentity}>
+                <div className={styles.avatar}>{initials(publisher?.display_name)}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div className={styles.accountLabel}>Connected identity</div>
+                  <div className={styles.accountName}>
+                    {connected ? publisher?.display_name || "LinkedIn member" : "LinkedIn member account"}
+                  </div>
+                  <div className={styles.accountMeta}>
+                    {connected
+                      ? "Personal publishing authority is active"
+                      : publisher?.reason || "Connect a member account before publishing"}
+                  </div>
+                </div>
               </div>
-              {connected && publisher?.expires_at && <div style={{ color: "var(--text-3)", marginTop: 4, fontSize: 11 }}>Token expires {formatDate(publisher.expires_at)}</div>}
-            </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <span style={{ color: connected ? "var(--success)" : "var(--warning)", fontSize: 12 }}>
-                {connected ? "CONNECTED" : publisher?.status === "RECONNECT_REQUIRED" ? "RECONNECT REQUIRED" : "NOT CONNECTED"}
+              <span className={`${styles.status} ${connected ? styles.statusConnected : styles.statusWarning}`}>
+                {statusText}
               </span>
+            </div>
+
+            <div className={styles.accountBottom}>
+              <div>
+                <div className={styles.detailLabel}>Token validity</div>
+                <div className={styles.detailValue}>
+                  {connected && publisher?.expires_at ? `Until ${formatDate(publisher.expires_at)}` : "No active token"}
+                </div>
+              </div>
+              <div>
+                <div className={styles.detailLabel}>Provider contract</div>
+                <div className={styles.detailValue}>LinkedIn API {publisher?.api_version || "—"}</div>
+              </div>
               {connected ? (
-                <button onClick={disconnect} disabled={connectionBusy} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "9px 12px", background: "transparent", color: "var(--text-2)", cursor: connectionBusy ? "not-allowed" : "pointer" }}>
+                <button className={styles.buttonGhost} onClick={disconnect} disabled={connectionBusy}>
                   {connectionBusy ? "Disconnecting…" : "Disconnect"}
                 </button>
               ) : (
-                <button onClick={startLinkedInConnection} disabled={connectionBusy || publisher?.configured === false} style={{ border: "1px solid var(--border-active)", borderRadius: 8, padding: "9px 12px", background: "var(--surface-active)", color: "var(--text-1)", cursor: connectionBusy ? "not-allowed" : "pointer" }}>
+                <button
+                  className={styles.button}
+                  onClick={startLinkedInConnection}
+                  disabled={connectionBusy || publisher?.configured === false}
+                >
                   {connectionBusy ? "Connecting…" : publisher?.status === "RECONNECT_REQUIRED" ? "Reconnect LinkedIn" : "Connect LinkedIn"}
                 </button>
               )}
             </div>
-          </div>
+          </article>
+
+          <aside className={`${styles.panel} ${styles.controlCard}`}>
+            <div className={styles.controlTitle}>Publishing guardrail</div>
+            <p className={styles.controlCopy}>
+              Distribution is intentionally downstream of approval. Connection alone never authorizes a post.
+            </p>
+            <div className={styles.steps}>
+              <div className={`${styles.step} ${connected ? styles.stepDone : ""}`}>
+                <div className={styles.stepIndex}>{connected ? "✓" : "01"}</div>
+                <div>
+                  <div className={styles.stepTitle}>Connect identity</div>
+                  <div className={styles.stepSub}>{connected ? "Member authority verified" : "OAuth connection required"}</div>
+                </div>
+              </div>
+              <div className={`${styles.step} ${readyCount > 0 ? styles.stepDone : ""}`}>
+                <div className={styles.stepIndex}>{readyCount > 0 ? "✓" : "02"}</div>
+                <div>
+                  <div className={styles.stepTitle}>Approve content</div>
+                  <div className={styles.stepSub}>{readyCount > 0 ? `${readyCount} approved bundle${readyCount === 1 ? "" : "s"}` : "Human approval is required"}</div>
+                </div>
+              </div>
+              <div className={styles.step}>
+                <div className={styles.stepIndex}>03</div>
+                <div>
+                  <div className={styles.stepTitle}>Publish exact bundle</div>
+                  <div className={styles.stepSub}>External receipt is persisted after success</div>
+                </div>
+              </div>
+            </div>
+          </aside>
         </section>
 
-        {error && <div style={{ ...card, marginBottom: 18, color: "#fca5a5" }}>{error}</div>}
-        {loading && <p style={{ color: "var(--text-2)" }}>Loading publication queue…</p>}
-        {!loading && queue.length === 0 && <div style={card}>No approved or published ContentRuns yet.</div>}
+        {error && <div className={styles.error}>{error}</div>}
 
-        <div style={{ display: "grid", gap: 12 }}>
-          {queue.map((run) => {
-            const publication = (run.publication ?? null) as PublicationSnapshot | null;
-            const canPublish = run.status === "APPROVED" && connected && activeId !== run.run_id;
-            return (
-              <article key={run.run_id} style={card}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 18 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-                      <span style={{ border: "1px solid var(--border)", borderRadius: 999, padding: "4px 8px", fontSize: 11 }}>{run.status}</span>
-                      <span style={{ color: "var(--text-3)", fontSize: 11 }}>Run {run.run_id.slice(0, 8)}</span>
+        <section>
+          <div className={styles.sectionHeader}>
+            <div>
+              <div className={styles.sectionLabel}>Publication queue</div>
+              <div className={styles.sectionMeta}>Approved, in-flight, and published ContentRuns appear here.</div>
+            </div>
+          </div>
+
+          {loading && <div className={`${styles.panel} ${styles.loading}`}>Loading publication queue…</div>}
+
+          {!loading && queue.length === 0 && (
+            <div className={styles.empty}>
+              <div className={styles.emptyIcon} aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 12.5 20 5l-6.5 14-2.7-5.8L4 12.5Z" /><path d="m10.8 13.2 3.7-3.6" /></svg>
+              </div>
+              <div>
+                <div className={styles.emptyTitle}>Your connection is ready. The queue is intentionally empty.</div>
+                <p className={styles.emptyCopy}>
+                  Create a ContentRun, review the final text and visual, then approve it. Only that immutable approval bundle becomes publishable.
+                </p>
+              </div>
+              <div className={styles.emptyActions}>
+                <Link href="/" className={styles.primaryLink}>Create content</Link>
+                <Link href="/library" className={styles.secondaryLink}>Open library</Link>
+              </div>
+            </div>
+          )}
+
+          {!loading && queue.length > 0 && (
+            <div className={styles.queue}>
+              {queue.map((run) => {
+                const publication = (run.publication ?? null) as PublicationSnapshot | null;
+                const canPublish = run.status === "APPROVED" && connected && activeId !== run.run_id;
+                return (
+                  <article key={run.run_id} className={styles.runCard}>
+                    <div style={{ minWidth: 0 }}>
+                      <div className={styles.runTopline}>
+                        <span className={styles.runStatus}>{run.status}</span>
+                        <span className={styles.runId}>RUN {run.run_id.slice(0, 8)}</span>
+                      </div>
+                      <h2 className={styles.runTitle}>{run.idea}</h2>
+                      <p className={styles.runTopic}>{run.topic}</p>
+                      {run.approval && (
+                        <div className={styles.runEvidence}>
+                          Approved {formatDate(run.approval.approved_at)} · bundle {run.approval.bundle_sha256.slice(0, 14)}… · {run.approval.include_visual ? "text + visual" : "text only"}
+                        </div>
+                      )}
+                      {publication && (
+                        <div className={styles.runEvidence}>
+                          Publication {publication.status} · started {formatDate(publication.started_at)}
+                          {publication.external_post_urn ? ` · ${publication.external_post_urn}` : ""}
+                          {publication.error_message ? ` · ${publication.error_message}` : ""}
+                        </div>
+                      )}
                     </div>
-                    <h2 style={{ margin: "0 0 5px", fontSize: 18 }}>{run.idea}</h2>
-                    <p style={{ margin: 0, color: "var(--text-2)", fontSize: 13 }}>{run.topic}</p>
-                    {run.approval && <div style={{ marginTop: 12, color: "var(--text-3)", fontSize: 11 }}>Approved {formatDate(run.approval.approved_at)} · bundle {run.approval.bundle_sha256.slice(0, 14)}… · {run.approval.include_visual ? "text + visual" : "text only"}</div>}
-                    {publication && <div style={{ marginTop: 10, color: "var(--text-3)", fontSize: 11 }}>Publication: {publication.status} · started {formatDate(publication.started_at)}{publication.external_post_urn ? ` · ${publication.external_post_urn}` : ""}{publication.error_message ? ` · ${publication.error_message}` : ""}</div>}
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch" }}>
-                    <Link href={`/library/${encodeURIComponent(run.run_id)}`} style={{ color: "var(--text-2)", textDecoration: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "9px 12px", textAlign: "center", fontSize: 12 }}>Review evidence</Link>
-                    {run.status === "APPROVED" && <button onClick={() => publish(run)} disabled={!canPublish} style={{ border: "1px solid var(--border-active)", borderRadius: 8, padding: "9px 12px", background: "var(--surface-active)", color: "var(--text-1)", cursor: canPublish ? "pointer" : "not-allowed", opacity: canPublish ? 1 : .55 }}>{activeId === run.run_id ? "Publishing…" : connected ? "Publish to LinkedIn" : "Connect LinkedIn first"}</button>}
-                  </div>
-                </div>
-              </article>
-            );
-          })}
-        </div>
+                    <div className={styles.runActions}>
+                      <Link href={`/library/${encodeURIComponent(run.run_id)}`} className={styles.secondaryLink}>Review evidence</Link>
+                      {run.status === "APPROVED" && (
+                        <button className={styles.button} onClick={() => publish(run)} disabled={!canPublish}>
+                          {activeId === run.run_id ? "Publishing…" : connected ? "Publish to LinkedIn" : "Connect LinkedIn first"}
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );
