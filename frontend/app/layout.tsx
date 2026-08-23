@@ -5,6 +5,7 @@ import "./globals.css";
 import "./product-shell.css";
 import "./premium-workspace.css";
 import "./premium-responsive.css";
+import "./premium-create.css";
 
 export const metadata: Metadata = {
   title: "prodAgentic",
