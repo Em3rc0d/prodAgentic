@@ -4,6 +4,7 @@ import { ProductNav } from "@/components/ProductNav";
 import "./globals.css";
 import "./product-shell.css";
 import "./premium-workspace.css";
+import "./premium-responsive.css";
 
 export const metadata: Metadata = {
   title: "prodAgentic",
