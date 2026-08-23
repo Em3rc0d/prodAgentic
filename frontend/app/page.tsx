@@ -14,10 +14,10 @@ type StageStatus = "pending" | "running" | "done" | "failed";
 type TabId = "brief" | "ideas" | "research" | "draft" | "final" | "visual" | "diagnostics";
 
 const PIPELINE_STAGES: { key: StageKey; label: string; tab: TabId }[] = [
-  { key: "research", label: "Research Agent", tab: "research" },
-  { key: "write", label: "Content Writer", tab: "draft" },
-  { key: "edit", label: "Editor Agent", tab: "final" },
-  { key: "visual", label: "Visual Agent", tab: "visual" },
+  { key: "research", label: "Research pass", tab: "research" },
+  { key: "write", label: "Writing pass", tab: "draft" },
+  { key: "edit", label: "Editorial pass", tab: "final" },
+  { key: "visual", label: "Visual pass", tab: "visual" },
 ];
 
 const TABS: { id: TabId; label: string }[] = [
@@ -234,7 +234,7 @@ export default function Home() {
             const disabled = tabDisabled(tab.id);
             const active = activeTab === tab.id;
             return (
-              <button key={tab.id} className={`${styles.stageTab} ${active ? `${styles.stageTabActive} active` : ""}`} onClick={() => setActiveTab(tab.id)} disabled={disabled} aria-selected={active}>
+              <button key={tab.id} className={`${styles.stageTab} ${active ? `${styles.stageTabActive} active` : ""}`} onClick={() => setActiveTab(tab.id)} disabled={disabled}>
                 <Glyph name={tab.id} />{tab.label}
               </button>
             );
@@ -246,7 +246,7 @@ export default function Home() {
         <div className={styles.workspace}>
           <aside className={`${styles.panel} ${styles.briefPanel}`}>
             <div className={styles.panelHeading}>
-              <div><span className={styles.panelEyebrow}>01 · Direction</span><h2>Brief</h2></div>
+              <div><span className={styles.panelEyebrow}>01 · Direction</span><h2>Creative brief</h2></div>
               <span className={styles.panelStatus}>{topic.trim() ? "Ready" : "Waiting"}</span>
             </div>
 
@@ -308,7 +308,7 @@ export default function Home() {
                   {PIPELINE_STAGES.map((stage, index) => (
                     <div className={styles.pipelineMini} key={stage.key}>
                       <span className={styles.pipelineMiniIndex}>0{index + 1}</span>
-                      <div><strong>{stage.label.replace(" Agent", "")}</strong><small>{statusLabel(stageStatus[stage.key])}</small></div>
+                      <div><strong>{stage.label}</strong><small>{statusLabel(stageStatus[stage.key])}</small></div>
                     </div>
                   ))}
                 </div>
