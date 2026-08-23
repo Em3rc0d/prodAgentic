@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+
+import { PremiumScene } from "@/components/PremiumScene";
 import {
   ContentProfile,
   ContentProfileInput,
@@ -9,6 +11,7 @@ import {
   setDefaultContentProfile,
   updateContentProfile,
 } from "@/lib/api";
+import styles from "./profiles.module.css";
 
 const EMPTY: ContentProfileInput = {
   name: "", display_name: "", positioning: "", audience: [], voice: [], core_topics: [], excluded_topics: [],
@@ -58,6 +61,7 @@ export default function ProfilesPage() {
   const [error, setError] = useState<string | null>(null);
 
   const selected = useMemo(() => profiles.find((profile) => profile.profile_id === selectedId) ?? null, [profiles, selectedId]);
+  const defaultProfile = useMemo(() => profiles.find((profile) => profile.is_default) ?? null, [profiles]);
 
   function selectProfile(profile: ContentProfile) {
     setSelectedId(profile.profile_id);
@@ -121,45 +125,90 @@ export default function ProfilesPage() {
     } finally { setSaving(false); }
   }
 
-  const inputStyle = { width: "100%", border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface-active)", color: "var(--text-1)", padding: "10px 12px", fontFamily: "inherit" } as const;
-
   return (
-    <main style={{ height: "100vh", overflowY: "auto", background: "var(--bg-0)", color: "var(--text-1)", padding: "42px 24px 100px" }}>
-      <div style={{ maxWidth: 1180, margin: "0 auto" }}>
-        <header style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 18, marginBottom: 28 }}>
-          <div><p style={{ margin: 0, color: "var(--text-3)", letterSpacing: ".08em", fontSize: 12 }}>prodAgentic</p><h1 style={{ margin: "6px 0 8px", fontSize: 32 }}>Content Profiles</h1><p style={{ margin: 0, color: "var(--text-2)", maxWidth: 700 }}>Reusable identity, audience, voice and guardrail contracts. The active profile is snapshotted into every new ContentRun.</p></div>
-          <button onClick={newProfile} style={{ ...inputStyle, width: "auto", cursor: "pointer" }}>+ New profile</button>
-        </header>
-        {error && <div style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 8, marginBottom: 16 }}>{error}</div>}
-        {message && <div style={{ padding: 12, border: "1px solid var(--border-success)", borderRadius: 8, marginBottom: 16 }}>{message}</div>}
-        <div style={{ display: "grid", gridTemplateColumns: "300px minmax(0,1fr)", gap: 18 }}>
-          <aside style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: 12, alignSelf: "start" }}>
-            {loading && <p style={{ color: "var(--text-2)" }}>Loading profiles…</p>}
-            {!loading && profiles.length === 0 && <p style={{ color: "var(--text-2)", fontSize: 13 }}>No profiles yet. Create the first reusable identity.</p>}
-            <div style={{ display: "grid", gap: 8 }}>{profiles.map((profile) => <button key={profile.profile_id} onClick={() => selectProfile(profile)} style={{ textAlign: "left", border: "1px solid var(--border)", borderRadius: 9, padding: 12, background: selectedId === profile.profile_id ? "var(--surface-active)" : "transparent", color: "var(--text-1)", cursor: "pointer" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>{profile.display_name || profile.name}</strong>{profile.is_default && <span style={{ fontSize: 10, color: "var(--success)" }}>DEFAULT</span>}</div><div style={{ marginTop: 5, color: "var(--text-3)", fontSize: 11 }}>v{profile.version} · {profile.target_language.toUpperCase()}</div></button>)}</div>
-          </aside>
-          <section style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}><div><h2 style={{ margin: 0, fontSize: 20 }}>{selected ? "Edit profile" : "Create profile"}</h2><p style={{ margin: "5px 0 0", color: "var(--text-3)", fontSize: 12 }}>Existing ContentRuns keep their original snapshot after future edits.</p></div>{selected && !selected.is_default && <button disabled={saving} onClick={() => makeDefault(selected.profile_id)} style={{ ...inputStyle, width: "auto", cursor: "pointer" }}>Set as default</button>}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <label>Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={{ ...inputStyle, marginTop: 6 }} /></label>
-              <label>Public display name<input value={form.display_name ?? ""} onChange={(e) => setForm({ ...form, display_name: e.target.value })} style={{ ...inputStyle, marginTop: 6 }} /></label>
-              <label style={{ gridColumn: "1 / -1" }}>Positioning<textarea value={form.positioning ?? ""} onChange={(e) => setForm({ ...form, positioning: e.target.value })} style={{ ...inputStyle, marginTop: 6, minHeight: 80, resize: "vertical" }} /></label>
-              <label>Audience<input value={csvText(form.audience)} onChange={(e) => setForm({ ...form, audience: csv(e.target.value) })} placeholder="architects, CTOs, AI builders" style={{ ...inputStyle, marginTop: 6 }} /></label>
-              <label>Voice<input value={csvText(form.voice)} onChange={(e) => setForm({ ...form, voice: csv(e.target.value) })} placeholder="technical, concise, conversational" style={{ ...inputStyle, marginTop: 6 }} /></label>
-              <label>Core topics<input value={csvText(form.core_topics)} onChange={(e) => setForm({ ...form, core_topics: csv(e.target.value) })} style={{ ...inputStyle, marginTop: 6 }} /></label>
-              <label>Excluded topics<input value={csvText(form.excluded_topics)} onChange={(e) => setForm({ ...form, excluded_topics: csv(e.target.value) })} style={{ ...inputStyle, marginTop: 6 }} /></label>
-              <label>Forbidden claims<input value={csvText(form.forbidden_claims)} onChange={(e) => setForm({ ...form, forbidden_claims: csv(e.target.value) })} style={{ ...inputStyle, marginTop: 6 }} /></label>
-              <label>Banned phrases<input value={csvText(form.banned_phrases)} onChange={(e) => setForm({ ...form, banned_phrases: csv(e.target.value) })} style={{ ...inputStyle, marginTop: 6 }} /></label>
-              <label style={{ gridColumn: "1 / -1" }}>Brand constraints<input value={csvText(form.brand_constraints)} onChange={(e) => setForm({ ...form, brand_constraints: csv(e.target.value) })} style={{ ...inputStyle, marginTop: 6 }} /></label>
-              <label>Target language<select value={form.target_language} onChange={(e) => setForm({ ...form, target_language: e.target.value as ContentProfileInput["target_language"] })} style={{ ...inputStyle, marginTop: 6 }}><option value="es">Español</option><option value="en">English</option><option value="pt">Português</option></select></label>
-              <label>Image prompt language<select value={form.image_prompt_language} onChange={(e) => setForm({ ...form, image_prompt_language: e.target.value as ContentProfileInput["image_prompt_language"] })} style={{ ...inputStyle, marginTop: 6 }}><option value="en">English</option><option value="es">Español</option><option value="pt">Português</option></select></label>
-              <label>Min words<input type="number" value={form.min_words} onChange={(e) => setForm({ ...form, min_words: Number(e.target.value) })} style={{ ...inputStyle, marginTop: 6 }} /></label>
-              <label>Max words<input type="number" value={form.max_words} onChange={(e) => setForm({ ...form, max_words: Number(e.target.value) })} style={{ ...inputStyle, marginTop: 6 }} /></label>
-              <label>Default ratio<select value={form.default_aspect_ratio} onChange={(e) => setForm({ ...form, default_aspect_ratio: e.target.value as ContentProfileInput["default_aspect_ratio"] })} style={{ ...inputStyle, marginTop: 6 }}><option value="16:9">16:9</option><option value="1:1">1:1</option><option value="4:5">4:5</option></select></label>
-              <label>Default visual style<select value={form.default_visual_style} onChange={(e) => setForm({ ...form, default_visual_style: e.target.value })} style={{ ...inputStyle, marginTop: 6 }}><option value="">Default</option><option value="technical_editorial">Technical Editorial</option><option value="cinematic">Cinematic</option><option value="minimal">Minimal</option><option value="illustration">Illustration</option><option value="photorealistic">Photorealistic</option></select></label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}><input type="checkbox" checked={form.visual_enabled} onChange={(e) => setForm({ ...form, visual_enabled: e.target.checked })} />Generate visual prompts for this profile</label>
+    <main className="premium-page">
+      <div className="premium-container">
+        <section className="premium-hero">
+          <div>
+            <div className="premium-kicker">Identity architecture</div>
+            <h1 className="premium-title">Content profiles</h1>
+            <p className="premium-subtitle">Define reusable identity, audience, voice and guardrails. Every new ContentRun receives a versioned snapshot so future edits never rewrite past evidence.</p>
+            <div className="premium-actions">
+              <button className="premium-button" onClick={newProfile}>New profile</button>
+              <span className="premium-status premium-status--purple">{profiles.length} profiles</span>
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 22 }}><button disabled={saving || !form.name.trim() || form.min_words > form.max_words} onClick={save} style={{ ...inputStyle, width: "auto", cursor: "pointer", opacity: saving ? .6 : 1 }}>{saving ? "Saving…" : selected ? "Save profile" : "Create profile"}</button></div>
+          </div>
+          <PremiumScene variant="profiles" />
+        </section>
+
+        <section className="premium-metrics" aria-label="Profile summary">
+          <div className="premium-metric"><span className="premium-metric__label">Profiles</span><strong className="premium-metric__value">{profiles.length}</strong></div>
+          <div className="premium-metric"><span className="premium-metric__label">Default</span><strong className="premium-metric__value" style={{ fontSize: 15, marginTop: 13 }}>{defaultProfile?.display_name || defaultProfile?.name || "—"}</strong></div>
+          <div className="premium-metric"><span className="premium-metric__label">Target language</span><strong className="premium-metric__value">{(selected?.target_language || defaultProfile?.target_language || "—").toUpperCase()}</strong></div>
+          <div className="premium-metric"><span className="premium-metric__label">Visual policy</span><strong className="premium-metric__value" style={{ fontSize: 15, marginTop: 13 }}>{form.visual_enabled ? "Enabled" : "Disabled"}</strong></div>
+        </section>
+
+        <div className={styles.workspace}>
+          <aside className="premium-panel">
+            <header className="premium-panel__header"><div><h2>Profile vault</h2><p>Reusable publishing identities</p></div></header>
+            <div className={styles.profileList}>
+              {loading && <div className="premium-empty" style={{ minHeight: 150 }}><div><p>Loading profiles…</p></div></div>}
+              {!loading && profiles.length === 0 && <div className="premium-empty" style={{ minHeight: 170 }}><div><div className="premium-empty__icon">◎</div><h3>No profiles yet</h3><p>Create the first reusable identity contract.</p></div></div>}
+              {profiles.map((profile) => (
+                <button key={profile.profile_id} onClick={() => selectProfile(profile)} className={`${styles.profileButton}${selectedId === profile.profile_id ? ` ${styles.profileButtonActive}` : ""}`}>
+                  <span className={styles.profileName}>{profile.display_name || profile.name}</span>
+                  {profile.is_default && <span className={styles.defaultBadge}>DEFAULT</span>}
+                  <span className={styles.profileMeta}>v{profile.version} · {profile.target_language.toUpperCase()} · {profile.preferred_style}</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <section className={`premium-panel ${styles.editor}`}>
+            <header className="premium-panel__header">
+              <div><h2>{selected ? `Edit ${selected.display_name || selected.name}` : "Create profile"}</h2><p>Existing ContentRuns preserve their original profile snapshot.</p></div>
+              {selected && !selected.is_default && <button className="premium-button-secondary" disabled={saving} onClick={() => makeDefault(selected.profile_id)}>Set as default</button>}
+            </header>
+
+            <div className={`premium-panel__body ${styles.formGrid}`}>
+              <section className={styles.section}>
+                <div className={styles.sectionHeader}><h3>Identity</h3><p>The public-facing professional context that shapes every generation.</p></div>
+                <label className="premium-label">Internal name<input className="premium-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
+                <label className="premium-label">Public display name<input className="premium-input" value={form.display_name ?? ""} onChange={(e) => setForm({ ...form, display_name: e.target.value })} /></label>
+                <label className={`premium-label ${styles.full}`}>Positioning<textarea className="premium-textarea" value={form.positioning ?? ""} onChange={(e) => setForm({ ...form, positioning: e.target.value })} /></label>
+              </section>
+
+              <section className={styles.section}>
+                <div className={styles.sectionHeader}><h3>Audience & voice</h3><p>Who the content serves and how the profile should sound.</p></div>
+                <label className="premium-label">Audience<input className="premium-input" value={csvText(form.audience)} onChange={(e) => setForm({ ...form, audience: csv(e.target.value) })} placeholder="architects, CTOs, AI builders" /></label>
+                <label className="premium-label">Voice<input className="premium-input" value={csvText(form.voice)} onChange={(e) => setForm({ ...form, voice: csv(e.target.value) })} placeholder="technical, concise, conversational" /></label>
+                <label className="premium-label">Core topics<input className="premium-input" value={csvText(form.core_topics)} onChange={(e) => setForm({ ...form, core_topics: csv(e.target.value) })} /></label>
+                <label className="premium-label">Excluded topics<input className="premium-input" value={csvText(form.excluded_topics)} onChange={(e) => setForm({ ...form, excluded_topics: csv(e.target.value) })} /></label>
+              </section>
+
+              <section className={styles.section}>
+                <div className={styles.sectionHeader}><h3>Guardrails</h3><p>Hard boundaries for claims, phrasing and brand behavior.</p></div>
+                <label className="premium-label">Forbidden claims<input className="premium-input" value={csvText(form.forbidden_claims)} onChange={(e) => setForm({ ...form, forbidden_claims: csv(e.target.value) })} /></label>
+                <label className="premium-label">Banned phrases<input className="premium-input" value={csvText(form.banned_phrases)} onChange={(e) => setForm({ ...form, banned_phrases: csv(e.target.value) })} /></label>
+                <label className={`premium-label ${styles.full}`}>Brand constraints<input className="premium-input" value={csvText(form.brand_constraints)} onChange={(e) => setForm({ ...form, brand_constraints: csv(e.target.value) })} /></label>
+              </section>
+
+              <section className={styles.section}>
+                <div className={styles.sectionHeader}><h3>Generation & visual defaults</h3><p>Reusable defaults for language, length and visual output.</p></div>
+                <label className="premium-label">Target language<select className="premium-select" value={form.target_language} onChange={(e) => setForm({ ...form, target_language: e.target.value as ContentProfileInput["target_language"] })}><option value="es">Español</option><option value="en">English</option><option value="pt">Português</option></select></label>
+                <label className="premium-label">Image prompt language<select className="premium-select" value={form.image_prompt_language} onChange={(e) => setForm({ ...form, image_prompt_language: e.target.value as ContentProfileInput["image_prompt_language"] })}><option value="en">English</option><option value="es">Español</option><option value="pt">Português</option></select></label>
+                <label className="premium-label">Min words<input className="premium-input" type="number" value={form.min_words} onChange={(e) => setForm({ ...form, min_words: Number(e.target.value) })} /></label>
+                <label className="premium-label">Max words<input className="premium-input" type="number" value={form.max_words} onChange={(e) => setForm({ ...form, max_words: Number(e.target.value) })} /></label>
+                <label className="premium-label">Default ratio<select className="premium-select" value={form.default_aspect_ratio} onChange={(e) => setForm({ ...form, default_aspect_ratio: e.target.value as ContentProfileInput["default_aspect_ratio"] })}><option value="16:9">16:9</option><option value="1:1">1:1</option><option value="4:5">4:5</option></select></label>
+                <label className="premium-label">Default visual style<select className="premium-select" value={form.default_visual_style} onChange={(e) => setForm({ ...form, default_visual_style: e.target.value })}><option value="">Default</option><option value="technical_editorial">Technical Editorial</option><option value="cinematic">Cinematic</option><option value="minimal">Minimal</option><option value="illustration">Illustration</option><option value="photorealistic">Photorealistic</option></select></label>
+                <label className={styles.checkbox}><input type="checkbox" checked={form.visual_enabled} onChange={(e) => setForm({ ...form, visual_enabled: e.target.checked })} />Generate visual prompts for this profile</label>
+              </section>
+            </div>
+
+            <footer className={styles.footer}>
+              <div>{error && <span className={styles.error}>{error}</span>}{message && <span className={styles.message}>{message}</span>}</div>
+              <button className="premium-button" disabled={saving || !form.name.trim() || form.min_words > form.max_words} onClick={save}>{saving ? "Saving…" : selected ? "Save profile" : "Create profile"}</button>
+            </footer>
           </section>
         </div>
       </div>
