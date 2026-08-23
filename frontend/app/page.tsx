@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { fetchIdeas, createPipelineStream, renderVisual } from "@/lib/api";
@@ -323,17 +324,9 @@ export default function Home() {
               </div>
             )}
 
-            {activeTab === "research" && (
-              <AgentStage title="Research Agent" stage="research" status={stageStatus.research} model={stageModels.research} output={stageOutputs.research} />
-            )}
-
-            {activeTab === "draft" && (
-              <AgentStage title="Content Writer" stage="write" status={stageStatus.write} model={stageModels.write} output={stageOutputs.write} />
-            )}
-
-            {activeTab === "final" && (
-              <AgentStage title="Editor Agent" stage="edit" status={stageStatus.edit} model={stageModels.edit} output={stageOutputs.edit} />
-            )}
+            {activeTab === "research" && <AgentStage title="Research Agent" stage="research" status={stageStatus.research} model={stageModels.research} output={stageOutputs.research} />}
+            {activeTab === "draft" && <AgentStage title="Content Writer" stage="write" status={stageStatus.write} model={stageModels.write} output={stageOutputs.write} />}
+            {activeTab === "final" && <AgentStage title="Editor Agent" stage="edit" status={stageStatus.edit} model={stageModels.edit} output={stageOutputs.edit} />}
 
             {activeTab === "visual" && (
               <div className={styles.canvasContent}>
