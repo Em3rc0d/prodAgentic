@@ -24,7 +24,7 @@ const STAGE_LABELS: Record<StageKey, string> = {
 interface AgentActivityIndicatorProps {
   stage: StageKey;
   status: "pending" | "running" | "done" | "failed";
-  size?: 20 | 64;
+  size?: 20 | 22 | 64;
 }
 
 export function AgentActivityIndicator({
@@ -49,10 +49,11 @@ export function AgentActivityIndicator({
 
   const orbState = STAGE_TO_ORB_STATE[stage];
   const label = STAGE_LABELS[stage];
+  const orbSize = size === 22 ? 20 : size;
 
   if (reducedMotion) {
     return (
-      <div 
+      <div
         className="inline-flex items-center justify-center text-xs font-semibold text-accent-light"
         aria-label={label}
         role="status"
@@ -63,13 +64,14 @@ export function AgentActivityIndicator({
   }
 
   return (
-    <div 
-      className="inline-flex items-center justify-center" 
+    <div
+      className="inline-flex items-center justify-center"
       aria-label={label}
       role="status"
       title={label}
+      style={size === 22 ? { transform: "scale(1.1)" } : undefined}
     >
-      <ThinkingOrb state={orbState} size={size} />
+      <ThinkingOrb state={orbState} size={orbSize} />
     </div>
   );
 }
