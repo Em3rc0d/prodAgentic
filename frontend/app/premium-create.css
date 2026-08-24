@@ -1,0 +1,235 @@
+.tabbed-workspace .hero-icon {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(139,92,246,.17);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 28% 22%, rgba(255,255,255,.26), transparent 10%),
+    linear-gradient(145deg, rgba(151,112,255,.42), rgba(74,62,191,.24) 54%, rgba(28,77,172,.18));
+  color: transparent;
+  font-size: 0;
+  box-shadow: 0 30px 70px rgba(44,27,100,.28), inset 0 1px 0 rgba(255,255,255,.09);
+  transform: perspective(520px) rotateX(8deg) rotateY(-11deg);
+  animation: create-core-float 6s ease-in-out infinite;
+}
+
+.tabbed-workspace .hero-icon::before,
+.tabbed-workspace .hero-icon::after {
+  content: "";
+  position: absolute;
+  inset: 14px;
+  border: 1px solid rgba(168,140,255,.26);
+  border-radius: 50%;
+  transform: rotateX(68deg);
+  animation: create-orbit 10s linear infinite;
+}
+
+.tabbed-workspace .hero-icon::after {
+  inset: 3px;
+  border-color: rgba(80,137,255,.15);
+  transform: rotateY(68deg);
+  animation-duration: 13s;
+  animation-direction: reverse;
+}
+
+.tabbed-workspace .hero-title {
+  max-width: 680px;
+  color: #f7f9ff;
+  background: none;
+  -webkit-text-fill-color: initial;
+  font-size: clamp(30px, 3.1vw, 46px);
+  font-weight: 720;
+  line-height: 1.02;
+  letter-spacing: -.055em;
+}
+
+.tabbed-workspace .hero-desc {
+  max-width: 520px;
+  color: #748399;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.tabbed-workspace .hero-tip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 999px;
+  color: #5e6d82;
+  background: rgba(255,255,255,.018);
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: .035em;
+}
+
+.tabbed-workspace .btn-generate {
+  min-height: 43px;
+  border: 1px solid rgba(163,137,255,.28);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #7955e8, #5068eb 58%, #3263d8);
+  box-shadow: 0 16px 34px rgba(66,50,160,.27), inset 0 1px 0 rgba(255,255,255,.22);
+}
+
+.tabbed-workspace .btn-generate:hover {
+  box-shadow: 0 20px 44px rgba(66,50,160,.36), inset 0 1px 0 rgba(255,255,255,.23);
+}
+
+.tabbed-workspace .sidebar-section-label {
+  color: #56657a;
+  font-size: 9px;
+  letter-spacing: .13em;
+}
+
+.tabbed-workspace .style-pill {
+  min-height: 42px;
+  border-color: rgba(255,255,255,.055);
+  border-radius: 12px;
+  background: rgba(255,255,255,.018);
+}
+
+.tabbed-workspace .style-pill.active {
+  border-color: rgba(139,92,246,.24);
+  background: linear-gradient(135deg, rgba(124,58,237,.12), rgba(59,73,183,.04));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.02), 0 14px 30px rgba(47,31,95,.08);
+}
+
+.tabbed-workspace .pipeline-step {
+  border: 1px solid transparent;
+  border-radius: 11px;
+}
+
+.tabbed-workspace .pipeline-step.active {
+  border-color: rgba(139,92,246,.12);
+  background: linear-gradient(135deg, rgba(124,58,237,.09), rgba(255,255,255,.012));
+}
+
+.tabbed-workspace .step-indicator.running {
+  box-shadow: 0 0 24px rgba(124,58,237,.25);
+}
+
+.tabbed-workspace .main-content {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139,92,246,.22) transparent;
+}
+
+.tabbed-workspace .ideas-section,
+.tabbed-workspace .final-card,
+.tabbed-workspace .research-card,
+.tabbed-workspace .draft-card,
+.tabbed-workspace .visual-card {
+  animation: create-panel-in .35s ease both;
+}
+
+.tabbed-workspace .idea-card {
+  min-height: 105px;
+  padding: 16px;
+  border-radius: 15px;
+}
+
+.tabbed-workspace .idea-card::after {
+  content: "";
+  position: absolute;
+  width: 72px;
+  height: 72px;
+  right: -30px;
+  top: -32px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(124,58,237,.11), transparent 70%);
+  transition: transform .25s ease, opacity .25s ease;
+  opacity: .65;
+}
+
+.tabbed-workspace .idea-card:hover::after {
+  transform: scale(1.35);
+  opacity: 1;
+}
+
+.tabbed-workspace .preview-panel {
+  border-left-color: rgba(255,255,255,.055);
+}
+
+.tabbed-workspace .linkedin-preview,
+.tabbed-workspace .visual-preview {
+  border-radius: 16px;
+  box-shadow: 0 22px 50px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.025);
+}
+
+.tabbed-workspace .global-pipeline-summary > div {
+  border: 1px solid rgba(139,92,246,.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
+  backdrop-filter: blur(16px);
+}
+
+.tabbed-workspace .workspace-tabs-bar .tab-btn {
+  position: relative;
+  min-height: 44px;
+  border: 0 !important;
+  color: #64748b !important;
+  transition: color .16s ease, background .16s ease;
+}
+
+.tabbed-workspace .workspace-tabs-bar .tab-btn:hover:not(:disabled) {
+  color: #cdd7e5 !important;
+  background: rgba(255,255,255,.018) !important;
+}
+
+.tabbed-workspace .workspace-tabs-bar .tab-btn.active {
+  color: #eef2ff !important;
+  background: linear-gradient(180deg, transparent, rgba(124,58,237,.055)) !important;
+}
+
+.tabbed-workspace .workspace-tabs-bar .tab-btn.active::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #8b5cf6, #5f7cf5);
+  box-shadow: 0 0 12px rgba(139,92,246,.36);
+}
+
+@keyframes create-core-float {
+  0%,100% { transform: perspective(520px) rotateX(8deg) rotateY(-11deg) translateY(0); }
+  50% { transform: perspective(520px) rotateX(3deg) rotateY(9deg) translateY(-9px); }
+}
+
+@keyframes create-orbit {
+  to { transform: rotateX(68deg) rotateZ(360deg); }
+}
+
+@keyframes create-panel-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 720px) {
+  .tabbed-workspace .hero-icon {
+    width: 76px;
+    height: 76px;
+    border-radius: 22px;
+  }
+
+  .tabbed-workspace .hero-title {
+    font-size: 31px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabbed-workspace .hero-icon,
+  .tabbed-workspace .hero-icon::before,
+  .tabbed-workspace .hero-icon::after,
+  .tabbed-workspace .ideas-section,
+  .tabbed-workspace .final-card,
+  .tabbed-workspace .research-card,
+  .tabbed-workspace .draft-card,
+  .tabbed-workspace .visual-card {
+    animation: none !important;
+  }
+}

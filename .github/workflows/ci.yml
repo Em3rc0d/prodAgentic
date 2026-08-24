@@ -92,3 +92,118 @@ jobs:
       - name: Build Frontend
         working-directory: frontend
         run: npm run build
+
+  ui-browser-cert:
+    name: UI-01-CERT browser
+    needs: [backend-test, frontend-test]
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_DEFAULT_LANGUAGE: es
+      LANGUAGE_MIN_CONFIDENCE: "0.6"
+      LANGUAGE_MIN_MARGIN: "0.2"
+      IMAGE_RENDER_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_COOKIE_SECURE: "false"
+      PRODAGENTIC_COOKIE_SAMESITE: lax
+      PRODAGENTIC_LINKEDIN_TOKEN_KEY: ui-cert-linkedin-token-key-that-is-long-enough
+      LINKEDIN_CLIENT_ID: ui-cert-configured-client
+      LINKEDIN_CLIENT_SECRET: ui-cert-configured-secret-no-external-call
+      LINKEDIN_REDIRECT_URI: http://127.0.0.1:8000/api/integrations/linkedin/callback
+      LINKEDIN_API_VERSION: "202607"
+      FRONTEND_URL: http://127.0.0.1:3000
+      MONGO_URI: mongodb://127.0.0.1:27017/prodagentic_ui_cert
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017/prodagentic_ui_cert_test
+      CORS_ALLOWED_ORIGINS: http://127.0.0.1:3000,http://localhost:3000
+      PRODAGENTIC_ASSET_ROOT: /tmp/prodagentic-ui-cert/assets
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+      UI_CERT_BASE_URL: http://127.0.0.1:3000
+      UI_CERT_API_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false @playwright/test@1.55.0
+
+      - name: Install Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Start untouched backend
+        run: |
+          mkdir -p /tmp/prodagentic-ui-cert/assets
+          (cd backend && nohup python -m uvicorn main:app --host 127.0.0.1 --port 8000 > ../ui-cert-backend.log 2>&1 & echo $! > ../ui-cert-backend.pid)
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent --show-error http://127.0.0.1:8000/health/live >/dev/null; then
+              echo "Backend live"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat ui-cert-backend.log || true
+          echo "UI certification backend did not become live"
+          exit 1
+
+      - name: Build production frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Start production frontend
+        run: |
+          (cd frontend && nohup npm start -- --hostname 127.0.0.1 --port 3000 > ../ui-cert-frontend.log 2>&1 & echo $! > ../ui-cert-frontend.pid)
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000 >/dev/null; then
+              echo "Frontend live"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat ui-cert-frontend.log || true
+          echo "UI certification frontend did not become live"
+          exit 1
+
+      - name: Run desktop and mobile browser certification
+        working-directory: frontend
+        run: npx playwright test e2e/ui-cert.spec.ts --reporter=line --workers=1
+
+      - name: Upload UI certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-01-cert-evidence
+          path: |
+            frontend/ui-cert-screenshots
+            frontend/test-results
+            ui-cert-backend.log
+            ui-cert-frontend.log
+          if-no-files-found: ignore
+          retention-days: 14

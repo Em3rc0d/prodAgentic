@@ -1,0 +1,148 @@
+.workspace {
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.profileList {
+  padding: 10px;
+}
+
+.profileButton {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  color: #aab6c6;
+  text-align: left;
+  cursor: pointer;
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+
+.profileButton:hover {
+  background: rgba(255,255,255,.025);
+  border-color: rgba(255,255,255,.055);
+  transform: translateX(2px);
+}
+
+.profileButtonActive {
+  background: linear-gradient(135deg, rgba(124,58,237,.13), rgba(55,66,160,.045));
+  border-color: rgba(139,92,246,.18);
+}
+
+.profileName {
+  color: #edf3fb;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.profileMeta {
+  grid-column: 1 / -1;
+  color: #546277;
+  font-size: 9px;
+}
+
+.defaultBadge {
+  align-self: start;
+  color: #57d69d;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: .05em;
+}
+
+.editor {
+  overflow: hidden;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+
+.full {
+  grid-column: 1 / -1;
+}
+
+.section {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+  padding: 15px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 15px;
+  background: rgba(255,255,255,.014);
+}
+
+.sectionHeader {
+  grid-column: 1 / -1;
+  margin-bottom: 2px;
+}
+
+.sectionHeader h3 {
+  margin: 0;
+  color: #dce6f3;
+  font-size: 11px;
+  letter-spacing: -.02em;
+}
+
+.sectionHeader p {
+  margin: 4px 0 0;
+  color: #526074;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.checkbox {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 12px;
+  color: #8d9aab;
+  background: rgba(255,255,255,.015);
+  font-size: 9px;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px 20px;
+  border-top: 1px solid rgba(255,255,255,.05);
+}
+
+.message {
+  color: #58d69d;
+  font-size: 9px;
+}
+
+.error {
+  color: #f48690;
+  font-size: 9px;
+}
+
+@media (max-width: 900px) {
+  .workspace { grid-template-columns: 1fr; }
+  .profileList { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 6px; }
+}
+
+@media (max-width: 620px) {
+  .profileList,
+  .formGrid,
+  .section { grid-template-columns: 1fr; }
+  .full,
+  .sectionHeader,
+  .checkbox { grid-column: 1; }
+  .footer { align-items: stretch; flex-direction: column; }
+}
