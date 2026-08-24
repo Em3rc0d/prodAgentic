@@ -13,6 +13,7 @@ from core.container import ApplicationContainer
 from core.model_registry import validate_available_models, get_profile_readiness
 from core.scheduler import scheduler_loop
 from core.auth import AuthSettings, SessionManager, security_boundary, router as auth_router
+from core.production import validate_production_environment
 from db.mongo import connect_db, close_db, database_ready
 from routes.pipeline import router as pipeline_router
 from routes.posts import router as posts_router
@@ -24,6 +25,7 @@ from routes.linkedin_oauth import router as linkedin_oauth_router
 
 
 load_dotenv()
+validate_production_environment()
 
 
 @asynccontextmanager

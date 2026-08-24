@@ -33,11 +33,21 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install Dependencies
+      - name: Install Locked Production Dependencies
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          python -m pip install --require-hashes -r requirements.lock
+      - name: Install Test Dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements-dev.txt
+      - name: Audit Locked Production Dependencies
+        working-directory: backend
+        run: |
+          python -m venv /tmp/prodagentic-pip-audit
+          /tmp/prodagentic-pip-audit/bin/python -m pip install --upgrade pip
+          /tmp/prodagentic-pip-audit/bin/python -m pip install pip-audit==2.10.1
+          /tmp/prodagentic-pip-audit/bin/pip-audit --require-hashes -r requirements.lock
       - name: Smoke import test
         working-directory: backend
         run: |
@@ -83,6 +93,9 @@ jobs:
       - name: Install Dependencies
         working-directory: frontend
         run: npm ci
+      - name: Audit Frontend Dependency Graph
+        working-directory: frontend
+        run: npm audit --audit-level=high
       - name: Run Frontend Lint
         working-directory: frontend
         run: npm run lint
@@ -91,16 +104,22 @@ jobs:
         run: npm test
       - name: Verify Production API Origin Gate
         working-directory: frontend
-        env:
-          NEXT_PUBLIC_API_URL: ""
         run: |
-          if npm run build > /tmp/prodagentic-missing-api-build.log 2>&1; then
+          if NEXT_PUBLIC_API_URL="" npm run build > /tmp/prodagentic-missing-api-build.log 2>&1; then
             cat /tmp/prodagentic-missing-api-build.log
             echo "Production build unexpectedly succeeded without NEXT_PUBLIC_API_URL"
             exit 1
           fi
           cat /tmp/prodagentic-missing-api-build.log
           grep -q "NEXT_PUBLIC_API_URL is required for production builds" /tmp/prodagentic-missing-api-build.log
+
+          if NEXT_PUBLIC_API_URL="https://api.prodagentic.example/v1" npm run build > /tmp/prodagentic-path-api-build.log 2>&1; then
+            cat /tmp/prodagentic-path-api-build.log
+            echo "Production build unexpectedly accepted an API base path"
+            exit 1
+          fi
+          cat /tmp/prodagentic-path-api-build.log
+          grep -q "clean backend origin" /tmp/prodagentic-path-api-build.log
       - name: Build Frontend
         working-directory: frontend
         env:
@@ -156,17 +175,16 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install backend dependencies
+      - name: Install locked backend dependencies
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install -r requirements-dev.txt
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: |
-          npm ci
-          npm install --no-save --package-lock=false @playwright/test@1.55.0
+        run: npm ci
 
       - name: Install Chromium
         working-directory: frontend
