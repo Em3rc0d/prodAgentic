@@ -21,23 +21,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Add the browser certification tool to the repository lock
+      - name: Add browser certification tool to the repository lock
         working-directory: frontend
         run: npm install @playwright/test@1.55.0 --save-dev --save-exact --package-lock-only
+      - name: Commit npm lock
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/package.json frontend/package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "SEC-02: pin Playwright browser certification dependency [skip ci]"
+            git push origin HEAD:feat/release-candidate-hardening
+          fi
       - name: Compile hashed Python 3.11 production lock
         run: |
           python -m pip install --upgrade pip
           python -m pip install pip-tools==7.6.1
           pip-compile --generate-hashes --resolver=backtracking --output-file=backend/requirements.lock backend/requirements.txt
           test -s backend/requirements.lock
-      - name: Commit generated dependency locks
+      - name: Commit Python production lock
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add frontend/package.json frontend/package-lock.json backend/requirements.lock
-          if git diff --cached --quiet; then
-            echo "Dependency locks already current"
-            exit 0
+          git add backend/requirements.lock
+          if ! git diff --cached --quiet; then
+            git commit -m "SEC-03: add hashed Python 3.11 production lock [skip ci]"
+            git push origin HEAD:feat/release-candidate-hardening
           fi
-          git commit -m "SEC-02: lock browser and backend production dependencies [skip ci]"
-          git push origin HEAD:feat/release-candidate-hardening
