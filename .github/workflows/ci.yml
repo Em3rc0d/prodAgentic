@@ -93,9 +93,9 @@ jobs:
       - name: Install Dependencies
         working-directory: frontend
         run: npm ci
-      - name: Audit Shipped Dependencies
+      - name: Audit Frontend Dependency Graph
         working-directory: frontend
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=high
       - name: Run Frontend Lint
         working-directory: frontend
         run: npm run lint
