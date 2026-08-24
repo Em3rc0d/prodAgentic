@@ -11,6 +11,7 @@ from core.publication import (
     PublicationFailed,
     PublicationReconciliationRequired,
 )
+from db.mongo import _ensure_indexes
 from models.content_run import ContentRunStatus
 
 
@@ -93,6 +94,18 @@ def approved_doc():
 
 
 @pytest.mark.asyncio
+async def test_publication_dedupe_index_is_installed_before_publication_workers_run():
+    db = FakeDb(approved_doc())
+
+    await _ensure_indexes(db)
+
+    assert db.collection.indexes == [(
+        'publication.dedupe_key',
+        {'unique': True, 'sparse': True, 'name': 'publication_dedupe_key_unique'},
+    )]
+
+
+@pytest.mark.asyncio
 async def test_publish_claims_approved_run_and_persists_external_evidence():
     db = FakeDb(approved_doc())
 
@@ -113,10 +126,6 @@ async def test_publish_claims_approved_run_and_persists_external_evidence():
     assert updated['publication']['bundle_sha256'] == 'bundle-1'
     assert updated['publication']['content_sha256'] == approved_doc()['approval']['final_content_sha256']
     assert updated['publication']['dedupe_key']
-    assert db.collection.indexes == [(
-        'publication.dedupe_key',
-        {'unique': True, 'sparse': True, 'name': 'publication_dedupe_key_unique'},
-    )]
 
 
 @pytest.mark.asyncio
@@ -142,7 +151,6 @@ async def test_already_published_bundle_is_idempotent_and_never_calls_linkedin_a
 
     assert updated['status'] == ContentRunStatus.PUBLISHED.value
     assert updated['publication']['external_post_urn'] == 'urn:li:share:900'
-    assert db.collection.indexes == []
 
 
 @pytest.mark.asyncio
