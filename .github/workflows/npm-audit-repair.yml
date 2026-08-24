@@ -1,0 +1,36 @@
+name: Temporary npm audit repair
+
+on:
+  push:
+    branches: [ feat/release-candidate-hardening ]
+
+permissions:
+  contents: write
+
+jobs:
+  repair-lock:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/release-candidate-hardening
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Apply non-breaking advisory fixes to lockfile only
+        working-directory: frontend
+        run: |
+          npm audit fix --package-lock-only
+          npm audit --audit-level=high
+      - name: Commit repaired npm lock
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/package-lock.json
+          if git diff --cached --quiet; then
+            echo "No lockfile repair required"
+            exit 0
+          fi
+          git commit -m "SEC-05: repair transitive npm advisories [skip ci]"
+          git push origin HEAD:feat/release-candidate-hardening
