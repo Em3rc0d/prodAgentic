@@ -1,6 +1,9 @@
+import hashlib
 import os
 from datetime import datetime, timezone
 from uuid import uuid4
+
+from pymongo.errors import DuplicateKeyError
 
 from core.linkedin import LinkedInPublishError, LinkedInPublisher, LinkedInPublisherConfig
 from core.linkedin_oauth import LinkedInOAuthConfigurationError, LinkedInOAuthError, LinkedInOAuthService
@@ -21,6 +24,24 @@ class PublicationFailed(RuntimeError):
 
 class PublicationReconciliationRequired(RuntimeError):
     pass
+
+
+def _content_fingerprint(approval: dict) -> str:
+    """Return the immutable text fingerprint used for publication deduplication."""
+    fingerprint = approval.get("final_content_sha256")
+    if isinstance(fingerprint, str) and fingerprint:
+        return fingerprint
+
+    final_content = approval.get("final_content")
+    if not isinstance(final_content, str) or not final_content:
+        raise PublicationConflict("Approved content is missing an immutable text fingerprint")
+    return hashlib.sha256(final_content.encode("utf-8")).hexdigest()
+
+
+def _publication_dedupe_key(author_urn: str, content_fingerprint: str) -> str:
+    """Scope duplicate prevention to a LinkedIn identity and exact approved text."""
+    raw = f"linkedin\n{author_urn}\n{content_fingerprint}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class PublicationCoordinator:
@@ -67,6 +88,8 @@ class PublicationCoordinator:
             and existing_publication.get("status") == "PUBLISHED"
             and existing_publication.get("bundle_sha256") == approval.get("bundle_sha256")
         ):
+            # Idempotent replay: a successful receipt is terminal authority. Never
+            # contact LinkedIn again for this already-published approval bundle.
             return existing
 
         if existing.get("status") == ContentRunStatus.PUBLISHING.value:
@@ -84,6 +107,18 @@ class PublicationCoordinator:
         except LinkedInPublishError as exc:
             raise PublicationUnavailable(str(exc)) from exc
 
+        content_fingerprint = _content_fingerprint(approval)
+        dedupe_key = _publication_dedupe_key(config.author_urn, content_fingerprint)
+
+        # Sparse + unique lets historical documents without a publication key coexist,
+        # while every new outbound claim is globally unique per LinkedIn author/text.
+        await collection.create_index(
+            "publication.dedupe_key",
+            unique=True,
+            sparse=True,
+            name="publication_dedupe_key_unique",
+        )
+
         attempt_id = str(uuid4())
         started_at = datetime.now(timezone.utc)
         publication = {
@@ -92,6 +127,8 @@ class PublicationCoordinator:
             "attempt_id": attempt_id,
             "approval_id": approval["approval_id"],
             "bundle_sha256": approval["bundle_sha256"],
+            "content_sha256": content_fingerprint,
+            "dedupe_key": dedupe_key,
             "author_urn": config.author_urn,
             "started_at": started_at,
             "completed_at": None,
@@ -110,15 +147,21 @@ class PublicationCoordinator:
                 "schedule.claimed_at": started_at,
             })
 
-        claim = await collection.update_one(
-            {
-                "run_id": run_id,
-                "status": expected_status.value,
-                "approval.approval_id": approval["approval_id"],
-                "approval.bundle_sha256": approval["bundle_sha256"],
-            },
-            {"$set": claim_updates},
-        )
+        try:
+            claim = await collection.update_one(
+                {
+                    "run_id": run_id,
+                    "status": expected_status.value,
+                    "approval.approval_id": approval["approval_id"],
+                    "approval.bundle_sha256": approval["bundle_sha256"],
+                },
+                {"$set": claim_updates},
+            )
+        except DuplicateKeyError as exc:
+            raise PublicationConflict(
+                "This exact approved text is already claimed or published for this LinkedIn identity"
+            ) from exc
+
         if claim.matched_count == 0:
             raise PublicationConflict("Content run changed before publication could be claimed")
 
