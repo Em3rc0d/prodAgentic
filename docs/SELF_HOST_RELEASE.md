@@ -22,12 +22,12 @@ For v1, run **exactly one backend application replica** while the in-process sch
 
 Deploy one exact `main` commit. Do not combine uncommitted files, a different frontend commit, or locally regenerated dependency locks.
 
-Frontend dependency installation must use the committed npm lock:
+Frontend dependency installation must use the committed npm lock. The release gate audits the complete frontend/toolchain graph because browser-test and build tooling also executes code during certification:
 
 ```bash
 cd frontend
 npm ci
-npm audit --omit=dev --audit-level=high
+npm audit --audit-level=high
 npm run build
 ```
 
@@ -145,7 +145,7 @@ Therefore, before a public deployment made on or after that security release:
 
 1. update Next.js / `eslint-config-next` to the released patched 16.3 version,
 2. regenerate `package-lock.json` with npm,
-3. run `npm audit --omit=dev --audit-level=high`,
+3. run `npm audit --audit-level=high`,
 4. run the complete repository CI,
 5. require the desktop/mobile Chromium certification to remain green.
 
