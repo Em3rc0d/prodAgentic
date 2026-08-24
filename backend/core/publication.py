@@ -31,7 +31,13 @@ class PublicationCoordinator:
         self.publisher_factory = publisher_factory or LinkedInPublisher
         self.config_factory = config_factory
 
-    async def _resolve_config(self):
+    async def resolve_config(self):
+        """Resolve the canonical publication authority for manual and scheduled delivery.
+
+        Persisted LinkedIn OAuth is authoritative in normal production. Static token
+        configuration is available only when the explicit emergency/dev fallback is
+        enabled, so every publication entry point observes the same policy.
+        """
         if self.config_factory is not None:
             return self.config_factory()
 
@@ -74,7 +80,7 @@ class PublicationCoordinator:
             )
 
         try:
-            config = await self._resolve_config()
+            config = await self.resolve_config()
         except LinkedInPublishError as exc:
             raise PublicationUnavailable(str(exc)) from exc
 
