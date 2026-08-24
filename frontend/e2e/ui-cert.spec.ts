@@ -71,7 +71,7 @@ async function certifyRoute(
     Math.max(dimensions.bodyClientWidth, dimensions.documentClientWidth) + 1,
   );
 
-  const nav = page.locator("[data-product-nav]").first();
+  const nav = page.getByRole("navigation", { name: "Primary product navigation" }).first();
   await expect(nav).toBeVisible();
   const navBox = await nav.boundingBox();
   expect(navBox, "Product navigation should have a measurable box").not.toBeNull();
