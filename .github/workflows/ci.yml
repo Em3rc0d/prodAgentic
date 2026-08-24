@@ -94,16 +94,22 @@ jobs:
         run: npm test
       - name: Verify Production API Origin Gate
         working-directory: frontend
-        env:
-          NEXT_PUBLIC_API_URL: ""
         run: |
-          if npm run build > /tmp/prodagentic-missing-api-build.log 2>&1; then
+          if NEXT_PUBLIC_API_URL="" npm run build > /tmp/prodagentic-missing-api-build.log 2>&1; then
             cat /tmp/prodagentic-missing-api-build.log
             echo "Production build unexpectedly succeeded without NEXT_PUBLIC_API_URL"
             exit 1
           fi
           cat /tmp/prodagentic-missing-api-build.log
           grep -q "NEXT_PUBLIC_API_URL is required for production builds" /tmp/prodagentic-missing-api-build.log
+
+          if NEXT_PUBLIC_API_URL="https://api.prodagentic.example/v1" npm run build > /tmp/prodagentic-path-api-build.log 2>&1; then
+            cat /tmp/prodagentic-path-api-build.log
+            echo "Production build unexpectedly accepted an API base path"
+            exit 1
+          fi
+          cat /tmp/prodagentic-path-api-build.log
+          grep -q "clean backend origin" /tmp/prodagentic-path-api-build.log
       - name: Build Frontend
         working-directory: frontend
         env:
