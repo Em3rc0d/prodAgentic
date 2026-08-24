@@ -5,7 +5,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
@@ -43,12 +43,14 @@ class LinkedInOAuthSettings:
             "LINKEDIN_REDIRECT_URI": os.environ.get("LINKEDIN_REDIRECT_URI", "").strip(),
             "PRODAGENTIC_LINKEDIN_TOKEN_KEY": os.environ.get("PRODAGENTIC_LINKEDIN_TOKEN_KEY", "").strip(),
             "LINKEDIN_API_VERSION": os.environ.get("LINKEDIN_API_VERSION", "").strip(),
+            "FRONTEND_URL": os.environ.get("FRONTEND_URL", "").strip(),
         }
         missing = [name for name, value in values.items() if not value]
         if missing:
             raise LinkedInOAuthConfigurationError(
                 f"LinkedIn OAuth is not configured: missing {', '.join(missing)}"
             )
+
         redirect_uri = values["LINKEDIN_REDIRECT_URI"]
         if not (
             redirect_uri.startswith("https://")
@@ -58,6 +60,28 @@ class LinkedInOAuthSettings:
             raise LinkedInOAuthConfigurationError(
                 "LINKEDIN_REDIRECT_URI must use HTTPS except for localhost development"
             )
+
+        frontend_url = values["FRONTEND_URL"].rstrip("/")
+        parsed_frontend = urlparse(frontend_url)
+        if parsed_frontend.scheme not in {"http", "https"} or not parsed_frontend.hostname:
+            raise LinkedInOAuthConfigurationError("FRONTEND_URL must be an absolute http(s) origin")
+        loopback = parsed_frontend.hostname in {"localhost", "127.0.0.1", "::1"}
+        if not loopback and parsed_frontend.scheme != "https":
+            raise LinkedInOAuthConfigurationError(
+                "FRONTEND_URL must use HTTPS except for localhost development"
+            )
+        if (
+            parsed_frontend.username
+            or parsed_frontend.password
+            or parsed_frontend.params
+            or parsed_frontend.query
+            or parsed_frontend.fragment
+            or parsed_frontend.path not in {"", "/"}
+        ):
+            raise LinkedInOAuthConfigurationError(
+                "FRONTEND_URL must be a clean origin without credentials, path, query parameters, or fragments"
+            )
+
         if len(values["PRODAGENTIC_LINKEDIN_TOKEN_KEY"]) < 32:
             raise LinkedInOAuthConfigurationError(
                 "PRODAGENTIC_LINKEDIN_TOKEN_KEY must be at least 32 characters"
@@ -70,7 +94,7 @@ class LinkedInOAuthSettings:
             redirect_uri=redirect_uri,
             token_key=values["PRODAGENTIC_LINKEDIN_TOKEN_KEY"],
             api_version=values["LINKEDIN_API_VERSION"],
-            frontend_url=os.environ.get("FRONTEND_URL", "http://localhost:3000").strip().rstrip("/"),
+            frontend_url=frontend_url,
         )
 
 
