@@ -25,8 +25,10 @@ def _https_origin(name: str, value: str) -> str:
         raise ProductionConfigurationError(f"{name} must use an HTTPS origin in production")
     if parsed.username or parsed.password:
         raise ProductionConfigurationError(f"{name} must not contain credentials")
-    if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
-        raise ProductionConfigurationError(f"{name} must be an origin only (no path, query, or fragment)")
+    if parsed.path or parsed.params or parsed.query or parsed.fragment:
+        raise ProductionConfigurationError(
+            f"{name} must be a canonical origin only (no trailing slash, path, query, or fragment)"
+        )
 
     return f"https://{parsed.netloc.lower()}"
 
@@ -56,8 +58,8 @@ def validate_production_environment() -> None:
     raw_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "").strip()
     if not raw_origins:
         raise ProductionConfigurationError("CORS_ALLOWED_ORIGINS is required in production")
-    if "*" in {value.strip() for value in raw_origins.split(",")}:
-        raise ProductionConfigurationError("CORS_ALLOWED_ORIGINS must not contain * in production")
+    if "*" in raw_origins:
+        raise ProductionConfigurationError("CORS_ALLOWED_ORIGINS must not contain wildcards in production")
 
     allowed_origins = {
         _https_origin("CORS_ALLOWED_ORIGINS", value)
