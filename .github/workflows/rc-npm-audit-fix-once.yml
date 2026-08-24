@@ -1,0 +1,35 @@
+name: RC npm audit lock repair once
+
+on:
+  push:
+    branches: [ feat/release-candidate-hardening ]
+
+permissions:
+  contents: write
+
+jobs:
+  repair-npm-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/release-candidate-hardening
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Apply non-breaking npm audit lock fixes
+        working-directory: frontend
+        run: npm audit fix --package-lock-only
+      - name: Verify exact repaired graph
+        working-directory: frontend
+        run: |
+          npm ci
+          npm audit --audit-level=high
+      - name: Remove one-shot workflow and commit repaired lock
+        run: |
+          rm .github/workflows/rc-npm-audit-fix-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/package-lock.json .github/workflows/rc-npm-audit-fix-once.yml
+          git commit -m "SEC-RC: repair npm audit lock graph"
+          git push origin HEAD:feat/release-candidate-hardening
