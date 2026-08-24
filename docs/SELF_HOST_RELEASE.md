@@ -1,6 +1,6 @@
 # prodAgentic — Self-host release handoff
 
-This document starts at the hosting boundary. The repository is expected to be fully certified before any command here is used.
+This document starts at the hosting boundary. The repository is expected to be fully certified before any command here is used. Repository certification **does not deploy prodAgentic**; the operator chooses and controls the hosting service.
 
 ## 1. First-release topology
 
@@ -13,6 +13,8 @@ Browser
           -> Gemini/provider APIs
           -> LinkedIn OAuth / publishing APIs
 ```
+
+The hosting provider is intentionally not prescribed. The same contract can be implemented with separate frontend/backend services or behind an HTTPS reverse proxy, provided the public frontend and backend origins match the configured environment values.
 
 For v1, run **exactly one backend application replica** while the in-process scheduler is enabled. The scheduler performs atomic publication claims, but a single application authority is still the supported first-release topology while visual bytes live on one durable filesystem volume.
 
