@@ -110,15 +110,6 @@ class PublicationCoordinator:
         content_fingerprint = _content_fingerprint(approval)
         dedupe_key = _publication_dedupe_key(config.author_urn, content_fingerprint)
 
-        # Sparse + unique lets historical documents without a publication key coexist,
-        # while every new outbound claim is globally unique per LinkedIn author/text.
-        await collection.create_index(
-            "publication.dedupe_key",
-            unique=True,
-            sparse=True,
-            name="publication_dedupe_key_unique",
-        )
-
         attempt_id = str(uuid4())
         started_at = datetime.now(timezone.utc)
         publication = {
