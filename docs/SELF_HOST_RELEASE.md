@@ -20,9 +20,9 @@ For v1, run **exactly one backend application replica** while the in-process sch
 
 ## 2. Immutable release inputs
 
-Deploy one exact `main` commit. Do not combine uncommitted files, a different frontend commit, or a locally regenerated lockfile.
+Deploy one exact `main` commit. Do not combine uncommitted files, a different frontend commit, or locally regenerated dependency locks.
 
-Frontend dependency installation must use:
+Frontend dependency installation must use the committed npm lock:
 
 ```bash
 cd frontend
@@ -35,6 +35,15 @@ The frontend production build requires an explicit HTTPS backend origin:
 
 ```text
 NEXT_PUBLIC_API_URL=https://<backend-origin>
+```
+
+The backend Docker image installs `backend/requirements.lock` with pip hash checking. `requirements.txt` is dependency intent; `requirements.lock` is the certified Python 3.11 production resolution. Do not replace the lock with a fresh unconstrained install during deployment.
+
+Equivalent non-Docker validation of the locked backend dependency set is:
+
+```bash
+cd backend
+python -m pip install --require-hashes -r requirements.lock
 ```
 
 Backend configuration starts from `backend/.env.production.example`. Set secrets in the hosting service; do not commit them.
@@ -53,7 +62,7 @@ FRONTEND_URL=https://<frontend-origin>
 LINKEDIN_STATIC_FALLBACK_ENABLED=false
 ```
 
-`FRONTEND_URL` and every CORS origin must be clean HTTPS origins. Wildcards, HTTP production origins, localhost, paths, query strings, and fragments are not part of the production contract.
+`FRONTEND_URL` and every CORS origin must be canonical HTTPS origins. Wildcards, HTTP production origins, localhost, trailing slashes, paths, query strings, and fragments are not part of the production contract.
 
 `PRODAGENTIC_ASSET_ROOT` must be an absolute path backed by durable storage. Mount the hosting service's persistent volume at or above that path. A container filesystem that disappears on replacement is not sufficient.
 
