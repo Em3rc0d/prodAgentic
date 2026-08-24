@@ -1,0 +1,35 @@
+name: RC Playwright lock refresh once
+
+on:
+  push:
+    branches: [ feat/release-candidate-hardening ]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-playwright-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/release-candidate-hardening
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Regenerate npm lock with patched Playwright
+        working-directory: frontend
+        run: npm install @playwright/test@1.62.1 --save-dev --save-exact --package-lock-only
+      - name: Verify shipped dependency audit
+        working-directory: frontend
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=high
+      - name: Remove one-shot workflow and commit generated lock
+        run: |
+          rm .github/workflows/rc-playwright-refresh-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/package.json frontend/package-lock.json .github/workflows/rc-playwright-refresh-once.yml
+          git commit -m "SEC-RC: upgrade Playwright and refresh npm lock"
+          git push origin HEAD:feat/release-candidate-hardening
