@@ -25,11 +25,11 @@ from routes.linkedin_oauth import router as linkedin_oauth_router
 
 
 load_dotenv()
+validate_production_environment()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    validate_production_environment()
     auth_settings = AuthSettings.from_env()
     app.state.auth_settings = auth_settings
     app.state.session_manager = SessionManager(auth_settings)
