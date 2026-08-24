@@ -4,7 +4,8 @@ from uuid import uuid4
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException
 
-from core.linkedin import LinkedInPublishError, LinkedInPublisherConfig
+from core.linkedin import LinkedInPublishError
+from core.publication import PublicationCoordinator
 from db.mongo import get_db
 from models.content_run import ContentRunScheduleRequest, ContentRunStatus
 
@@ -36,7 +37,7 @@ async def schedule_content_run(run_id: str, req: ContentRunScheduleRequest):
         raise HTTPException(status_code=422, detail="scheduled_for must be in the future")
 
     try:
-        LinkedInPublisherConfig.from_env()
+        await PublicationCoordinator(db).resolve_config()
     except LinkedInPublishError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
