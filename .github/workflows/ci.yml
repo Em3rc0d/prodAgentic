@@ -89,8 +89,22 @@ jobs:
       - name: Run Frontend Tests
         working-directory: frontend
         run: npm test
+      - name: Verify Production API Origin Gate
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: ""
+        run: |
+          if npm run build > /tmp/prodagentic-missing-api-build.log 2>&1; then
+            cat /tmp/prodagentic-missing-api-build.log
+            echo "Production build unexpectedly succeeded without NEXT_PUBLIC_API_URL"
+            exit 1
+          fi
+          cat /tmp/prodagentic-missing-api-build.log
+          grep -q "NEXT_PUBLIC_API_URL is required for production builds" /tmp/prodagentic-missing-api-build.log
       - name: Build Frontend
         working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
         run: npm run build
 
   ui-browser-cert:
