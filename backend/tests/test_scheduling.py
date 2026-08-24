@@ -1,10 +1,14 @@
 import copy
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
+import core.publication as publication_core
 import routes.scheduling as scheduling_routes
+from core.linkedin_oauth import LinkedInOAuthError
 from core.scheduler import run_due_schedules_once
 from models.content_run import ContentRunScheduleRequest, ContentRunStatus
 from routes.scheduling import cancel_content_schedule, schedule_content_run
@@ -81,12 +85,6 @@ class FakeDb:
         return self.collection
 
 
-class ConfigFactory:
-    @classmethod
-    def from_env(cls):
-        return object()
-
-
 def approved_doc():
     return {
         'run_id': 'run-1',
@@ -96,16 +94,30 @@ def approved_doc():
     }
 
 
+def configure_oauth_only(monkeypatch):
+    class OAuthOnlyService:
+        def __init__(self, db):
+            self.db = db
+
+        async def publisher_config(self):
+            return SimpleNamespace(author_urn='urn:li:person:oauth-member')
+
+    monkeypatch.setattr(publication_core, 'LinkedInOAuthService', OAuthOnlyService)
+    monkeypatch.setenv('LINKEDIN_STATIC_FALLBACK_ENABLED', 'false')
+    monkeypatch.delenv('LINKEDIN_ACCESS_TOKEN', raising=False)
+    monkeypatch.delenv('LINKEDIN_AUTHOR_URN', raising=False)
+
+
 def test_schedule_requires_explicit_timezone():
     with pytest.raises(ValidationError):
         ContentRunScheduleRequest(scheduled_for=datetime(2026, 8, 21, 12, 0, 0))
 
 
 @pytest.mark.asyncio
-async def test_approved_run_can_be_scheduled_and_cancelled(monkeypatch):
+async def test_oauth_only_approved_run_can_be_scheduled_and_cancelled(monkeypatch):
     db = FakeDb(approved_doc())
     monkeypatch.setattr(scheduling_routes, 'get_db', lambda: db)
-    monkeypatch.setattr(scheduling_routes, 'LinkedInPublisherConfig', ConfigFactory)
+    configure_oauth_only(monkeypatch)
 
     future = datetime.now(timezone.utc) + timedelta(hours=2)
     scheduled = await schedule_content_run('run-1', ContentRunScheduleRequest(scheduled_for=future))
@@ -118,6 +130,33 @@ async def test_approved_run_can_be_scheduled_and_cancelled(monkeypatch):
     assert cancelled['status'] == ContentRunStatus.APPROVED.value
     assert cancelled['schedule']['status'] == 'CANCELLED'
     assert cancelled['schedule']['cancelled_at'] is not None
+
+
+@pytest.mark.asyncio
+async def test_schedule_fails_closed_when_publication_authority_is_unavailable(monkeypatch):
+    db = FakeDb(approved_doc())
+    monkeypatch.setattr(scheduling_routes, 'get_db', lambda: db)
+    monkeypatch.setenv('LINKEDIN_STATIC_FALLBACK_ENABLED', 'false')
+    monkeypatch.delenv('LINKEDIN_ACCESS_TOKEN', raising=False)
+    monkeypatch.delenv('LINKEDIN_AUTHOR_URN', raising=False)
+
+    class MissingOAuthService:
+        def __init__(self, supplied_db):
+            assert supplied_db is db
+
+        async def publisher_config(self):
+            raise LinkedInOAuthError('LinkedIn member is not connected')
+
+    monkeypatch.setattr(publication_core, 'LinkedInOAuthService', MissingOAuthService)
+
+    future = datetime.now(timezone.utc) + timedelta(hours=2)
+    with pytest.raises(HTTPException) as exc_info:
+        await schedule_content_run('run-1', ContentRunScheduleRequest(scheduled_for=future))
+
+    assert exc_info.value.status_code == 503
+    assert 'not connected' in str(exc_info.value.detail)
+    assert db.collection.doc['status'] == ContentRunStatus.APPROVED.value
+    assert db.collection.doc['schedule'] is None
 
 
 @pytest.mark.asyncio

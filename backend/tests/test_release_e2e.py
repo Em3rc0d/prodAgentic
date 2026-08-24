@@ -117,6 +117,14 @@ class FakeLinkedInConfig:
         return cls()
 
 
+class FakeSchedulingCoordinator:
+    def __init__(self, db):
+        self.db = db
+
+    async def resolve_config(self):
+        return FakeLinkedInConfig()
+
+
 def generated_run(visual_render=None):
     now = datetime.now(timezone.utc)
     return {
@@ -161,7 +169,7 @@ async def test_release_lifecycle_reopen_edit_approve_schedule_publish_exactly_on
     db = FakeDb(generated_run(visual_render=visual_render))
     monkeypatch.setattr(content_run_routes, "get_db", lambda: db)
     monkeypatch.setattr(scheduling_routes, "get_db", lambda: db)
-    monkeypatch.setattr(scheduling_routes, "LinkedInPublisherConfig", FakeLinkedInConfig)
+    monkeypatch.setattr(scheduling_routes, "PublicationCoordinator", FakeSchedulingCoordinator)
 
     # Reopen a durable run after the generation session has ended.
     reopened = await content_run_routes.get_content_run("release-run-001")
@@ -241,7 +249,7 @@ def test_authenticated_http_reopen_edit_approve_and_schedule(monkeypatch):
     db = FakeDb(generated_run())
     monkeypatch.setattr(content_run_routes, "get_db", lambda: db)
     monkeypatch.setattr(scheduling_routes, "get_db", lambda: db)
-    monkeypatch.setattr(scheduling_routes, "LinkedInPublisherConfig", FakeLinkedInConfig)
+    monkeypatch.setattr(scheduling_routes, "PublicationCoordinator", FakeSchedulingCoordinator)
 
     app = FastAPI()
     auth_settings = AuthSettings(
