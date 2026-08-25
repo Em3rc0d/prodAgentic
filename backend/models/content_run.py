@@ -99,6 +99,8 @@ class PublicationSnapshot(BaseModel):
     external_post_urn: Optional[str] = None
     external_image_urn: Optional[str] = None
     error_message: Optional[str] = None
+    failure_retry_safety: Optional[str] = None
+    failure_phase: Optional[str] = None
 
 
 class ScheduleSnapshot(BaseModel):
