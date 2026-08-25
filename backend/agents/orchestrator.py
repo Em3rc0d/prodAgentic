@@ -24,8 +24,9 @@ class PipelineAbortError(Exception):
 
 
 class PipelineOrchestrator:
-    def __init__(self, router):
+    def __init__(self, router, workspace_id: str = "legacy-default"):
         self.router = router
+        self.workspace_id = workspace_id
         self.idea_agent = IdeaGeneratorAgent(router)
         self.research_agent = ResearchAgent(router)
         self.writer_agent = ContentWriterAgent(router)
@@ -72,6 +73,7 @@ class PipelineOrchestrator:
 
         return GenerationContext(
             run_id=str(uuid.uuid4()),
+            workspace_id=self.workspace_id,
             topic=topic,
             style=style,
             requested_source_language=LanguageCode.AUTO,
@@ -332,6 +334,7 @@ class PipelineOrchestrator:
             if db is not None:
                 doc = {
                     "run_id": context.run_id,
+                    "workspace_id": context.workspace_id,
                     "topic": topic,
                     "style": style,
                     "idea": idea,
