@@ -1,8 +1,13 @@
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from core.content_memory import ContentMemoryService
 from core.linkedin import LinkedInPublishError, LinkedInPublisher, LinkedInPublisherConfig
 from models.content_run import ContentRunStatus
+
+
+logger = logging.getLogger(__name__)
 
 
 class PublicationConflict(RuntimeError):
@@ -24,10 +29,20 @@ class PublicationReconciliationRequired(RuntimeError):
 class PublicationCoordinator:
     """Single publication lifecycle used by manual and scheduled delivery."""
 
-    def __init__(self, db, publisher_factory=None, config_factory=None):
+    def __init__(self, db, publisher_factory=None, config_factory=None, content_memory=None):
         self.db = db
         self.publisher_factory = publisher_factory or LinkedInPublisher
         self.config_factory = config_factory or LinkedInPublisherConfig.from_env
+        self.content_memory = content_memory or ContentMemoryService(db=db)
+
+    async def _index_published_memory(self, run_id: str, approval: dict, external_post_urn: str | None) -> None:
+        """Best-effort projection only; publication authority has already succeeded."""
+        try:
+            await self.content_memory.index_published(run_id, approval, external_post_urn)
+        except Exception as exc:
+            # Never convert a confirmed external publication into a local failure
+            # because an advisory memory projection could not be refreshed.
+            logger.warning("Published content memory indexing degraded for run %s: %s", run_id, exc)
 
     async def publish_run(self, run_id: str, expected_status: ContentRunStatus = ContentRunStatus.APPROVED):
         collection = self.db["content_runs"]
@@ -45,7 +60,14 @@ class PublicationCoordinator:
             and existing_publication.get("status") == "PUBLISHED"
             and existing_publication.get("bundle_sha256") == approval.get("bundle_sha256")
         ):
-            return existing
+            # Idempotent replay never republishes externally, but it may heal a
+            # missing/degraded memory projection from a previous successful run.
+            await self._index_published_memory(
+                run_id,
+                approval,
+                existing_publication.get("external_post_urn"),
+            )
+            return await collection.find_one({"run_id": run_id})
 
         if existing.get("status") == ContentRunStatus.PUBLISHING.value:
             raise PublicationReconciliationRequired(
@@ -168,5 +190,9 @@ class PublicationCoordinator:
             raise PublicationReconciliationRequired(
                 "LinkedIn accepted the post but local publication evidence could not be finalized; manual reconciliation required"
             )
+
+        # Only the immutable approval snapshot is projected into published
+        # memory. Mutable review fields can no longer change publication truth.
+        await self._index_published_memory(run_id, approval, result.post_urn)
 
         return await collection.find_one({"run_id": run_id})
