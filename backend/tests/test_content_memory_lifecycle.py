@@ -13,13 +13,20 @@ from models.content_run import ContentRunApprovalRequest, ContentRunEditRequest
 import routes.content_runs as content_run_routes
 
 
+def _as_utc(value: datetime) -> datetime:
+    # PyMongo's default BSON codec returns UTC datetimes without tzinfo unless
+    # tz_aware=True is configured. Compare the same instant rather than codec
+    # representation so this test still proves root updated_at was untouched.
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 @pytest.mark.asyncio
 async def test_real_mongodb_review_detects_only_same_workspace_prior_runs_without_touching_updated_at():
     uri = os.environ.get("MONGO_TEST_URI")
     if not uri:
         pytest.skip("MONGO_TEST_URI is required for the real content-memory lifecycle gate")
 
-    database_name = f"prodagentic_memory_lifecycle_{uuid4().hex}"
+    database_name = f"pmem_lifecycle_{uuid4().hex}"
     client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=5000)
     db = client[database_name]
     try:
@@ -72,7 +79,7 @@ async def test_real_mongodb_review_detects_only_same_workspace_prior_runs_withou
         assert len(snapshot["candidates"]) == 1
         assert snapshot["candidates"][0]["run_id"] == "published-run"
         assert snapshot["candidates"][0]["external_post_urn"] == "urn:li:share:previous"
-        assert persisted["updated_at"] == original_updated_at
+        assert _as_utc(persisted["updated_at"]) == original_updated_at
         assert persisted["memory_check"]["normalized_sha256"] == snapshot["normalized_sha256"]
 
         final_memories = await repository.find_exact(
@@ -94,7 +101,7 @@ async def test_real_mongodb_edit_refreshes_memory_and_approval_repairs_stale_has
     if not uri:
         pytest.skip("MONGO_TEST_URI is required for the real content-memory lifecycle gate")
 
-    database_name = f"prodagentic_memory_review_routes_{uuid4().hex}"
+    database_name = f"pmem_routes_{uuid4().hex}"
     client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=5000)
     db = client[database_name]
     try:
@@ -160,7 +167,7 @@ async def test_real_mongodb_published_projection_uses_immutable_approval_bytes()
     if not uri:
         pytest.skip("MONGO_TEST_URI is required for the real content-memory lifecycle gate")
 
-    database_name = f"prodagentic_memory_publish_{uuid4().hex}"
+    database_name = f"pmem_publish_{uuid4().hex}"
     client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=5000)
     db = client[database_name]
     try:
