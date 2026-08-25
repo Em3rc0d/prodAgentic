@@ -14,6 +14,28 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+def _published_base_snapshot(identity, indexed_at, *, status: str, error_message: str | None = None) -> dict:
+    """Create a complete memory_check when a run has no existing object.
+
+    MongoDB cannot create a dotted child field below an explicit null parent, so
+    legacy/current documents with `memory_check: null` must receive the whole
+    object atomically before later dotted updates are safe.
+    """
+    return {
+        "status": status,
+        "outcome": "CLEAR" if status == "READY" else "DEGRADED",
+        "checked_at": indexed_at,
+        "canonicalizer_version": identity.canonicalizer_version,
+        "normalized_sha256": identity.normalized_sha256,
+        "final_memory_id": None,
+        "candidates": [],
+        "error_message": error_message,
+        "published_memory_id": None,
+        "published_index_status": status,
+        "published_indexed_at": indexed_at,
+    }
+
+
 class ContentMemoryService:
     """Advisory lifecycle integration for deterministic content memory.
 
@@ -71,6 +93,7 @@ class ContentMemoryService:
                 if candidate.run_id != run_id
             ][:_MEMORY_CANDIDATE_LIMIT]
 
+            existing_check = existing.get("memory_check") if isinstance(existing.get("memory_check"), dict) else {}
             snapshot = {
                 "status": "READY",
                 "outcome": "EXACT_DUPLICATE" if candidates else "CLEAR",
@@ -80,11 +103,12 @@ class ContentMemoryService:
                 "final_memory_id": final_memory.memory_id,
                 "candidates": candidates,
                 "error_message": None,
-                "published_memory_id": (existing.get("memory_check") or {}).get("published_memory_id"),
-                "published_index_status": (existing.get("memory_check") or {}).get("published_index_status"),
-                "published_indexed_at": (existing.get("memory_check") or {}).get("published_indexed_at"),
+                "published_memory_id": existing_check.get("published_memory_id"),
+                "published_index_status": existing_check.get("published_index_status"),
+                "published_indexed_at": existing_check.get("published_indexed_at"),
             }
         except Exception as exc:
+            existing_check = existing.get("memory_check") if isinstance(existing.get("memory_check"), dict) else {}
             snapshot = {
                 "status": "DEGRADED",
                 "outcome": "DEGRADED",
@@ -94,9 +118,9 @@ class ContentMemoryService:
                 "final_memory_id": None,
                 "candidates": [],
                 "error_message": str(exc),
-                "published_memory_id": (existing.get("memory_check") or {}).get("published_memory_id"),
-                "published_index_status": (existing.get("memory_check") or {}).get("published_index_status"),
-                "published_indexed_at": (existing.get("memory_check") or {}).get("published_indexed_at"),
+                "published_memory_id": existing_check.get("published_memory_id"),
+                "published_index_status": existing_check.get("published_index_status"),
+                "published_indexed_at": existing_check.get("published_indexed_at"),
             }
 
         # Deliberately do not update root `updated_at`: memory evidence must not
@@ -123,6 +147,7 @@ class ContentMemoryService:
         workspace_id = existing.get("workspace_id") or LEGACY_WORKSPACE_ID
         identity = build_content_identity(final_content)
         indexed_at = _now()
+        existing_check = existing.get("memory_check") if isinstance(existing.get("memory_check"), dict) else None
 
         try:
             published_memory = await self.repository.upsert(
@@ -136,51 +161,58 @@ class ContentMemoryService:
             if published_memory is None:
                 raise RuntimeError("Published content memory persistence is unavailable")
 
-            update = {
-                "memory_check.published_memory_id": published_memory.memory_id,
-                "memory_check.published_index_status": "READY",
-                "memory_check.published_indexed_at": indexed_at,
-            }
-            if not existing.get("memory_check"):
-                update.update({
-                    "memory_check.status": "READY",
-                    "memory_check.outcome": "CLEAR",
-                    "memory_check.checked_at": indexed_at,
-                    "memory_check.canonicalizer_version": identity.canonicalizer_version,
-                    "memory_check.normalized_sha256": identity.normalized_sha256,
-                    "memory_check.final_memory_id": None,
-                    "memory_check.candidates": [],
-                    "memory_check.error_message": None,
-                })
-            await collection.update_one({"run_id": run_id}, {"$set": update})
+            if existing_check is None:
+                snapshot = _published_base_snapshot(identity, indexed_at, status="READY")
+                snapshot["published_memory_id"] = published_memory.memory_id
+                await collection.update_one(
+                    {"run_id": run_id},
+                    {"$set": {"memory_check": snapshot}},
+                )
+            else:
+                await collection.update_one(
+                    {"run_id": run_id},
+                    {"$set": {
+                        "memory_check.published_memory_id": published_memory.memory_id,
+                        "memory_check.published_index_status": "READY",
+                        "memory_check.published_indexed_at": indexed_at,
+                    }},
+                )
+
             return {
                 "status": "READY",
                 "memory_id": published_memory.memory_id,
                 "indexed_at": indexed_at,
             }
         except Exception as exc:
-            update = {
-                "memory_check.published_index_status": "DEGRADED",
-                "memory_check.published_indexed_at": indexed_at,
-                "memory_check.error_message": str(exc),
-            }
-            if not existing.get("memory_check"):
-                update.update({
-                    "memory_check.status": "DEGRADED",
-                    "memory_check.outcome": "DEGRADED",
-                    "memory_check.checked_at": indexed_at,
-                    "memory_check.canonicalizer_version": identity.canonicalizer_version,
-                    "memory_check.normalized_sha256": identity.normalized_sha256,
-                    "memory_check.final_memory_id": None,
-                    "memory_check.candidates": [],
-                })
+            error_message = str(exc)
             try:
-                await collection.update_one({"run_id": run_id}, {"$set": update})
+                if existing_check is None:
+                    snapshot = _published_base_snapshot(
+                        identity,
+                        indexed_at,
+                        status="DEGRADED",
+                        error_message=error_message,
+                    )
+                    await collection.update_one(
+                        {"run_id": run_id},
+                        {"$set": {"memory_check": snapshot}},
+                    )
+                else:
+                    await collection.update_one(
+                        {"run_id": run_id},
+                        {"$set": {
+                            "memory_check.published_index_status": "DEGRADED",
+                            "memory_check.published_indexed_at": indexed_at,
+                            "memory_check.error_message": error_message,
+                        }},
+                    )
             except Exception:
+                # Publication truth is already external/local authority; the
+                # advisory projection is not allowed to replace that truth.
                 pass
             return {
                 "status": "DEGRADED",
                 "memory_id": None,
                 "indexed_at": indexed_at,
-                "error_message": str(exc),
+                "error_message": error_message,
             }
