@@ -24,6 +24,7 @@ A quarry is not marketing copy. It is engineering evidence.
 - `quarry-06-foundation-build.md` — workspace foundation and deterministic content identity build evidence.
 - `quarry-07-memory-persistence.md` — deterministic workspace-scoped memory persistence and real Mongo index evidence.
 - `quarry-08-lifecycle-memory.md` — review/edit/approval/publication memory integration, failure discovery and CI-MEM-03A certification.
+- `quarry-09-publication-identity-gap.md` — cross-run atomic publication gap, provider outcome ambiguity and the four-slice CI-MEM-03B design.
 
 ## Evidence update protocol
 
