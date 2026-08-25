@@ -39,9 +39,11 @@ class ContentMemoryRepository:
     source of truth for publication bytes or text.
     """
 
-    @staticmethod
-    def _collection():
-        db = get_db()
+    def __init__(self, db=None):
+        self._db = db
+
+    def _collection(self):
+        db = self._db if self._db is not None else get_db()
         return None if db is None else db["content_memory"]
 
     async def ensure_indexes(self) -> bool:
