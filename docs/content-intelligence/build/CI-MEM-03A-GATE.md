@@ -1,6 +1,6 @@
 # CI-MEM-03A Gate — Lifecycle Memory Projection
 
-Status: READY FOR BUILD
+Status: **PASS / CERTIFIED**
 
 ## Purpose
 
@@ -42,7 +42,7 @@ If memory indexing fails after LinkedIn publication evidence is finalized, publi
 
 ## `memory_check` snapshot contract
 
-Proposed compact shape:
+Certified compact shape:
 
 ```json
 {
@@ -72,7 +72,7 @@ Candidate list maximum: 3.
 
 ## Service boundary
 
-Introduce a request-scoped `ContentMemoryService`.
+`ContentMemoryService` is request/lifecycle-scoped.
 
 Responsibilities:
 
@@ -82,32 +82,52 @@ Responsibilities:
 
 The service does not publish, approve, edit or generate content.
 
-## Repository adjustment authorized
+## Repository adjustment
 
-`ContentMemoryRepository` may accept an optional database instance so publication and tests can use the same explicitly injected DB as their trusted lifecycle boundary. Global `get_db()` remains a backward-compatible default.
+`ContentMemoryRepository` accepts an optional database instance so publication and tests can use the same explicitly injected DB as their trusted lifecycle boundary. Global `get_db()` remains a backward-compatible default.
 
 ## Index initialization
 
-Application lifespan should attempt idempotent `content_memory` index creation after Mongo connects.
+Application lifespan attempts idempotent `content_memory` index creation after Mongo connects.
 
-For CI-MEM-03A this is non-terminal to application startup; failures are logged and runtime memory checks degrade explicitly. `CI-MEM-03B` will reassess whether hard publication guard readiness must fail closed.
+For CI-MEM-03A this is non-terminal to application startup; failures are logged and runtime memory checks degrade explicitly. `CI-MEM-03B` must reassess whether hard publication guard readiness should fail closed.
 
 ## Test gate
 
-Required:
+Certified:
 
-1. READY_FOR_REVIEW refresh creates FINAL_CONTENT memory.
-2. Existing same-workspace published memory yields `EXACT_DUPLICATE`.
-3. Same text in another workspace is ignored.
-4. Current run is excluded from its own published candidate set.
-5. Human final-content edit refreshes hash/check to new revision.
-6. Approval path never freezes against a stale memory hash.
-7. Memory metadata refresh does not invalidate approval optimistic concurrency by touching root `updated_at`.
-8. Successful publication indexes immutable approval text as PUBLISHED_CONTENT and external URN.
-9. Publication remains PUBLISHED if post-success memory indexing fails; memory evidence becomes degraded.
-10. Existing release lifecycle tests remain green.
-11. Real Mongo restart/evidence tests remain green.
-12. Frontend remains green.
+1. READY_FOR_REVIEW refresh creates FINAL_CONTENT memory — PASS.
+2. Existing same-workspace published memory yields `EXACT_DUPLICATE` — PASS.
+3. Same text in another workspace is ignored — PASS.
+4. Current run is excluded from its own published candidate set — PASS.
+5. Human final-content edit refreshes hash/check to new revision — PASS.
+6. Approval path never freezes against a stale memory hash — PASS.
+7. Memory metadata refresh does not invalidate approval optimistic concurrency by touching root `updated_at` — PASS.
+8. Successful publication indexes immutable approval text as PUBLISHED_CONTENT and external URN — PASS.
+9. Publication remains PUBLISHED if post-success memory indexing fails — PASS.
+10. Existing release lifecycle tests remain green — PASS.
+11. Real Mongo restart/evidence tests remain green — PASS.
+12. Frontend remains green — PASS.
+
+## Certification evidence
+
+Implementation head certified:
+
+`55c77794c2956496f7e3c5e095482dba51e8ec1a`
+
+GitHub Actions PR run:
+
+`32865316281`
+
+Observed:
+
+- Backend smoke import: PASS.
+- Backend compile: PASS.
+- Backend pytest: **108 passed, 1 warning in 38.15s**.
+- MongoDB 7.0.40 real lifecycle fixtures: PASS.
+- Frontend lint/tests/build: PASS.
+
+The certification gate also exposed and led to correction of a real compatibility issue when historical/serialized runs contain explicit `memory_check: null`; the evidence trail is preserved in `../mining-site/quarry-08-lifecycle-memory.md`.
 
 ## Non-goals
 
@@ -120,4 +140,6 @@ Required:
 
 ## Exit criterion
 
-Only after lifecycle projection is green may CI-MEM-03B define and implement the atomic exact-publication claim.
+**Satisfied.** CI-MEM-03A lifecycle projection is green and certified.
+
+The next permitted activity is to document, challenge and test-design `CI-MEM-03B` before implementing the atomic exact-publication claim.
