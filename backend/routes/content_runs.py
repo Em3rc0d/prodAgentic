@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query
 
+from core.content_identity import build_content_identity
+from core.content_memory import ContentMemoryService
 from db.mongo import get_db
 from models.content_run import ContentRunApprovalRequest, ContentRunEditRequest, ContentRunStatus
 
@@ -85,6 +87,38 @@ def _build_approval_snapshot(existing: dict, include_visual: bool) -> dict:
     }
 
 
+async def _refresh_memory_for_approval(db, run_id: str) -> dict:
+    """Return a review run whose memory hash matches its current final content.
+
+    Memory writes intentionally do not touch root updated_at. Any concurrent
+    human edit/render after this function still causes the existing optimistic
+    approval update to miss.
+    """
+    collection = db["content_runs"]
+    memory = ContentMemoryService(db=db)
+
+    for _ in range(3):
+        await memory.refresh_review(run_id)
+        existing = await collection.find_one({"run_id": run_id})
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Content run not found")
+        if existing.get("status") != ContentRunStatus.READY_FOR_REVIEW.value:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Only READY_FOR_REVIEW content can be approved; current status is {existing.get('status')}",
+            )
+
+        final_content = existing.get("final_content")
+        if not isinstance(final_content, str) or not final_content.strip():
+            raise HTTPException(status_code=409, detail="Final content is not ready for approval")
+        identity = build_content_identity(final_content)
+        memory_check = existing.get("memory_check") or {}
+        if memory_check.get("normalized_sha256") == identity.normalized_sha256:
+            return existing
+
+    raise HTTPException(status_code=409, detail="Content memory could not synchronize with the current review revision")
+
+
 @router.get("/content-runs")
 async def list_content_runs(
     limit: int = Query(25, ge=1, le=100),
@@ -149,6 +183,7 @@ async def edit_content_run(run_id: str, req: ContentRunEditRequest):
             {"run_id": run_id},
             {"$set": {"final_content": updates["final_content"]}},
         )
+        await ContentMemoryService(db=db).refresh_review(run_id)
 
     updated = await collection.find_one({"run_id": run_id})
     return _serialize(updated)
@@ -172,12 +207,13 @@ async def approve_content_run(run_id: str, req: ContentRunApprovalRequest):
             detail=f"Only READY_FOR_REVIEW content can be approved; current status is {existing.get('status')}",
         )
 
+    existing = await _refresh_memory_for_approval(db, run_id)
     approval = _build_approval_snapshot(existing, req.include_visual)
     now = approval["approved_at"]
 
     # Optimistic concurrency: every review edit and render changes updated_at.
-    # If the run changes after we build the approval snapshot, this query misses
-    # instead of approving a stale revision.
+    # Memory checks do not change updated_at. If the run changes after we build
+    # the approval snapshot, this query misses instead of approving stale data.
     result = await collection.update_one(
         {
             "run_id": run_id,
