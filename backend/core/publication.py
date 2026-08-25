@@ -3,7 +3,13 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from core.content_memory import ContentMemoryService
-from core.linkedin import LinkedInPublishError, LinkedInPublisher, LinkedInPublisherConfig
+from core.linkedin import (
+    LinkedInPublishError,
+    LinkedInPublishPhase,
+    LinkedInPublisher,
+    LinkedInPublisherConfig,
+    PublicationRetrySafety,
+)
 from models.content_run import ContentRunStatus
 
 
@@ -44,6 +50,77 @@ class PublicationCoordinator:
             # because an advisory memory projection could not be refreshed.
             logger.warning("Published content memory indexing degraded for run %s: %s", run_id, exc)
 
+    async def _mark_safe_failure(
+        self,
+        *,
+        collection,
+        run_id: str,
+        attempt_id: str,
+        expected_status: ContentRunStatus,
+        message: str,
+        phase: str,
+    ) -> None:
+        failed_at = datetime.now(timezone.utc)
+        fail_updates = {
+            "status": ContentRunStatus.APPROVED.value,
+            "publication.status": "FAILED",
+            "publication.completed_at": failed_at,
+            "publication.error_message": message,
+            "publication.failure_retry_safety": PublicationRetrySafety.SAFE_TO_RETRY.value,
+            "publication.failure_phase": phase,
+            "updated_at": failed_at,
+        }
+        if expected_status == ContentRunStatus.SCHEDULED:
+            fail_updates.update({
+                "schedule.status": "FAILED",
+                "schedule.completed_at": failed_at,
+                "schedule.error_message": message,
+            })
+        await collection.update_one(
+            {
+                "run_id": run_id,
+                "status": ContentRunStatus.PUBLISHING.value,
+                "publication.attempt_id": attempt_id,
+            },
+            {"$set": fail_updates},
+        )
+
+    async def _mark_reconciliation_required(
+        self,
+        *,
+        collection,
+        run_id: str,
+        attempt_id: str,
+        expected_status: ContentRunStatus,
+        message: str,
+        phase: str,
+    ) -> None:
+        ambiguous_at = datetime.now(timezone.utc)
+        updates = {
+            # Root status deliberately remains PUBLISHING so ordinary retry paths
+            # cannot replay an outcome that may already exist externally.
+            "publication.status": "RECONCILIATION_REQUIRED",
+            "publication.completed_at": ambiguous_at,
+            "publication.error_message": message,
+            "publication.failure_retry_safety": PublicationRetrySafety.RECONCILIATION_REQUIRED.value,
+            "publication.failure_phase": phase,
+            "updated_at": ambiguous_at,
+        }
+        if expected_status == ContentRunStatus.SCHEDULED:
+            updates.update({
+                "schedule.status": "RECONCILIATION_REQUIRED",
+                "schedule.completed_at": ambiguous_at,
+                "schedule.error_message": message,
+            })
+        await collection.update_one(
+            {
+                "run_id": run_id,
+                "status": ContentRunStatus.PUBLISHING.value,
+                "publication.attempt_id": attempt_id,
+            },
+            {"$set": updates},
+        )
+
     async def publish_run(self, run_id: str, expected_status: ContentRunStatus = ContentRunStatus.APPROVED):
         collection = self.db["content_runs"]
         existing = await collection.find_one({"run_id": run_id})
@@ -82,6 +159,8 @@ class PublicationCoordinator:
         try:
             config = self.config_factory()
         except LinkedInPublishError as exc:
+            # Config resolution happens before the run enters PUBLISHING and is
+            # therefore outside an ambiguous external publication attempt.
             raise PublicationUnavailable(str(exc)) from exc
 
         attempt_id = str(uuid4())
@@ -98,6 +177,8 @@ class PublicationCoordinator:
             "external_post_urn": None,
             "external_image_urn": None,
             "error_message": None,
+            "failure_retry_safety": None,
+            "failure_phase": None,
         }
         claim_updates = {
             "status": ContentRunStatus.PUBLISHING.value,
@@ -126,45 +207,40 @@ class PublicationCoordinator:
         try:
             result = await publisher.publish(approval)
         except LinkedInPublishError as exc:
-            failed_at = datetime.now(timezone.utc)
-            fail_updates = {
-                "status": ContentRunStatus.APPROVED.value,
-                "publication.status": "FAILED",
-                "publication.completed_at": failed_at,
-                "publication.error_message": str(exc),
-                "updated_at": failed_at,
-            }
-            if expected_status == ContentRunStatus.SCHEDULED:
-                fail_updates.update({
-                    "schedule.status": "FAILED",
-                    "schedule.completed_at": failed_at,
-                    "schedule.error_message": str(exc),
-                })
-            await collection.update_one(
-                {"run_id": run_id, "status": ContentRunStatus.PUBLISHING.value, "publication.attempt_id": attempt_id},
-                {"$set": fail_updates},
+            if exc.retry_safety == PublicationRetrySafety.SAFE_TO_RETRY:
+                await self._mark_safe_failure(
+                    collection=collection,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    expected_status=expected_status,
+                    message=str(exc),
+                    phase=exc.phase.value,
+                )
+                raise PublicationFailed(str(exc)) from exc
+
+            await self._mark_reconciliation_required(
+                collection=collection,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                expected_status=expected_status,
+                message=str(exc),
+                phase=exc.phase.value,
             )
-            raise PublicationFailed(str(exc)) from exc
+            raise PublicationReconciliationRequired(str(exc)) from exc
         except Exception as exc:
-            failed_at = datetime.now(timezone.utc)
-            fail_updates = {
-                "status": ContentRunStatus.APPROVED.value,
-                "publication.status": "FAILED",
-                "publication.completed_at": failed_at,
-                "publication.error_message": "Unexpected publisher failure",
-                "updated_at": failed_at,
-            }
-            if expected_status == ContentRunStatus.SCHEDULED:
-                fail_updates.update({
-                    "schedule.status": "FAILED",
-                    "schedule.completed_at": failed_at,
-                    "schedule.error_message": "Unexpected publisher failure",
-                })
-            await collection.update_one(
-                {"run_id": run_id, "status": ContentRunStatus.PUBLISHING.value, "publication.attempt_id": attempt_id},
-                {"$set": fail_updates},
+            # Unknown publisher exceptions are conservative by default. Once a
+            # run is PUBLISHING we cannot prove an unclassified failure happened
+            # before the external side effect, so ordinary retry is unsafe.
+            message = "Unexpected publisher outcome requires reconciliation"
+            await self._mark_reconciliation_required(
+                collection=collection,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                expected_status=expected_status,
+                message=message,
+                phase=LinkedInPublishPhase.UNKNOWN.value,
             )
-            raise PublicationFailed("Unexpected publisher failure") from exc
+            raise PublicationReconciliationRequired(message) from exc
 
         completed_at = datetime.now(timezone.utc)
         success_updates = {
@@ -173,6 +249,8 @@ class PublicationCoordinator:
             "publication.completed_at": completed_at,
             "publication.external_post_urn": result.post_urn,
             "publication.external_image_urn": result.image_urn,
+            "publication.failure_retry_safety": None,
+            "publication.failure_phase": None,
             "updated_at": completed_at,
         }
         if expected_status == ContentRunStatus.SCHEDULED:
