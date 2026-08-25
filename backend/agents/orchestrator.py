@@ -13,6 +13,7 @@ from db.content_runs import ContentRunRepository
 from agents.router import AttemptStarted, ContentChunk, AttemptFailed, AttemptResetRequired, AttemptCompleted, RoutingExhausted, ValidationWarning
 from core.context import GenerationContext, LanguageCode, TargetLanguageCode, ImagePromptLanguageCode
 from core.language import language_detector
+from core.content_memory import ContentMemoryService
 
 
 def _sse(stage: str, **kwargs) -> dict:
@@ -24,14 +25,16 @@ class PipelineAbortError(Exception):
 
 
 class PipelineOrchestrator:
-    def __init__(self, router):
+    def __init__(self, router, workspace_id: str = "legacy-default"):
         self.router = router
+        self.workspace_id = workspace_id
         self.idea_agent = IdeaGeneratorAgent(router)
         self.research_agent = ResearchAgent(router)
         self.writer_agent = ContentWriterAgent(router)
         self.editor_agent = EditorAgent(router)
         self.visual_agent = VisualAgent(router)
         self.content_runs = ContentRunRepository()
+        self.content_memory = ContentMemoryService()
 
     async def _persist(self, method, *args, **kwargs):
         try:
@@ -72,6 +75,7 @@ class PipelineOrchestrator:
 
         return GenerationContext(
             run_id=str(uuid.uuid4()),
+            workspace_id=self.workspace_id,
             topic=topic,
             style=style,
             requested_source_language=LanguageCode.AUTO,
@@ -332,6 +336,7 @@ class PipelineOrchestrator:
             if db is not None:
                 doc = {
                     "run_id": context.run_id,
+                    "workspace_id": context.workspace_id,
                     "topic": topic,
                     "style": style,
                     "idea": idea,
@@ -355,6 +360,7 @@ class PipelineOrchestrator:
             visual_ref[0] if visual_status == "READY" else None,
             post_id,
         )
+        await self._persist(self.content_memory.refresh_review, context.run_id)
 
         yield _sse(
             "complete",

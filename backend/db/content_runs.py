@@ -45,6 +45,7 @@ class ContentRunRepository:
 
         doc = {
             "run_id": context.run_id,
+            "workspace_id": context.workspace_id,
             "topic": context.topic,
             "style": context.style,
             "idea": idea,

@@ -1,0 +1,177 @@
+{
+  "version": "0.1",
+  "memory_cases": [
+    {
+      "id": "MEM-001",
+      "existing": "I replaced a synchronous API chain with an event-driven workflow because retries were coupling three services together.",
+      "candidate": "I replaced a synchronous API chain with an event-driven workflow because retries were coupling three services together.",
+      "expected": "EXACT_DUPLICATE",
+      "rationale": "Identical final content must be deterministic and block duplicate publication."
+    },
+    {
+      "id": "MEM-002",
+      "existing": "Our first AI agent architecture failed because every task was treated as an agent problem.",
+      "candidate": "  our first AI AGENT architecture failed   because every task was treated as an agent problem. ",
+      "expected": "EXACT_DUPLICATE",
+      "rationale": "Case and whitespace normalization should not bypass exact duplicate detection."
+    },
+    {
+      "id": "MEM-003",
+      "existing": "We initially used agents everywhere. The architecture became slower and harder to debug, so we moved deterministic steps back to ordinary services.",
+      "candidate": "The biggest mistake in our first agent system was assuming every workflow step needed an agent. Returning deterministic work to normal services improved latency and observability.",
+      "expected": "HIGH_OVERLAP",
+      "rationale": "Different wording, same core thesis and lesson."
+    },
+    {
+      "id": "MEM-004",
+      "existing": "Why our first agent architecture failed: too much autonomy and too little deterministic orchestration.",
+      "candidate": "After that failure, we redesigned observability so every agent attempt, provider fallback and validation warning became traceable.",
+      "expected": "RELATED_NEW_ANGLE",
+      "rationale": "Same story universe but a valid continuation focused on observability."
+    },
+    {
+      "id": "MEM-005",
+      "existing": "MongoDB schema design mistakes that made our write path expensive.",
+      "candidate": "Why PostgreSQL row-level locking changed how we designed reservation concurrency.",
+      "expected": "DISTINCT",
+      "rationale": "Both are database topics but the thesis and lesson are different."
+    },
+    {
+      "id": "MEM-006",
+      "existing": "A vehicle diagnostic app must distinguish connector capability from vehicle capability.",
+      "candidate": "How visual diagrams improve technical LinkedIn posts about corrosion under insulation.",
+      "expected": "DISTINCT",
+      "rationale": "Unrelated domains and arguments."
+    },
+    {
+      "id": "MEM-007",
+      "existing": "Caching reduced the endpoint latency from 420 ms to 95 ms, but the larger lesson was removing repeated remote calls.",
+      "candidate": "We cut latency by avoiding repeated network calls. Caching helped, but eliminating unnecessary remote work was the actual architectural win.",
+      "expected": "HIGH_OVERLAP",
+      "rationale": "Same lesson despite rearranged emphasis."
+    },
+    {
+      "id": "MEM-008",
+      "existing": "Kafka did not fail us; unclear ownership of events did.",
+      "candidate": "Kafka consumer lag became useful only after we defined operational ownership and alert thresholds.",
+      "expected": "RELATED_NEW_ANGLE",
+      "rationale": "Related operational theme but candidate develops a different specific lesson."
+    }
+  ],
+  "grounding_cases": [
+    {
+      "id": "SRC-001",
+      "mode": "SOURCE_ONLY",
+      "sources": ["Benchmark: p95 latency before change 410 ms; after change 118 ms."],
+      "requested_claim": "Explain that p95 latency fell from 410 ms to 118 ms.",
+      "expected": "SUPPORTED",
+      "rationale": "Requested specificity is directly present in the source."
+    },
+    {
+      "id": "SRC-002",
+      "mode": "SOURCE_ONLY",
+      "sources": ["The new architecture reduced latency substantially."],
+      "requested_claim": "Say latency improved by exactly 71.2%.",
+      "expected": "INSUFFICIENT",
+      "rationale": "Exact percentage is not present and should not be invented in source-only mode."
+    },
+    {
+      "id": "SRC-003",
+      "mode": "SOURCE_ONLY",
+      "sources": ["Residual wall thickness measured 5.1 mm."],
+      "requested_claim": "State that residual wall thickness measured 4.3 mm.",
+      "expected": "CONFLICT",
+      "rationale": "Requested number contradicts the supplied source."
+    },
+    {
+      "id": "SRC-004",
+      "mode": "OPEN",
+      "sources": [],
+      "requested_claim": "Write a general educational post about why distributed systems need idempotency.",
+      "expected": "OPEN_ALLOWED",
+      "rationale": "General generation remains usable without mandatory sources."
+    },
+    {
+      "id": "SRC-005",
+      "mode": "SOURCE_PREFERRED",
+      "sources": ["Incident note: duplicate webhook delivery created two reservations before an idempotency key was added."],
+      "requested_claim": "Explain the production lesson from the duplicate webhook incident.",
+      "expected": "SUPPORTED",
+      "rationale": "The source provides the concrete incident and lesson context."
+    },
+    {
+      "id": "SRC-006",
+      "mode": "SOURCE_ONLY",
+      "sources": ["Project note: connector A supports standard OBD-II PIDs on the tested vehicle."],
+      "requested_claim": "Claim that the connector supports every vehicle brand and every proprietary ECU protocol.",
+      "expected": "INSUFFICIENT",
+      "rationale": "The source supports one tested capability, not universal compatibility."
+    }
+  ],
+  "visual_cases": [
+    {
+      "id": "VIS-001",
+      "post": "A service receives an API request, writes an outbox event in the same transaction, and a worker publishes it to Kafka. The point is to explain the data flow and failure boundary.",
+      "expected_intent": "TECHNICAL_DIAGRAM",
+      "required": ["service", "database/outbox", "worker", "Kafka/event bus", "directional flow"],
+      "avoid": ["generic glowing brain", "random server room"],
+      "rationale": "Architecture/data-flow explanation is best communicated as a diagram."
+    },
+    {
+      "id": "VIS-002",
+      "post": "Corrosion under insulation traps moisture beneath cladding and can attack the pipe wall while the exterior looks normal. Show the mechanism and sensor location.",
+      "expected_intent": "TECHNICAL_ILLUSTRATION",
+      "required": ["pipe cutaway", "cladding", "wet insulation", "corroded pipe surface", "sensor/hotspot"],
+      "avoid": ["generic refinery skyline", "unrelated machinery"],
+      "rationale": "The post explains a physical hidden mechanism."
+    },
+    {
+      "id": "VIS-003",
+      "post": "p95 latency fell from 410 ms to 118 ms after removing two remote calls. The post compares before and after performance.",
+      "expected_intent": "DATA_VISUALIZATION",
+      "required": ["before value", "after value", "clear comparison"],
+      "avoid": ["decorative 3D city", "unlabeled abstract speed lines"],
+      "rationale": "The numerical comparison is the communication center."
+    },
+    {
+      "id": "VIS-004",
+      "post": "We replaced a manual inspection process with a sensor-assisted workflow. The story is explicitly structured as old process versus new process.",
+      "expected_intent": "BEFORE_AFTER",
+      "required": ["old workflow", "new workflow", "clear contrast"],
+      "avoid": ["single ambiguous scene"],
+      "rationale": "The narrative is a process transformation."
+    },
+    {
+      "id": "VIS-005",
+      "post": "Today we are releasing the first public version of our developer tool. The visual should showcase the product interface and identity.",
+      "expected_intent": "PRODUCT_HERO",
+      "required": ["product/UI focus", "clean hierarchy", "brand-forward composition"],
+      "avoid": ["unrelated metaphor"],
+      "rationale": "Launch communication should feature the product."
+    },
+    {
+      "id": "VIS-006",
+      "post": "My opinion: teams reach for microservices far earlier than they need them. The post is an argument, not an architecture tutorial.",
+      "expected_intent": "EDITORIAL",
+      "required": ["clear conceptual tension"],
+      "avoid": ["fake architecture details", "meaningless dashboard"],
+      "rationale": "An editorial concept is more appropriate than a literal technical diagram."
+    },
+    {
+      "id": "VIS-007",
+      "post": "The migration felt like replacing an aircraft engine while the plane was still flying. The metaphor is intentionally the central storytelling device.",
+      "expected_intent": "CINEMATIC_METAPHOR",
+      "required": ["aircraft/engine maintenance metaphor", "sense of operation continuing"],
+      "avoid": ["technical system diagram"],
+      "rationale": "Here cinematic metaphor is intentionally communicative, not decorative fallback."
+    },
+    {
+      "id": "VIS-008",
+      "post": "Short text-only announcement: documentation typo fixed and README link corrected.",
+      "expected_intent": "NO_VISUAL",
+      "required": [],
+      "avoid": ["forced decorative image"],
+      "rationale": "A visual adds little value and should not be generated by default."
+    }
+  ]
+}

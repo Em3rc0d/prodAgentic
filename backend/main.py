@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 import asyncio
 import json
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -12,6 +13,7 @@ from core.container import ApplicationContainer
 from core.model_registry import validate_available_models, get_profile_readiness
 from core.scheduler import scheduler_loop
 from core.auth import AuthSettings, SessionManager, security_boundary, router as auth_router
+from db.content_memory import ContentMemoryRepository
 from db.mongo import connect_db, close_db, database_ready
 from routes.pipeline import router as pipeline_router
 from routes.posts import router as posts_router
@@ -22,6 +24,7 @@ from routes.scheduling import router as scheduling_router
 
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -30,6 +33,14 @@ async def lifespan(app: FastAPI):
     app.state.auth_settings = auth_settings
     app.state.session_manager = SessionManager(auth_settings)
     await connect_db()
+
+    try:
+        await ContentMemoryRepository().ensure_indexes()
+    except Exception as exc:
+        # CI-MEM-03A is advisory. Memory failures must be observable but must
+        # not make the existing release lifecycle unavailable.
+        logger.warning("Content memory index initialization degraded: %s", exc)
+
     container = ApplicationContainer()
     container.startup()
     app.state.container = container
