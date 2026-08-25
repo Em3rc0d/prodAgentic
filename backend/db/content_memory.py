@@ -120,6 +120,7 @@ class ContentMemoryRepository:
         workspace_id: str,
         text: str,
         content_statuses: Iterable[str] | None = None,
+        kinds: Iterable[ContentMemoryKind | str] | None = None,
     ) -> list[ContentMemoryRecord]:
         workspace = _require_workspace_id(workspace_id)
         identity = build_content_identity(text)
@@ -136,6 +137,11 @@ class ContentMemoryRepository:
             if not statuses:
                 return []
             query["content_status"] = {"$in": statuses}
+        if kinds is not None:
+            kind_values = [_kind_value(kind) for kind in kinds]
+            if not kind_values:
+                return []
+            query["kind"] = {"$in": kind_values}
 
         cursor = collection.find(query, {"_id": 0}).sort("created_at", 1)
         docs = await cursor.to_list(length=100)
