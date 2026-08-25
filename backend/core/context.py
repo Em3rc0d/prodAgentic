@@ -36,6 +36,7 @@ class ImagePromptLanguageCode(str, Enum):
 @dataclass(frozen=True)
 class GenerationContext:
     run_id: str
+    workspace_id: str
     topic: str
     style: str
     requested_source_language: LanguageCode
