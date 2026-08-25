@@ -97,6 +97,7 @@ class ContentRun(BaseModel):
     topic: str
     style: str
     idea: str
+    workspace_id: str = "legacy-default"
     status: ContentRunStatus = ContentRunStatus.GENERATING
     content_profile_id: Optional[str] = None
     content_profile_snapshot: Optional[dict] = None
