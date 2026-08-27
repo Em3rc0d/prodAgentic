@@ -86,6 +86,12 @@ async def pipeline_stream(
     content_profile_id: str | None = Query(None),
     pipeline=Depends(get_ready_pipeline_service),
 ):
+    # Commercial trust boundary: the content pipeline owns a durable ContentRun.
+    # Ideas may still be generated without Mongo, but a reviewable/publishable run
+    # may not start when its authoritative persistence boundary is unavailable.
+    if get_db() is None:
+        raise HTTPException(status_code=503, detail="MongoDB required for durable content generation")
+
     profile_id, profile_snapshot = await _resolve_content_profile(content_profile_id)
 
     async def event_generator():
