@@ -1,0 +1,11 @@
+.env
+.env.*
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+tests/
+scratch/
+static/assets/renders/*
+!static/assets/renders/.gitkeep
