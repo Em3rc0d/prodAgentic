@@ -45,6 +45,7 @@ class ContentRunRepository:
 
         doc = {
             "run_id": context.run_id,
+            "workspace_id": context.workspace_id,
             "topic": context.topic,
             "style": context.style,
             "idea": idea,
@@ -59,6 +60,7 @@ class ContentRunRepository:
             "final_content": None,
             "visual_prompt": None,
             "visual_render": None,
+            "memory_check": None,
             "approval": None,
             "post_id": None,
             "failure_stage": None,
