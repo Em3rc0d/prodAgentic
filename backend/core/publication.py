@@ -1,13 +1,24 @@
 import hashlib
+import logging
 import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from pymongo.errors import DuplicateKeyError
 
-from core.linkedin import LinkedInPublishError, LinkedInPublisher, LinkedInPublisherConfig
+from core.content_memory import ContentMemoryService
+from core.linkedin import (
+    LinkedInPublishError,
+    LinkedInPublishPhase,
+    LinkedInPublisher,
+    LinkedInPublisherConfig,
+    PublicationRetrySafety,
+)
 from core.linkedin_oauth import LinkedInOAuthConfigurationError, LinkedInOAuthError, LinkedInOAuthService
 from models.content_run import ContentRunStatus
+
+
+logger = logging.getLogger(__name__)
 
 
 class PublicationConflict(RuntimeError):
@@ -47,17 +58,17 @@ def _publication_dedupe_key(author_urn: str, content_fingerprint: str) -> str:
 class PublicationCoordinator:
     """Single publication lifecycle used by manual and scheduled delivery."""
 
-    def __init__(self, db, publisher_factory=None, config_factory=None):
+    def __init__(self, db, publisher_factory=None, config_factory=None, content_memory=None):
         self.db = db
         self.publisher_factory = publisher_factory or LinkedInPublisher
         self.config_factory = config_factory
+        self.content_memory = content_memory or ContentMemoryService(db=db)
 
     async def resolve_config(self):
-        """Resolve the canonical publication authority for manual and scheduled delivery.
+        """Resolve the canonical publication authority for every delivery path.
 
-        Persisted LinkedIn OAuth is authoritative in normal production. Static token
-        configuration is available only when the explicit emergency/dev fallback is
-        enabled, so every publication entry point observes the same policy.
+        Persisted LinkedIn OAuth is authoritative. Static token configuration is
+        available only behind the explicit emergency/development fallback.
         """
         if self.config_factory is not None:
             return self.config_factory()
@@ -69,8 +80,90 @@ class PublicationCoordinator:
                 "1", "true", "yes"
             }
             if not static_fallback:
-                raise LinkedInPublishError(str(oauth_exc)) from oauth_exc
+                raise LinkedInPublishError(
+                    str(oauth_exc),
+                    retry_safety=PublicationRetrySafety.SAFE_TO_RETRY,
+                    phase=LinkedInPublishPhase.CONFIG,
+                ) from oauth_exc
             return LinkedInPublisherConfig.from_env()
+
+    async def _index_published_memory(self, run_id: str, approval: dict, external_post_urn: str | None) -> None:
+        """Best-effort projection only; publication authority has already succeeded."""
+        try:
+            await self.content_memory.index_published(run_id, approval, external_post_urn)
+        except Exception as exc:
+            logger.warning("Published content memory indexing degraded for run %s: %s", run_id, exc)
+
+    async def _mark_safe_failure(
+        self,
+        *,
+        collection,
+        run_id: str,
+        attempt_id: str,
+        expected_status: ContentRunStatus,
+        message: str,
+        phase: str,
+    ) -> None:
+        failed_at = datetime.now(timezone.utc)
+        fail_updates = {
+            "status": ContentRunStatus.APPROVED.value,
+            "publication.status": "FAILED",
+            "publication.completed_at": failed_at,
+            "publication.error_message": message,
+            "publication.failure_retry_safety": PublicationRetrySafety.SAFE_TO_RETRY.value,
+            "publication.failure_phase": phase,
+            "updated_at": failed_at,
+        }
+        if expected_status == ContentRunStatus.SCHEDULED:
+            fail_updates.update({
+                "schedule.status": "FAILED",
+                "schedule.completed_at": failed_at,
+                "schedule.error_message": message,
+            })
+        await collection.update_one(
+            {
+                "run_id": run_id,
+                "status": ContentRunStatus.PUBLISHING.value,
+                "publication.attempt_id": attempt_id,
+            },
+            {"$set": fail_updates},
+        )
+
+    async def _mark_reconciliation_required(
+        self,
+        *,
+        collection,
+        run_id: str,
+        attempt_id: str,
+        expected_status: ContentRunStatus,
+        message: str,
+        phase: str,
+    ) -> None:
+        ambiguous_at = datetime.now(timezone.utc)
+        updates = {
+            # Root status deliberately remains PUBLISHING so ordinary retries
+            # cannot replay an outcome that may already exist externally.
+            "publication.status": "RECONCILIATION_REQUIRED",
+            "publication.completed_at": ambiguous_at,
+            "publication.error_message": message,
+            "publication.failure_retry_safety": PublicationRetrySafety.RECONCILIATION_REQUIRED.value,
+            "publication.failure_phase": phase,
+            "updated_at": ambiguous_at,
+        }
+        if expected_status == ContentRunStatus.SCHEDULED:
+            updates.update({
+                "schedule.status": "RECONCILIATION_REQUIRED",
+                "schedule.completed_at": ambiguous_at,
+                "schedule.error_message": message,
+            })
+        await collection.update_one(
+            {
+                "run_id": run_id,
+                "status": ContentRunStatus.PUBLISHING.value,
+                "publication.attempt_id": attempt_id,
+            },
+            {"$set": updates},
+        )
 
     async def publish_run(self, run_id: str, expected_status: ContentRunStatus = ContentRunStatus.APPROVED):
         collection = self.db["content_runs"]
@@ -88,9 +181,14 @@ class PublicationCoordinator:
             and existing_publication.get("status") == "PUBLISHED"
             and existing_publication.get("bundle_sha256") == approval.get("bundle_sha256")
         ):
-            # Idempotent replay: a successful receipt is terminal authority. Never
-            # contact LinkedIn again for this already-published approval bundle.
-            return existing
+            # A successful receipt is terminal authority. Never contact LinkedIn
+            # again; only heal the advisory memory projection if necessary.
+            await self._index_published_memory(
+                run_id,
+                approval,
+                existing_publication.get("external_post_urn"),
+            )
+            return await collection.find_one({"run_id": run_id})
 
         if existing.get("status") == ContentRunStatus.PUBLISHING.value:
             raise PublicationReconciliationRequired(
@@ -105,6 +203,8 @@ class PublicationCoordinator:
         try:
             config = await self.resolve_config()
         except LinkedInPublishError as exc:
+            # Authority resolution happens before entering PUBLISHING, so this is
+            # safe to expose as unavailable without creating an ambiguous attempt.
             raise PublicationUnavailable(str(exc)) from exc
 
         content_fingerprint = _content_fingerprint(approval)
@@ -126,6 +226,8 @@ class PublicationCoordinator:
             "external_post_urn": None,
             "external_image_urn": None,
             "error_message": None,
+            "failure_retry_safety": None,
+            "failure_phase": None,
         }
         claim_updates = {
             "status": ContentRunStatus.PUBLISHING.value,
@@ -160,45 +262,37 @@ class PublicationCoordinator:
         try:
             result = await publisher.publish(approval)
         except LinkedInPublishError as exc:
-            failed_at = datetime.now(timezone.utc)
-            fail_updates = {
-                "status": ContentRunStatus.APPROVED.value,
-                "publication.status": "FAILED",
-                "publication.completed_at": failed_at,
-                "publication.error_message": str(exc),
-                "updated_at": failed_at,
-            }
-            if expected_status == ContentRunStatus.SCHEDULED:
-                fail_updates.update({
-                    "schedule.status": "FAILED",
-                    "schedule.completed_at": failed_at,
-                    "schedule.error_message": str(exc),
-                })
-            await collection.update_one(
-                {"run_id": run_id, "status": ContentRunStatus.PUBLISHING.value, "publication.attempt_id": attempt_id},
-                {"$set": fail_updates},
+            if exc.retry_safety == PublicationRetrySafety.SAFE_TO_RETRY:
+                await self._mark_safe_failure(
+                    collection=collection,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    expected_status=expected_status,
+                    message=str(exc),
+                    phase=exc.phase.value,
+                )
+                raise PublicationFailed(str(exc)) from exc
+
+            await self._mark_reconciliation_required(
+                collection=collection,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                expected_status=expected_status,
+                message=str(exc),
+                phase=exc.phase.value,
             )
-            raise PublicationFailed(str(exc)) from exc
+            raise PublicationReconciliationRequired(str(exc)) from exc
         except Exception as exc:
-            failed_at = datetime.now(timezone.utc)
-            fail_updates = {
-                "status": ContentRunStatus.APPROVED.value,
-                "publication.status": "FAILED",
-                "publication.completed_at": failed_at,
-                "publication.error_message": "Unexpected publisher failure",
-                "updated_at": failed_at,
-            }
-            if expected_status == ContentRunStatus.SCHEDULED:
-                fail_updates.update({
-                    "schedule.status": "FAILED",
-                    "schedule.completed_at": failed_at,
-                    "schedule.error_message": "Unexpected publisher failure",
-                })
-            await collection.update_one(
-                {"run_id": run_id, "status": ContentRunStatus.PUBLISHING.value, "publication.attempt_id": attempt_id},
-                {"$set": fail_updates},
+            message = "Unexpected publisher outcome requires reconciliation"
+            await self._mark_reconciliation_required(
+                collection=collection,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                expected_status=expected_status,
+                message=message,
+                phase=LinkedInPublishPhase.UNKNOWN.value,
             )
-            raise PublicationFailed("Unexpected publisher failure") from exc
+            raise PublicationReconciliationRequired(message) from exc
 
         completed_at = datetime.now(timezone.utc)
         success_updates = {
@@ -207,6 +301,8 @@ class PublicationCoordinator:
             "publication.completed_at": completed_at,
             "publication.external_post_urn": result.post_urn,
             "publication.external_image_urn": result.image_urn,
+            "publication.failure_retry_safety": None,
+            "publication.failure_phase": None,
             "updated_at": completed_at,
         }
         if expected_status == ContentRunStatus.SCHEDULED:
@@ -225,4 +321,5 @@ class PublicationCoordinator:
                 "LinkedIn accepted the post but local publication evidence could not be finalized; manual reconciliation required"
             )
 
+        await self._index_published_memory(run_id, approval, result.post_urn)
         return await collection.find_one({"run_id": run_id})
