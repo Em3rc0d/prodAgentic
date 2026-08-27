@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from typing import AsyncGenerator
 from datetime import datetime, timezone
@@ -14,6 +15,9 @@ from agents.router import AttemptStarted, ContentChunk, AttemptFailed, AttemptRe
 from core.context import GenerationContext, LanguageCode, TargetLanguageCode, ImagePromptLanguageCode
 from core.language import language_detector
 from core.content_memory import ContentMemoryService
+
+
+logger = logging.getLogger(__name__)
 
 
 def _sse(stage: str, **kwargs) -> dict:
@@ -37,11 +41,20 @@ class PipelineOrchestrator:
         self.content_memory = ContentMemoryService()
 
     async def _persist(self, method, *args, **kwargs):
+        """Best-effort persistence for non-terminal stage detail and projections."""
         try:
             return await method(*args, **kwargs)
-        except Exception as e:
-            print(f"[WARN] ContentRun persistence error: {e}")
+        except Exception as exc:
+            logger.warning("ContentRun auxiliary persistence degraded: %s", exc)
             return None
+
+    async def _persist_required(self, method, *args, **kwargs):
+        """Persist an authoritative lifecycle boundary or fail the pipeline closed."""
+        try:
+            return await method(*args, **kwargs)
+        except Exception as exc:
+            logger.error("Authoritative ContentRun persistence failed: %s", exc)
+            raise PipelineAbortError("Authoritative ContentRun persistence failed") from exc
 
     def _resolve_context(
         self,
@@ -125,7 +138,28 @@ class PipelineOrchestrator:
             content_profile_id,
             content_profile_snapshot,
         )
-        persistence_active = bool(await self._persist(self.content_runs.create, context, idea))
+
+        # Commercial trust boundary: generation may not begin without the
+        # authoritative ContentRun. A user must never receive seemingly valid
+        # output whose lifecycle/evidence object was never created.
+        try:
+            created = await self._persist_required(self.content_runs.create, context, idea)
+        except PipelineAbortError:
+            yield _sse(
+                "pipeline.persistence_failed",
+                reason="Authoritative ContentRun could not be persisted",
+                run_id=context.run_id,
+            )
+            return
+        if not created:
+            logger.error("Authoritative ContentRun repository was unavailable for run %s", context.run_id)
+            yield _sse(
+                "pipeline.persistence_failed",
+                reason="Authoritative ContentRun could not be persisted",
+                run_id=context.run_id,
+            )
+            return
+        persistence_active = True
 
         research_ref = [""]
         draft_ref = [""]
@@ -217,23 +251,23 @@ class PipelineOrchestrator:
                     run_id=context.run_id,
                     event_sequence=event_sequence,
                 )
-            except Exception as e:
+            except Exception as exc:
                 event_sequence += 1
                 stage_flags["failed"] = True
                 await self._persist(
                     self.content_runs.mark_stage_failed,
                     context.run_id,
                     stage_name,
-                    str(e),
+                    str(exc),
                     terminal=not ignore_failure,
                 )
                 if ignore_failure:
-                    yield _sse(f"{stage_name}.failed", reason=str(e), retryable=True, run_id=context.run_id)
+                    yield _sse(f"{stage_name}.failed", reason=str(exc), retryable=True, run_id=context.run_id)
                 else:
                     yield _sse(
                         "stage.failed",
                         stage_name=stage_name,
-                        reason=str(e),
+                        reason=str(exc),
                         run_id=context.run_id,
                         event_sequence=event_sequence,
                     )
@@ -269,12 +303,21 @@ class PipelineOrchestrator:
             final_status = "NEEDS_LANGUAGE_REVIEW" if final_flags.get("has_validation_warning") else "READY"
         except PipelineAbortError:
             return
-        except Exception as e:
-            await self._persist(self.content_runs.mark_failed, context.run_id, "unknown", str(e))
-            yield _sse("stage.failed", stage_name="unknown", reason=str(e), run_id=context.run_id)
+        except Exception as exc:
+            await self._persist(self.content_runs.mark_failed, context.run_id, "unknown", str(exc))
+            yield _sse("stage.failed", stage_name="unknown", reason=str(exc), run_id=context.run_id)
             return
 
-        await self._persist(self.content_runs.mark_text_ready, context.run_id, final_ref[0], final_status)
+        try:
+            await self._persist_required(self.content_runs.mark_text_ready, context.run_id, final_ref[0], final_status)
+        except PipelineAbortError:
+            yield _sse(
+                "pipeline.persistence_failed",
+                reason="TEXT_READY lifecycle transition could not be persisted",
+                run_id=context.run_id,
+            )
+            return
+
         yield _sse(
             "pipeline.text_completed",
             final_status=final_status,
@@ -320,15 +363,15 @@ class PipelineOrchestrator:
                         terminal=False,
                     )
                     yield _sse("visual.prompt_failed", reason="Partial failure or empty output", run_id=context.run_id)
-        except Exception as e:
+        except Exception as exc:
             await self._persist(
                 self.content_runs.mark_stage_failed,
                 context.run_id,
                 "visual",
-                str(e),
+                str(exc),
                 terminal=False,
             )
-            yield _sse("visual.prompt_failed", reason=str(e), run_id=context.run_id)
+            yield _sse("visual.prompt_failed", reason=str(exc), run_id=context.run_id)
 
         post_id = None
         try:
@@ -351,15 +394,26 @@ class PipelineOrchestrator:
                 }
                 result = await db["posts"].insert_one(doc)
                 post_id = str(result.inserted_id)
-        except Exception as e:
-            print(f"[WARN] MongoDB post projection save error: {e}")
+        except Exception as exc:
+            logger.warning("Legacy post projection save degraded: %s", exc)
 
-        await self._persist(
-            self.content_runs.mark_ready_for_review,
-            context.run_id,
-            visual_ref[0] if visual_status == "READY" else None,
-            post_id,
-        )
+        try:
+            await self._persist_required(
+                self.content_runs.mark_ready_for_review,
+                context.run_id,
+                visual_ref[0] if visual_status == "READY" else None,
+                post_id,
+            )
+        except PipelineAbortError:
+            yield _sse(
+                "pipeline.persistence_failed",
+                reason="READY_FOR_REVIEW lifecycle transition could not be persisted",
+                run_id=context.run_id,
+            )
+            return
+
+        # Content Memory is advisory. A memory outage may degrade discovery, but
+        # must not replace or rewrite the authoritative ContentRun lifecycle.
         await self._persist(self.content_memory.refresh_review, context.run_id)
 
         yield _sse(
