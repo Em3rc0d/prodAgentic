@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, feat/model-registry-router, feat/content-intelligence-foundation ]
+    branches: [ main, feat/model-registry-router, feat/content-intelligence-foundation, feat/docker-one-command-stack ]
   pull_request:
     branches: [ main, feat/release-e2e-certification ]
 
@@ -70,3 +70,42 @@ jobs:
       - name: Build Frontend
         working-directory: frontend
         run: npm run build
+
+  docker-stack-test:
+    runs-on: ubuntu-latest
+    env:
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_PORT: "8080"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create CI-only backend environment
+        run: |
+          cat > backend/.env <<'EOF'
+          GEMINI_API_KEY=docker-ci-placeholder
+          APP_DEFAULT_LANGUAGE=es
+          APP_WORKSPACE_ID=docker-ci-workspace
+          IMAGE_RENDER_ENABLED=false
+          PRODAGENTIC_AUTH_ENABLED=true
+          PRODAGENTIC_ADMIN_USER=admin
+          PRODAGENTIC_ADMIN_PASSWORD=docker-ci-password
+          PRODAGENTIC_SESSION_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef
+          PRODAGENTIC_SESSION_TTL_SECONDS=43200
+          EOF
+      - name: Validate Compose contract
+        run: docker compose config --quiet
+      - name: Build and start complete stack
+        run: docker compose up --build -d --wait --wait-timeout 240
+      - name: Verify single public gateway
+        run: |
+          curl -fsS http://127.0.0.1:8080/health/live
+          curl -fsS -o /dev/null http://127.0.0.1:8080/
+          if curl -fsS http://127.0.0.1:8080/openapi.json; then
+            echo "openapi.json must not be publicly exposed"
+            exit 1
+          fi
+      - name: Capture stack state
+        if: always()
+        run: docker compose ps && docker compose logs --no-color --tail=150
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v --remove-orphans
