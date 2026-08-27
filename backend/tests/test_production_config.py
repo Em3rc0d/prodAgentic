@@ -16,6 +16,7 @@ VALID_PRODUCTION_ENV = {
 
 
 def apply_valid_production_env(monkeypatch):
+    monkeypatch.delenv("PRODAGENTIC_SAME_ORIGIN_GATEWAY", raising=False)
     for key, value in VALID_PRODUCTION_ENV.items():
         monkeypatch.setenv(key, value)
 
@@ -30,6 +31,32 @@ def test_non_production_keeps_local_development_contract(monkeypatch):
 def test_valid_production_boundary_passes(monkeypatch):
     apply_valid_production_env(monkeypatch)
     validate_production_environment()
+
+
+def test_valid_same_origin_gateway_production_boundary_passes(monkeypatch):
+    apply_valid_production_env(monkeypatch)
+    monkeypatch.setenv("PRODAGENTIC_SAME_ORIGIN_GATEWAY", "true")
+    monkeypatch.setenv("PRODAGENTIC_COOKIE_SAMESITE", "lax")
+    validate_production_environment()
+
+
+def test_same_origin_gateway_rejects_broader_cookie_policy(monkeypatch):
+    apply_valid_production_env(monkeypatch)
+    monkeypatch.setenv("PRODAGENTIC_SAME_ORIGIN_GATEWAY", "true")
+    with pytest.raises(ProductionConfigurationError, match="same-origin gateway"):
+        validate_production_environment()
+
+
+def test_same_origin_gateway_rejects_extra_cors_origins(monkeypatch):
+    apply_valid_production_env(monkeypatch)
+    monkeypatch.setenv("PRODAGENTIC_SAME_ORIGIN_GATEWAY", "true")
+    monkeypatch.setenv("PRODAGENTIC_COOKIE_SAMESITE", "lax")
+    monkeypatch.setenv(
+        "CORS_ALLOWED_ORIGINS",
+        "https://app.prodagentic.example,https://other.example",
+    )
+    with pytest.raises(ProductionConfigurationError, match="only FRONTEND_URL"):
+        validate_production_environment()
 
 
 @pytest.mark.parametrize(
