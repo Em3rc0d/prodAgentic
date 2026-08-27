@@ -5,10 +5,11 @@ from agents.adapters.n8n_adapter import N8nAdapter
 from agents.router import ModelRouter
 from agents.orchestrator import PipelineOrchestrator
 from core.assets import get_render_storage_dir
-from core.settings import ApplicationSettings
+from core.settings import ApplicationSettings, LEGACY_WORKSPACE_ID
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 class ApplicationContainer:
     def __init__(self):
@@ -53,8 +54,13 @@ class ApplicationContainer:
         routing_policy = RoutingPolicy()
         routing_policy.allow_direct_provider_fallback_after_n8n_failure = n8n_fallback in ("true", "1")
 
-        self.router = ModelRouter(google_adapter=self.google_adapter, n8n_adapter=self.n8n_adapter, routing_policy=routing_policy)
-        self.pipeline_service = PipelineOrchestrator(self.router)
+        self.router = ModelRouter(
+            google_adapter=self.google_adapter,
+            n8n_adapter=self.n8n_adapter,
+            routing_policy=routing_policy,
+        )
+        workspace_id = self.settings.app_workspace_id if self.settings else LEGACY_WORKSPACE_ID
+        self.pipeline_service = PipelineOrchestrator(self.router, workspace_id=workspace_id)
 
         from agents.adapters.image import PollinationsImageAdapter
         from core.visual import VisualRenderService
@@ -69,12 +75,12 @@ class ApplicationContainer:
 
     async def shutdown(self):
         if self.client:
-            if hasattr(self.client, 'aio') and hasattr(self.client.aio, 'aclose'):
+            if hasattr(self.client, "aio") and hasattr(self.client.aio, "aclose"):
                 try:
                     await self.client.aio.aclose()
                 except Exception:
                     pass
-            if hasattr(self.client, 'close'):
+            if hasattr(self.client, "close"):
                 try:
                     self.client.close()
                 except Exception:
