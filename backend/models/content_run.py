@@ -36,6 +36,28 @@ class StageSnapshot(BaseModel):
     completed_at: Optional[datetime] = None
 
 
+class MemoryCandidateSnapshot(BaseModel):
+    memory_id: str
+    run_id: str
+    content_status: str
+    external_post_urn: Optional[str] = None
+    text_preview: str = Field(max_length=500)
+
+
+class MemoryCheckSnapshot(BaseModel):
+    status: str
+    outcome: str
+    checked_at: datetime
+    canonicalizer_version: str
+    normalized_sha256: str
+    final_memory_id: Optional[str] = None
+    candidates: list[MemoryCandidateSnapshot] = Field(default_factory=list, max_length=3)
+    error_message: Optional[str] = None
+    published_memory_id: Optional[str] = None
+    published_index_status: Optional[str] = None
+    published_indexed_at: Optional[datetime] = None
+
+
 class VisualArtifactSnapshot(BaseModel):
     render_id: str
     status: str
@@ -71,12 +93,16 @@ class PublicationSnapshot(BaseModel):
     attempt_id: str
     approval_id: str
     bundle_sha256: str
+    content_sha256: Optional[str] = None
+    dedupe_key: Optional[str] = None
     author_urn: Optional[str] = None
     started_at: datetime
     completed_at: Optional[datetime] = None
     external_post_urn: Optional[str] = None
     external_image_urn: Optional[str] = None
     error_message: Optional[str] = None
+    failure_retry_safety: Optional[str] = None
+    failure_phase: Optional[str] = None
 
 
 class ScheduleSnapshot(BaseModel):
@@ -97,6 +123,7 @@ class ContentRun(BaseModel):
     topic: str
     style: str
     idea: str
+    workspace_id: str = "legacy-default"
     status: ContentRunStatus = ContentRunStatus.GENERATING
     content_profile_id: Optional[str] = None
     content_profile_snapshot: Optional[dict] = None
@@ -108,6 +135,7 @@ class ContentRun(BaseModel):
     final_content: Optional[str] = None
     visual_prompt: Optional[str] = None
     visual_render: Optional[VisualArtifactSnapshot] = None
+    memory_check: Optional[MemoryCheckSnapshot] = None
     approval: Optional[ApprovalSnapshot] = None
     schedule: Optional[ScheduleSnapshot] = None
     publication: Optional[PublicationSnapshot] = None
