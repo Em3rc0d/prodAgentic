@@ -323,12 +323,14 @@ jobs:
           docker compose exec -T backend sh -c \
             'mkdir -p /data/prodagentic/assets && printf durable > /data/prodagentic/assets/ci-durable.txt'
 
-          docker compose restart mongo backend
-          docker compose up -d --wait --wait-timeout 180
+          docker compose restart mongo
+          docker compose up -d --wait --wait-timeout 120 mongo
+          docker compose restart backend
+          docker compose up -d --wait --wait-timeout 180 backend frontend gateway
 
           docker compose exec -T mongo mongosh content_engine --quiet --eval \
             'if (db.reconciliation.findOne({_id:"docker-ci"}).value !== "durable") quit(1)'
-          test "$(curl -fsS http://127.0.0.1:8080/assets/ci-durable.txt)" = "durable"
+          test "$(curl -fsS -b /tmp/prodagentic-cookies.txt http://127.0.0.1:8080/assets/ci-durable.txt)" = "durable"
 
       - name: Capture stack state
         if: always()
