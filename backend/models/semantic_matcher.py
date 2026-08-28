@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from models.grounding import ClaimProposal, EvidenceMatchProposal
 
@@ -39,6 +39,8 @@ class SemanticMatcherProviderResponse(BaseModel):
     identity, matcher identity and authoritative Grounding state are all owned by
     server-side code outside this schema.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     evidence_matches: list[EvidenceMatchProposal] = Field(default_factory=list)
 
@@ -88,11 +90,11 @@ class SemanticMatcherOutput(BaseModel):
 
 
 class SemanticMatchDraftRequest(BaseModel):
-    """Request a non-authoritative provider-generated Grounding draft."""
+    """Select evidence for matching against the server-reviewed claim snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
 
     packet_id: str
-    claims: list[ClaimProposal] = Field(default_factory=list)
-    extraction_complete: bool = True
 
     @field_validator("packet_id")
     @classmethod
@@ -101,10 +103,3 @@ class SemanticMatchDraftRequest(BaseModel):
         if not value:
             raise ValueError("packet_id must not be blank")
         return value
-
-    @model_validator(mode="after")
-    def require_unique_claims(self):
-        claim_ids = [claim.claim_id for claim in self.claims]
-        if len(claim_ids) != len(set(claim_ids)):
-            raise ValueError("semantic match request claim ids must be unique")
-        return self
