@@ -22,12 +22,21 @@ class ClaimExtractorProviderCandidate(BaseModel):
     claim_type: ClaimType
     confidence: float = Field(ge=0.0, le=1.0)
 
-    @field_validator("verbatim_span", "statement")
+    @field_validator("verbatim_span")
     @classmethod
-    def require_non_blank(cls, value: str):
+    def require_non_blank_verbatim_span(cls, value: str):
+        if not value.strip():
+            raise ValueError("verbatim_span must not be blank")
+        # Preserve the provider span exactly so server-side content matching is
+        # character-for-character rather than silently normalized.
+        return value
+
+    @field_validator("statement")
+    @classmethod
+    def normalize_statement(cls, value: str):
         value = value.strip()
         if not value:
-            raise ValueError("claim text must not be blank")
+            raise ValueError("statement must not be blank")
         return value
 
 
