@@ -244,3 +244,14 @@ class GroundingGateResult(BaseModel):
     blocking_claim_ids: list[str] = Field(default_factory=list)
     warning_claim_ids: list[str] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
+
+
+class GroundingEvaluationRequest(BaseModel):
+    source_packet: SourcePacket
+    assessment: GroundingAssessment
+
+    @model_validator(mode="after")
+    def require_matching_packet_ids(self):
+        if self.source_packet.packet_id != self.assessment.packet_id:
+            raise ValueError("assessment packet_id must match source_packet packet_id")
+        return self
