@@ -4,11 +4,20 @@ Status: reconciliation candidate for assisted private pilots.
 
 ## Product we are selling
 
-Commercial V1 is a **LinkedIn-first trusted content-production system** for an operator who wants AI assistance without handing publication authority to the model.
+Commercial V1 is a **LinkedIn-first trusted content-production system** for an operator who wants AI assistance without handing publication or factual authority to the model.
 
 The customer outcome is not “generate text.” It is:
 
-> turn working knowledge and ideas into reviewed, approved, scheduled or published LinkedIn content with durable evidence of what happened.
+> turn real knowledge, decisions and experience into content worth reading, while preserving inspectable evidence for the factual claims that survive human review and approval.
+
+The governing product principle is:
+
+> **prodAgentic does not invent a better story. It finds the best story the evidence already contains.**
+
+Commercial V1 therefore has two inseparable halves:
+
+- **Value Engine** — discover and express something worth attention.
+- **Trust Engine** — prove what the content is allowed to claim and preserve human authority.
 
 ## Intended first customer profile
 
@@ -17,6 +26,7 @@ Commercial V1 is best suited to an individual professional, founder, consultant,
 - publishes through one LinkedIn member identity;
 - wants a repeatable content workflow rather than isolated prompts;
 - values explicit human review before publishing;
+- wants factual claims tied to inspectable source/evidence material;
 - benefits from reusable positioning/voice constraints;
 - wants scheduling and publication evidence;
 - is comfortable with an assisted onboarding/deployment rather than self-service SaaS.
@@ -29,7 +39,13 @@ This release is not positioned as an enterprise multi-tenant platform.
 - research, writing, editing and visual agent stages;
 - durable ContentRun lifecycle and stage evidence;
 - review/edit workflow;
-- explicit immutable approval;
+- `SourcePacket` / `EvidenceRef` evidence boundary for grounded content;
+- claim taxonomy for facts, inferences, opinions, experiences, estimates and predictions;
+- deterministic Grounding policy with hard blocks for contradiction or insufficient evidence;
+- explicit human Grounding verification bound to exact content and assessment hashes;
+- edit-driven invalidation of stale Grounding;
+- fail-closed approval when current Grounding is not `PASS + VERIFIED`;
+- immutable approval bundle containing Grounding provenance digests;
 - LinkedIn OAuth connection;
 - text and visual LinkedIn publishing;
 - scheduling through the shared publication coordinator;
@@ -43,8 +59,13 @@ This release is not positioned as an enterprise multi-tenant platform.
 
 ## Explicitly outside Commercial V1
 
+The Grounding **authority/lifecycle boundary is included**, but fully autonomous semantic truth determination is not claimed. Commercial V1 still relies on explicit human verification of the claim-to-evidence map.
+
+Outside V1:
+
+- autonomous semantic Grounding without human verification;
+- general-purpose Knowledge Sources / continuous source ingestion;
 - semantic embeddings or semantic duplicate detection;
-- source grounding / Knowledge Sources;
 - Odyssey ingestion;
 - Personal Content Graph;
 - automatic voice learning;
@@ -63,6 +84,33 @@ The initial commercial motion is **assisted onboarding / private paid pilot**. P
 
 This lets the product begin generating commercial evidence before prematurely building subscription infrastructure.
 
+## Local content-quality qualification before deployment
+
+Deployment is not sufficient evidence that prodAgentic is valuable.
+
+Before treating Commercial V1 as commercially interesting, the local system must be evaluated against a Golden Content Set built from real project/working evidence. The goal is to measure two independent properties:
+
+1. **Editorial value** — would the operator genuinely want to publish the result?
+2. **Factual faithfulness** — does the result remain within the evidence and correctly distinguish fact, inference and opinion?
+
+A technically valid but generic post is a product-quality failure. A highly engaging post containing fabricated significance is a trust failure.
+
+The desired loop is:
+
+```text
+real evidence
+  -> SourcePacket
+  -> angle discovery
+  -> writing/editing
+  -> attention quality
+  -> claim extraction
+  -> Grounding
+  -> human verification
+  -> human content approval
+```
+
+No LinkedIn side effect is needed to run this local qualification.
+
 ## Assisted onboarding
 
 For each pilot:
@@ -74,11 +122,12 @@ For each pilot:
 5. create the initial Content Profile with the operator;
 6. connect LinkedIn through OAuth;
 7. verify the connection using sanitized status/receipt evidence;
-8. create one test ContentRun and review it manually;
-9. approve explicitly;
-10. validate scheduling or publication only with the operator's authorization;
-11. retain the sanitized release receipt;
-12. document support/escalation ownership for that pilot.
+8. create one grounded test ContentRun from explicit evidence;
+9. inspect the claim/evidence map and record Grounding `VERIFIED` only when the operator accepts it;
+10. review the final content and approve explicitly;
+11. validate scheduling or publication only with the operator's authorization;
+12. retain the sanitized release receipt;
+13. document support/escalation ownership for that pilot.
 
 No customer should be asked to send access tokens, OAuth authorization codes, session cookies or application secrets through chat/email.
 
@@ -96,6 +145,18 @@ A pilot may be treated as production-ready only when all applicable gates are gr
 - browser certification passes on desktop and mobile;
 - complete Docker stack certification passes;
 - exact candidate is based on current `main` with no unresolved divergence.
+
+### Content intelligence / Grounding
+
+- final content has a persisted SourcePacket in the authoritative workspace;
+- claim extraction is complete for the revision being reviewed;
+- Grounding assessment SHA matches exact final-content SHA;
+- deterministic Grounding policy returns `PASS`;
+- contradicted or insufficiently supported factual claims cannot pass;
+- supported inferences remain visible to the reviewer;
+- explicit human Grounding review is `VERIFIED` for the exact assessment/content revision;
+- any subsequent content edit invalidates the old assessment/review;
+- approval freezes Grounding provenance digests into its immutable bundle.
 
 ### Runtime
 
@@ -133,11 +194,13 @@ The verifier performs no LinkedIn HTTP request.
 - Never commit `.env` or deployment secrets.
 - Never collect a LinkedIn access token from the customer manually for normal production use.
 - Never copy OAuth callback `code` or `state` values into tickets, chat or release receipts.
+- Never mark Grounding `VERIFIED` merely because a model classified a claim as grounded.
+- Never approve content with stale or blocked Grounding.
 - Never retry a `RECONCILIATION_REQUIRED` publication automatically.
 - Never bypass approval to speed up a demo.
 - Never expose MongoDB or FastAPI directly when using the provided gateway topology.
 - Rotate application/session/token-encryption secrets if disclosure is suspected.
-- Treat production logs and database exports as potentially sensitive operational data.
+- Treat production logs, SourcePackets and database exports as potentially sensitive operational data.
 
 ## Support and incident posture
 
@@ -145,6 +208,7 @@ Commercial V1 is an assisted product. Until self-service tenancy, billing and au
 
 - provision and rotate secrets;
 - inspect health and logs;
+- inspect and correct Grounding evidence when the system blocks a claim;
 - reconnect LinkedIn when required;
 - reconcile ambiguous publication outcomes manually;
 - restore Mongo/assets from the deployment's backup system;
@@ -154,20 +218,23 @@ Commercial V1 is an assisted product. Until self-service tenancy, billing and au
 
 Measure product value before building more platform surface. Useful pilot signals include:
 
-- time from idea to approved post;
-- percentage of generated runs reaching approval;
+- percentage of generated outputs the operator would genuinely publish;
+- time from evidence/idea to approved post;
+- percentage of factual claims passing Grounding without manual factual repair;
+- frequency and cause of `INSUFFICIENT_EVIDENCE` / `CONTRADICTED` claims;
 - amount of human editing before approval;
 - repeat use of Content Profiles;
 - scheduling/publishing success rate;
 - duplicate/reconciliation incidents;
 - whether the operator returns to create the next piece of content.
 
-No analytics feature is required to begin collecting these pilot observations manually.
+Once real LinkedIn analytics are available, attention and profile-visit signals can be compared with the local editorial-quality predictions. No automated analytics-learning feature is required to begin collecting those observations manually.
 
 ## Exit criteria from assisted pilot to broader SaaS
 
 Do not widen distribution merely because the stack is deployable. A broader self-service launch should wait for evidence that the core workflow is repeatedly valuable and for at least:
 
+- measured Golden Content Set quality demonstrating both editorial value and faithfulness;
 - multi-user/workspace authorization model;
 - customer-safe provisioning and secret lifecycle;
 - billing/entitlement model;
