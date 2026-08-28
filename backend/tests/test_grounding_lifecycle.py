@@ -10,9 +10,14 @@ from core.grounding import GroundingPolicy
 from models.content_run import ContentRunApprovalRequest, ContentRunStatus
 from models.grounding import (
     Claim,
+    ClaimProposal,
     ClaimType,
+    EvidenceMatchProposal,
     EvidenceRef,
+    EvidenceRelation,
     GroundingAssessment,
+    GroundingDraftEvaluationRequest,
+    GroundingEvaluationDraft,
     GroundingEvaluationRequest,
     GroundingReviewDecision,
     GroundingReviewRequest,
@@ -24,6 +29,7 @@ from models.grounding import (
 from routes.content_runs import (
     approve_content_run,
     evaluate_content_run_grounding,
+    evaluate_content_run_grounding_draft,
     review_content_run_grounding,
 )
 
@@ -99,14 +105,8 @@ def review_run(final_content="Two tests failed."):
     }
 
 
-def grounding_request(
-    final_content="Two tests failed.",
-    *,
-    workspace_id="workspace-1",
-    status=GroundingStatus.GROUNDED,
-    statement="Two tests failed.",
-):
-    packet = SourcePacket(
+def source_packet(workspace_id="workspace-1"):
+    return SourcePacket(
         packet_id="packet-1",
         workspace_id=workspace_id,
         title="CI evidence",
@@ -120,6 +120,16 @@ def grounding_request(
             )
         ],
     )
+
+
+def grounding_request(
+    final_content="Two tests failed.",
+    *,
+    workspace_id="workspace-1",
+    status=GroundingStatus.GROUNDED,
+    statement="Two tests failed.",
+):
+    packet = source_packet(workspace_id)
     assessment = GroundingAssessment(
         assessment_id="assessment-1",
         packet_id=packet.packet_id,
@@ -140,6 +150,37 @@ def grounding_request(
     return GroundingEvaluationRequest(source_packet=packet, assessment=assessment)
 
 
+def grounding_draft_request(final_content="Two tests failed."):
+    packet = source_packet()
+    draft = GroundingEvaluationDraft(
+        draft_id="draft-1",
+        packet_id=packet.packet_id,
+        content_sha256=hashlib.sha256(final_content.encode("utf-8")).hexdigest(),
+        evaluator_version="semantic-proposal-fixture-v1",
+        extraction_complete=True,
+        claims=[
+            ClaimProposal(
+                claim_id="claim-1",
+                statement=final_content,
+                claim_type=ClaimType.FACT,
+                confidence=0.95,
+                text_start=0,
+                text_end=len(final_content),
+            )
+        ],
+        evidence_matches=[
+            EvidenceMatchProposal(
+                claim_id="claim-1",
+                evidence_id="ev-1",
+                relation=EvidenceRelation.SUPPORTS,
+                confidence=0.9,
+                rationale="The evidence directly states that two tests failed.",
+            )
+        ],
+    )
+    return GroundingDraftEvaluationRequest(source_packet=packet, draft=draft)
+
+
 def install_db(monkeypatch, run):
     db = FakeDb(run)
     monkeypatch.setattr(content_runs_routes, "get_db", lambda: db)
@@ -155,6 +196,7 @@ async def test_exact_revision_grounding_persists_pass_and_clears_old_human_revie
         "decision": "VERIFIED",
         "source": "explicit_user_action",
         "content_sha256": "a" * 64,
+        "source_packet_sha256": "c" * 64,
         "assessment_sha256": "b" * 64,
         "policy_version": GroundingPolicy.VERSION,
         "warning_claim_ids": [],
@@ -167,6 +209,23 @@ async def test_exact_revision_grounding_persists_pass_and_clears_old_human_revie
     assert updated["grounding_gate"]["decision"] == "PASS"
     assert updated["grounding_review"] is None
     assert db["content_runs"].doc["source_packet"]["workspace_id"] == "workspace-1"
+
+
+@pytest.mark.asyncio
+async def test_draft_route_derives_grounded_state_instead_of_accepting_grounding_status(monkeypatch):
+    db = install_db(monkeypatch, review_run())
+
+    updated = await evaluate_content_run_grounding_draft(
+        "run-grounding",
+        grounding_draft_request(),
+    )
+
+    assert updated["grounding_assessment"]["claims"][0]["grounding_status"] == "GROUNDED"
+    assert updated["grounding_assessment"]["claims"][0]["source_refs"] == ["ev-1"]
+    assert updated["grounding_gate"]["decision"] == "PASS"
+    assert updated["grounding_review"] is None
+    assert "grounding-assessment-builder-v1" in updated["grounding_assessment"]["evaluator_version"]
+    assert db["content_runs"].doc["source_packet"]["packet_id"] == "packet-1"
 
 
 @pytest.mark.asyncio
@@ -219,7 +278,7 @@ async def test_blocked_assessment_is_inspectable_but_cannot_be_human_verified(mo
 
 
 @pytest.mark.asyncio
-async def test_human_verification_is_bound_to_exact_content_and_assessment_hashes(monkeypatch):
+async def test_human_verification_is_bound_to_content_source_packet_and_assessment_hashes(monkeypatch):
     install_db(monkeypatch, review_run())
     await evaluate_content_run_grounding("run-grounding", grounding_request())
 
@@ -231,7 +290,9 @@ async def test_human_verification_is_bound_to_exact_content_and_assessment_hashe
     review = reviewed["grounding_review"]
     assert review["decision"] == "VERIFIED"
     assert review["content_sha256"] == hashlib.sha256(b"Two tests failed.").hexdigest()
+    expected_source_sha = content_runs_routes._sha256_json(reviewed["source_packet"])
     expected_assessment_sha = content_runs_routes._sha256_json(reviewed["grounding_assessment"])
+    assert review["source_packet_sha256"] == expected_source_sha
     assert review["assessment_sha256"] == expected_assessment_sha
     assert review["policy_version"] == GroundingPolicy.VERSION
 
@@ -256,12 +317,14 @@ async def test_approval_recomputes_policy_and_ignores_tampered_stored_pass(monke
         "warning_claim_ids": [],
         "reasons": [],
     }
+    source_packet_sha = content_runs_routes._sha256_json(db["content_runs"].doc["source_packet"])
     assessment_sha = content_runs_routes._sha256_json(db["content_runs"].doc["grounding_assessment"])
     db["content_runs"].doc["grounding_review"] = {
         "review_id": "tampered-review",
         "decision": "VERIFIED",
         "source": "explicit_user_action",
         "content_sha256": hashlib.sha256(run["final_content"].encode("utf-8")).hexdigest(),
+        "source_packet_sha256": source_packet_sha,
         "assessment_sha256": assessment_sha,
         "policy_version": GroundingPolicy.VERSION,
         "warning_claim_ids": [],
