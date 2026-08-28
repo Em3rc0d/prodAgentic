@@ -111,6 +111,37 @@ def test_semantic_matcher_cannot_return_relation_for_unextracted_claim():
         )
 
 
+def test_semantic_matcher_cannot_return_relation_for_unknown_evidence():
+    source_packet = packet()
+    matcher_input = SemanticMatcherInput(
+        packet_id="packet-1",
+        content_sha256=CONTENT_SHA,
+        claims=[claim()],
+    )
+    matcher_output = SemanticMatcherOutput(
+        match_id="m1",
+        packet_id="packet-1",
+        content_sha256=CONTENT_SHA,
+        matcher_version="fake-semantic-v1",
+        evidence_matches=[
+            EvidenceMatchProposal(
+                claim_id="c1",
+                evidence_id="invented-evidence",
+                relation=EvidenceRelation.SUPPORTS,
+                confidence=0.9,
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="unknown evidence"):
+        SemanticMatcherBoundary.to_grounding_draft(
+            matcher_input,
+            matcher_output,
+            source_packet,
+            extraction_complete=True,
+        )
+
+
 def test_semantic_matcher_output_cannot_switch_content_revision():
     source_packet = packet()
     matcher_input = SemanticMatcherInput(
