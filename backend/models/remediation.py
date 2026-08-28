@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from models.grounding import ClaimType
 
@@ -71,6 +71,26 @@ class ClaimRemediationProposal(BaseModel):
                 raise ValueError(f"{self.action.value} must not hide replacement wording")
             if self.source_refs:
                 raise ValueError(f"{self.action.value} does not accept source_refs")
+        return self
+
+
+class RemediatorProviderResponse(BaseModel):
+    """Narrow untrusted provider payload for blocked-claim remediation.
+
+    The provider may suggest wording/actions only. Revision identity, evidence
+    identity digests, assessment identity and all Grounding authority remain
+    server-owned outside this schema.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    proposals: list[ClaimRemediationProposal] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def require_unique_claim_proposals(self):
+        claim_ids = [proposal.claim_id for proposal in self.proposals]
+        if len(claim_ids) != len(set(claim_ids)):
+            raise ValueError("only one provider remediation proposal is allowed per claim")
         return self
 
 
