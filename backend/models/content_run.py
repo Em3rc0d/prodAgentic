@@ -4,6 +4,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from models.grounding import GroundingAssessment, GroundingGateResult, SourcePacket
+
 
 class ContentRunStatus(str, Enum):
     GENERATING = "GENERATING"
@@ -136,6 +138,9 @@ class ContentRun(BaseModel):
     visual_prompt: Optional[str] = None
     visual_render: Optional[VisualArtifactSnapshot] = None
     memory_check: Optional[MemoryCheckSnapshot] = None
+    source_packet: Optional[SourcePacket] = None
+    grounding_assessment: Optional[GroundingAssessment] = None
+    grounding_gate: Optional[GroundingGateResult] = None
     approval: Optional[ApprovalSnapshot] = None
     schedule: Optional[ScheduleSnapshot] = None
     publication: Optional[PublicationSnapshot] = None
