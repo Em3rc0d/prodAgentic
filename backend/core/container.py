@@ -2,6 +2,7 @@ import os
 from google import genai
 from agents.adapters.google_adapter import GoogleDirectAdapter
 from agents.adapters.n8n_adapter import N8nAdapter
+from agents.adapters.semantic_matcher import StructuredSemanticMatcherAdapter
 from agents.router import ModelRouter
 from agents.orchestrator import PipelineOrchestrator
 from core.assets import get_render_storage_dir
@@ -18,6 +19,7 @@ class ApplicationContainer:
         self.n8n_adapter = None
         self.router = None
         self.pipeline_service = None
+        self.semantic_matcher = None
         self.visual_service = None
         self.settings = None
         self.preflight_task = None
@@ -38,9 +40,14 @@ class ApplicationContainer:
             logger.error("GEMINI_API_KEY not found in environment!")
             self.client = None
             self.google_adapter = None
+            self.semantic_matcher = None
         else:
             self.client = genai.Client(api_key=api_key)
             self.google_adapter = GoogleDirectAdapter(self.client)
+            # Grounding semantic matching uses a deliberately narrow non-streaming
+            # provider surface. Its output remains advisory until it passes the
+            # deterministic boundary/builder/policy and explicit human review.
+            self.semantic_matcher = StructuredSemanticMatcherAdapter(self.google_adapter)
 
         from agents.router import ModelRouter, RoutingPolicy
 
