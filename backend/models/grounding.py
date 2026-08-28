@@ -99,6 +99,35 @@ class EvidenceRef(BaseModel):
         return self
 
 
+class EvidenceBoundStatement(BaseModel):
+    """An explicit generation constraint whose authority remains inspectable."""
+
+    statement_id: str
+    statement: str
+    source_refs: list[str] = Field(min_length=1)
+
+    @field_validator("statement_id", "statement")
+    @classmethod
+    def require_non_blank(cls, value: str):
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @field_validator("source_refs")
+    @classmethod
+    def normalize_source_refs(cls, value: list[str]):
+        normalized = []
+        for item in value:
+            item = item.strip()
+            if not item:
+                raise ValueError("source_refs must not contain blank values")
+            normalized.append(item)
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("source_refs must be unique")
+        return normalized
+
+
 class SourcePacket(BaseModel):
     packet_id: str
     workspace_id: str
@@ -106,7 +135,8 @@ class SourcePacket(BaseModel):
     summary: Optional[str] = None
     strict_mode: bool = True
     evidence: list[EvidenceRef] = Field(default_factory=list)
-    allowed_inferences: list[str] = Field(default_factory=list)
+    allowed_facts: list[EvidenceBoundStatement] = Field(default_factory=list)
+    allowed_inferences: list[EvidenceBoundStatement] = Field(default_factory=list)
     prohibited_claims: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -126,12 +156,95 @@ class SourcePacket(BaseModel):
         value = value.strip()
         return value or None
 
+    @field_validator("prohibited_claims")
+    @classmethod
+    def normalize_prohibited_claims(cls, value: list[str]):
+        normalized = []
+        for item in value:
+            item = item.strip()
+            if not item:
+                raise ValueError("prohibited_claims must not contain blank values")
+            normalized.append(item)
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("prohibited_claims must be unique")
+        return normalized
+
     @model_validator(mode="after")
-    def require_unique_evidence_ids(self):
+    def require_coherent_evidence_policy(self):
         evidence_ids = [item.evidence_id for item in self.evidence]
         if len(evidence_ids) != len(set(evidence_ids)):
             raise ValueError("evidence_id values must be unique within a source packet")
+
+        known_evidence = set(evidence_ids)
+        statements = [*self.allowed_facts, *self.allowed_inferences]
+        statement_ids = [item.statement_id for item in statements]
+        if len(statement_ids) != len(set(statement_ids)):
+            raise ValueError("statement_id values must be unique within a source packet")
+
+        for statement in statements:
+            unknown = [ref for ref in statement.source_refs if ref not in known_evidence]
+            if unknown:
+                raise ValueError(
+                    f"statement {statement.statement_id} references evidence outside the source packet: {', '.join(unknown)}"
+                )
         return self
+
+
+class SourcePacketCreateRequest(BaseModel):
+    """Client payload for server-owned pre-generation SourcePacket identity/scope."""
+
+    title: str
+    summary: Optional[str] = None
+    strict_mode: bool = True
+    evidence: list[EvidenceRef] = Field(default_factory=list)
+    allowed_facts: list[EvidenceBoundStatement] = Field(default_factory=list)
+    allowed_inferences: list[EvidenceBoundStatement] = Field(default_factory=list)
+    prohibited_claims: list[str] = Field(default_factory=list)
+
+    @field_validator("title")
+    @classmethod
+    def require_title(cls, value: str):
+        value = value.strip()
+        if not value:
+            raise ValueError("title must not be blank")
+        return value
+
+    @field_validator("summary")
+    @classmethod
+    def normalize_summary(cls, value: Optional[str]):
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+
+class FactualEnvelope(BaseModel):
+    """Typed pre-generation truth boundary consumed by content agents."""
+
+    envelope_version: str
+    packet_id: str
+    workspace_id: str
+    source_packet_sha256: str = Field(min_length=64, max_length=64)
+    strict_mode: bool
+    allowed_facts: list[EvidenceBoundStatement] = Field(default_factory=list)
+    allowed_inferences: list[EvidenceBoundStatement] = Field(default_factory=list)
+    prohibited_claims: list[str] = Field(default_factory=list)
+
+    @field_validator("envelope_version", "packet_id", "workspace_id")
+    @classmethod
+    def require_non_blank(cls, value: str):
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @field_validator("source_packet_sha256")
+    @classmethod
+    def require_sha256_hex(cls, value: str):
+        value = value.lower()
+        if any(ch not in "0123456789abcdef" for ch in value):
+            raise ValueError("source_packet_sha256 must be hexadecimal")
+        return value
 
 
 class ClaimProposal(BaseModel):
