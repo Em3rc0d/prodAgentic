@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 import agents.adapters.value_engine as value_module
-from agents.adapters.types import ModelExecutionResult
+from agents.adapters.types import ErrorCode, ModelExecutionError, ModelExecutionResult
 from agents.adapters.value_engine import (
     StructuredAngleEngineAdapter,
     StructuredAttentionCriticAdapter,
@@ -91,6 +91,41 @@ def angle_payload(ref="fact-1"):
     })
 
 
+def critic_payload():
+    return json.dumps({
+        "hook": 0.8,
+        "idea_clarity": 0.9,
+        "novelty": 0.7,
+        "specificity": 0.8,
+        "credibility_signal": 0.8,
+        "narrative_progression": 0.7,
+        "payoff": 0.8,
+        "human_voice": 0.8,
+        "conversation_potential": 0.7,
+        "profile_curiosity": 0.7,
+        "spam_risk": 0.05,
+        "ai_slop_risk": 0.05,
+        "engagement_bait_detected": False,
+        "generic_opening_detected": False,
+        "strengths": ["Specific technical idea"],
+        "rewrite_directives": [],
+    })
+
+
+def capability_error(model="model-primary"):
+    return ModelExecutionError(
+        category=ErrorCode.MODEL_CAPABILITY_UNAVAILABLE,
+        provider="google",
+        model_id=model,
+        attempt_id="attempt-primary",
+        http_status=400,
+        provider_error_code="INVALID_ARGUMENT",
+        retryable=False,
+        fallback_allowed=True,
+        sanitized_message="Google API Error: MODEL_CAPABILITY_UNAVAILABLE",
+    )
+
+
 @pytest.mark.asyncio
 async def test_angle_engine_uses_structured_schema_and_server_owned_ids():
     provider = FakeProvider([angle_payload()])
@@ -110,6 +145,47 @@ async def test_angle_engine_uses_structured_schema_and_server_owned_ids():
     assert kwargs["response_mime_type"] == "application/json"
     assert kwargs["response_schema"].__name__ == "AngleProviderResponse"
     assert kwargs["profile_name"] == "ANGLE_ENGINE"
+
+
+@pytest.mark.asyncio
+async def test_angle_engine_falls_back_when_primary_lacks_structured_output_capability():
+    provider = FakeProvider([capability_error(), angle_payload()])
+    adapter = StructuredAngleEngineAdapter(provider)
+
+    output = await adapter.discover(
+        idea="Trust boundaries",
+        research="Research notes",
+        factual_envelope=envelope(),
+    )
+
+    assert [call[0] for call in provider.calls] == ["model-primary", "model-fallback"]
+    assert output.engine_version.endswith(":model-fallback")
+
+
+@pytest.mark.asyncio
+async def test_angle_engine_does_not_fallback_on_generic_invalid_request():
+    error = ModelExecutionError(
+        category=ErrorCode.INVALID_REQUEST,
+        provider="google",
+        model_id="model-primary",
+        attempt_id="attempt-primary",
+        http_status=400,
+        provider_error_code="INVALID_ARGUMENT",
+        retryable=False,
+        fallback_allowed=False,
+        sanitized_message="Google API Error: INVALID_REQUEST",
+    )
+    provider = FakeProvider([error, angle_payload()])
+    adapter = StructuredAngleEngineAdapter(provider)
+
+    with pytest.raises(ModelExecutionError):
+        await adapter.discover(
+            idea="Trust boundaries",
+            research="Research notes",
+            factual_envelope=envelope(),
+        )
+
+    assert len(provider.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -228,24 +304,7 @@ def test_quality_policy_hard_rewrites_engagement_bait_and_ai_slop():
 @pytest.mark.asyncio
 async def test_attention_critic_is_structured_and_advisory():
     content = "A specific technical post."
-    provider = FakeProvider([json.dumps({
-        "hook": 0.8,
-        "idea_clarity": 0.9,
-        "novelty": 0.7,
-        "specificity": 0.8,
-        "credibility_signal": 0.8,
-        "narrative_progression": 0.7,
-        "payoff": 0.8,
-        "human_voice": 0.8,
-        "conversation_potential": 0.7,
-        "profile_curiosity": 0.7,
-        "spam_risk": 0.05,
-        "ai_slop_risk": 0.05,
-        "engagement_bait_detected": False,
-        "generic_opening_detected": False,
-        "strengths": ["Specific technical idea"],
-        "rewrite_directives": []
-    })])
+    provider = FakeProvider([critic_payload()])
     adapter = StructuredAttentionCriticAdapter(provider)
 
     assessment = await adapter.critique(content=content, pass_number=1)
@@ -255,3 +314,15 @@ async def test_attention_critic_is_structured_and_advisory():
     _, _, kwargs = provider.calls[0]
     assert kwargs["response_schema"].__name__ == "AttentionCriticProviderResponse"
     assert kwargs["temperature"] == 0
+
+
+@pytest.mark.asyncio
+async def test_attention_critic_falls_back_when_primary_lacks_structured_output_capability():
+    content = "A specific technical post."
+    provider = FakeProvider([capability_error(), critic_payload()])
+    adapter = StructuredAttentionCriticAdapter(provider)
+
+    assessment = await adapter.critique(content=content, pass_number=1)
+
+    assert [call[0] for call in provider.calls] == ["model-primary", "model-fallback"]
+    assert assessment.critic_version.endswith(":model-fallback")
