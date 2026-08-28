@@ -15,6 +15,19 @@ from core.scheduler import run_due_schedules_once
 from core.auth import AuthSettings, SessionManager, router as auth_router, security_boundary
 from core.linkedin import LinkedInPublisher
 from models.content_run import ContentRunApprovalRequest, ContentRunEditRequest, ContentRunScheduleRequest, ContentRunStatus
+from models.grounding import (
+    Claim,
+    ClaimType,
+    EvidenceRef,
+    GroundingAssessment,
+    GroundingEvaluationRequest,
+    GroundingReviewDecision,
+    GroundingReviewRequest,
+    GroundingStatus,
+    SourceAuthority,
+    SourcePacket,
+    SourceType,
+)
 
 
 class UpdateResult:
@@ -129,6 +142,7 @@ def generated_run(visual_render=None):
     now = datetime.now(timezone.utc)
     return {
         "run_id": "release-run-001",
+        "workspace_id": "legacy-default",
         "topic": "Controlled agentic systems",
         "style": "educational",
         "idea": "Why authority boundaries matter",
@@ -142,6 +156,10 @@ def generated_run(visual_render=None):
         "final_content": "Generated draft requiring human review.",
         "visual_prompt": "A controlled workflow with explicit authority boundaries",
         "visual_render": visual_render,
+        "source_packet": None,
+        "grounding_assessment": None,
+        "grounding_gate": None,
+        "grounding_review": None,
         "approval": None,
         "schedule": None,
         "publication": None,
@@ -150,8 +168,55 @@ def generated_run(visual_render=None):
     }
 
 
+def grounding_request(final_content: str) -> GroundingEvaluationRequest:
+    packet = SourcePacket(
+        packet_id="packet-release-001",
+        workspace_id="legacy-default",
+        title="Release E2E evidence",
+        evidence=[
+            EvidenceRef(
+                evidence_id="ev-release-copy",
+                authority=SourceAuthority.USER_PROVIDED,
+                source_type=SourceType.PASTED_TEXT,
+                excerpt=final_content,
+            )
+        ],
+    )
+    assessment = GroundingAssessment(
+        assessment_id="assessment-release-001",
+        packet_id=packet.packet_id,
+        content_sha256=hashlib.sha256(final_content.encode("utf-8")).hexdigest(),
+        evaluator_version="release-e2e-fixture-v1",
+        extraction_complete=True,
+        claims=[
+            Claim(
+                claim_id="claim-release-copy",
+                statement=final_content,
+                claim_type=ClaimType.FACT,
+                grounding_status=GroundingStatus.GROUNDED,
+                source_refs=["ev-release-copy"],
+                confidence=1.0,
+            )
+        ],
+    )
+    return GroundingEvaluationRequest(source_packet=packet, assessment=assessment)
+
+
+async def ground_and_verify(final_content: str):
+    evaluated = await content_run_routes.evaluate_content_run_grounding(
+        "release-run-001",
+        grounding_request(final_content),
+    )
+    assert evaluated["grounding_gate"]["decision"] == "PASS"
+    reviewed = await content_run_routes.review_content_run_grounding(
+        "release-run-001",
+        GroundingReviewRequest(decision=GroundingReviewDecision.VERIFIED),
+    )
+    assert reviewed["grounding_review"]["decision"] == "VERIFIED"
+
+
 @pytest.mark.asyncio
-async def test_release_lifecycle_reopen_edit_approve_schedule_publish_exactly_once(monkeypatch, tmp_path):
+async def test_release_lifecycle_reopen_edit_ground_approve_schedule_publish_exactly_once(monkeypatch, tmp_path):
     image_bytes = b"release-approved-image-bytes"
     renders = tmp_path / "renders"
     renders.mkdir()
@@ -184,6 +249,8 @@ async def test_release_lifecycle_reopen_edit_approve_schedule_publish_exactly_on
     assert edited["final_content"] == "Human-reviewed final content."
     assert edited["stages"] == reopened["stages"]
 
+    await ground_and_verify("Human-reviewed final content.")
+
     approved = await content_run_routes.approve_content_run(
         "release-run-001",
         ContentRunApprovalRequest(include_visual=True),
@@ -191,6 +258,7 @@ async def test_release_lifecycle_reopen_edit_approve_schedule_publish_exactly_on
     assert approved["status"] == ContentRunStatus.APPROVED.value
     assert approved["approval"]["final_content"] == "Human-reviewed final content."
     assert approved["approval"]["visual_render"]["asset_sha256"] == visual_render["asset_sha256"]
+    assert approved["approval"]["grounding_policy_version"] == "grounding-policy-v1"
     approved_bundle = approved["approval"]["bundle_sha256"]
 
     scheduled_for = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -245,7 +313,7 @@ async def test_release_lifecycle_reopen_edit_approve_schedule_publish_exactly_on
     await client.aclose()
 
 
-def test_authenticated_http_reopen_edit_approve_and_schedule(monkeypatch):
+def test_authenticated_http_reopen_edit_ground_approve_and_schedule(monkeypatch):
     db = FakeDb(generated_run())
     monkeypatch.setattr(content_run_routes, "get_db", lambda: db)
     monkeypatch.setattr(scheduling_routes, "get_db", lambda: db)
@@ -279,18 +347,37 @@ def test_authenticated_http_reopen_edit_approve_and_schedule(monkeypatch):
         assert reopened.status_code == 200
         assert reopened.json()["status"] == ContentRunStatus.READY_FOR_REVIEW.value
 
+        final_content = "HTTP-reviewed final content."
         assert client.patch(
             "/api/content-runs/release-run-001",
             headers=headers,
-            json={"final_content": "HTTP-reviewed final content."},
+            json={"final_content": final_content},
         ).status_code == 200
+
+        grounding = grounding_request(final_content)
+        evaluated = client.post(
+            "/api/content-runs/release-run-001/grounding/evaluate",
+            headers=headers,
+            json=grounding.model_dump(mode="json"),
+        )
+        assert evaluated.status_code == 200
+        assert evaluated.json()["grounding_gate"]["decision"] == "PASS"
+
+        reviewed = client.post(
+            "/api/content-runs/release-run-001/grounding/review",
+            headers=headers,
+            json={"decision": "VERIFIED"},
+        )
+        assert reviewed.status_code == 200
+        assert reviewed.json()["grounding_review"]["decision"] == "VERIFIED"
+
         approved = client.post(
             "/api/content-runs/release-run-001/approve",
             headers=headers,
             json={"include_visual": False},
         )
         assert approved.status_code == 200
-        assert approved.json()["approval"]["final_content"] == "HTTP-reviewed final content."
+        assert approved.json()["approval"]["final_content"] == final_content
 
         scheduled = client.post(
             "/api/content-runs/release-run-001/schedule",
@@ -319,6 +406,7 @@ async def test_approved_visual_tampering_stops_before_external_request(monkeypat
     }
     db = FakeDb(generated_run(visual_render=visual_render))
     monkeypatch.setattr(content_run_routes, "get_db", lambda: db)
+    await ground_and_verify("Generated draft requiring human review.")
     approved = await content_run_routes.approve_content_run(
         "release-run-001", ContentRunApprovalRequest(include_visual=True)
     )
