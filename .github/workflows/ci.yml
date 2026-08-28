@@ -58,7 +58,15 @@ jobs:
         run: python -m compileall .
       - name: Run Backend Tests
         working-directory: backend
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=backend-pytest.xml
+      - name: Upload Backend Test Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-evidence
+          path: backend/backend-pytest.xml
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Build Production Backend Image
         run: docker build -t prodagentic-backend:ci ./backend
       - name: Smoke Production Backend Image
@@ -275,7 +283,6 @@ jobs:
           PRODAGENTIC_ADMIN_USER=admin
           PRODAGENTIC_ADMIN_PASSWORD=docker-ci-password
           PRODAGENTIC_SESSION_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef
-          PRODAGENTIC_SESSION_TTL_SECONDS=43200
           PRODAGENTIC_LINKEDIN_TOKEN_KEY=docker-ci-linkedin-token-key-that-is-long-enough
           LINKEDIN_CLIENT_ID=docker-ci-client
           LINKEDIN_CLIENT_SECRET=docker-ci-secret-no-external-call
