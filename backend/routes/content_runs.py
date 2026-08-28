@@ -9,12 +9,13 @@ from fastapi import APIRouter, HTTPException, Query
 
 from core.content_identity import build_content_identity
 from core.content_memory import ContentMemoryService
-from core.grounding import GroundingPolicy
+from core.grounding import GroundingAssessmentBuilder, GroundingPolicy
 from db.mongo import get_db
 from models.content_run import ContentRunApprovalRequest, ContentRunEditRequest, ContentRunStatus
 from models.grounding import (
     GroundingAssessment,
     GroundingDecision,
+    GroundingDraftEvaluationRequest,
     GroundingEvaluationRequest,
     GroundingReviewDecision,
     GroundingReviewRequest,
@@ -116,6 +117,8 @@ def _require_verified_grounding(existing: dict) -> dict:
         raise HTTPException(status_code=409, detail="Grounding review is not VERIFIED")
     if review.content_sha256 != material["final_content_sha256"]:
         raise HTTPException(status_code=409, detail="Grounding review is stale relative to final content")
+    if review.source_packet_sha256 != material["source_packet_sha256"]:
+        raise HTTPException(status_code=409, detail="Grounding review is stale relative to the current source evidence")
     if review.assessment_sha256 != material["assessment_sha256"]:
         raise HTTPException(status_code=409, detail="Grounding review is stale relative to the current assessment")
     if review.policy_version != gate.policy_version:
@@ -336,6 +339,60 @@ async def evaluate_content_run_grounding(run_id: str, req: GroundingEvaluationRe
     return _serialize(updated)
 
 
+@router.post("/content-runs/{run_id}/grounding/evaluate-draft")
+async def evaluate_content_run_grounding_draft(run_id: str, req: GroundingDraftEvaluationRequest):
+    """Derive and persist authoritative Grounding state from semantic proposals."""
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="MongoDB not connected")
+
+    collection = db["content_runs"]
+    existing = await collection.find_one({"run_id": run_id})
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Content run not found")
+    if existing.get("status") != ContentRunStatus.READY_FOR_REVIEW.value:
+        raise HTTPException(status_code=409, detail="Grounding draft evaluation requires READY_FOR_REVIEW content")
+
+    final_content = existing.get("final_content")
+    if not isinstance(final_content, str) or not final_content.strip():
+        raise HTTPException(status_code=409, detail="Final content is not ready for grounding")
+
+    workspace_id = existing.get("workspace_id") or "legacy-default"
+    if req.source_packet.workspace_id != workspace_id:
+        raise HTTPException(status_code=409, detail="Source packet workspace does not match ContentRun workspace")
+
+    current_content_sha256 = _sha256_text(final_content)
+    if req.draft.content_sha256 != current_content_sha256:
+        raise HTTPException(status_code=409, detail="Grounding draft does not match current final content")
+
+    try:
+        assessment = GroundingAssessmentBuilder.build(req.draft, req.source_packet)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=f"Grounding draft is invalid: {exc}") from exc
+
+    gate = GroundingPolicy.evaluate(assessment, req.source_packet)
+    now = datetime.now(timezone.utc)
+    result = await collection.update_one(
+        {
+            "run_id": run_id,
+            "status": ContentRunStatus.READY_FOR_REVIEW.value,
+            "updated_at": existing.get("updated_at"),
+        },
+        {"$set": {
+            "source_packet": req.source_packet.model_dump(mode="python"),
+            "grounding_assessment": assessment.model_dump(mode="python"),
+            "grounding_gate": gate.model_dump(mode="python"),
+            "grounding_review": None,
+            "updated_at": now,
+        }},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Content run changed while Grounding draft was being evaluated")
+
+    updated = await collection.find_one({"run_id": run_id})
+    return _serialize(updated)
+
+
 @router.post("/content-runs/{run_id}/grounding/review")
 async def review_content_run_grounding(run_id: str, req: GroundingReviewRequest):
     """Record the explicit human decision over the current claim/evidence map."""
@@ -360,6 +417,7 @@ async def review_content_run_grounding(run_id: str, req: GroundingReviewRequest)
         review_id=str(uuid.uuid4()),
         decision=req.decision,
         content_sha256=material["final_content_sha256"],
+        source_packet_sha256=material["source_packet_sha256"],
         assessment_sha256=material["assessment_sha256"],
         policy_version=gate.policy_version,
         warning_claim_ids=gate.warning_claim_ids,
