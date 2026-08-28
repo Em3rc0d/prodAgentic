@@ -241,11 +241,11 @@ async def test_attention_critic_is_structured_and_advisory():
         "profile_curiosity": 0.7,
         "spam_risk": 0.05,
         "ai_slop_risk": 0.05,
-        "engagement_bait_detected": false,
-        "generic_opening_detected": false,
+        "engagement_bait_detected": False,
+        "generic_opening_detected": False,
         "strengths": ["Specific technical idea"],
         "rewrite_directives": []
-    }).replace("false", "false")])
+    })])
     adapter = StructuredAttentionCriticAdapter(provider)
 
     assessment = await adapter.critique(content=content, pass_number=1)
