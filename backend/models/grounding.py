@@ -45,6 +45,11 @@ class GroundingDecision(str, Enum):
     BLOCK = "BLOCK"
 
 
+class GroundingReviewDecision(str, Enum):
+    VERIFIED = "VERIFIED"
+    REJECTED = "REJECTED"
+
+
 class EvidenceRef(BaseModel):
     evidence_id: str
     authority: SourceAuthority
@@ -255,3 +260,34 @@ class GroundingEvaluationRequest(BaseModel):
         if self.source_packet.packet_id != self.assessment.packet_id:
             raise ValueError("assessment packet_id must match source_packet packet_id")
         return self
+
+
+class GroundingReviewRequest(BaseModel):
+    decision: GroundingReviewDecision
+
+
+class GroundingReviewSnapshot(BaseModel):
+    review_id: str
+    decision: GroundingReviewDecision
+    source: str = "explicit_user_action"
+    content_sha256: str = Field(min_length=64, max_length=64)
+    assessment_sha256: str = Field(min_length=64, max_length=64)
+    policy_version: str
+    warning_claim_ids: list[str] = Field(default_factory=list)
+    reviewed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("review_id", "policy_version")
+    @classmethod
+    def require_non_blank(cls, value: str):
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @field_validator("content_sha256", "assessment_sha256")
+    @classmethod
+    def require_sha256_hex(cls, value: str):
+        value = value.lower()
+        if any(ch not in "0123456789abcdef" for ch in value):
+            raise ValueError("digest must be hexadecimal")
+        return value
