@@ -42,9 +42,14 @@ class SemanticMatcherBoundary:
             raise ValueError("semantic matcher output is stale or bound to different content")
 
         known_claims = {claim.claim_id for claim in matcher_input.claims}
+        known_evidence = {item.evidence_id for item in source_packet.evidence}
         for match in matcher_output.evidence_matches:
             if match.claim_id not in known_claims:
                 raise ValueError(f"semantic matcher returned relation for unknown claim {match.claim_id}")
+            if match.evidence_id not in known_evidence:
+                raise ValueError(
+                    f"semantic matcher returned relation for unknown evidence {match.evidence_id}"
+                )
 
         return GroundingEvaluationDraft(
             draft_id=f"semantic:{matcher_output.match_id}",
