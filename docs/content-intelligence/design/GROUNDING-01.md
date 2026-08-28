@@ -1,6 +1,6 @@
 # GROUNDING-01 — Evidence-first editorial trust contract
 
-Status: ACTIVE DESIGN / IMPLEMENTATION
+Status: IMPLEMENTED / CI CERTIFICATION PENDING
 
 ## Governing principle
 
@@ -20,6 +20,28 @@ Attention without evidence is risk. Evidence without attention is documentation 
 `GROUNDING-01`: **No unsupported factual claim may reach APPROVED.**
 
 Claim-level provenance is therefore part of the Commercial V1 trust target. Earlier documentation that treated claim-level provenance as optional for the first release is superseded by this decision.
+
+## Authority model
+
+Grounding deliberately separates proposal from authority:
+
+```text
+AI / evaluator
+    proposes claim -> evidence mapping
+                |
+                v
+Deterministic GroundingPolicy
+    validates mechanical policy
+                |
+                v
+Human Grounding review
+    VERIFIED / REJECTED
+                |
+                v
+Approval boundary
+```
+
+A model cannot make its own assertion authoritative merely by labeling it `GROUNDED`.
 
 ## Domain contracts
 
@@ -72,11 +94,23 @@ and receives exactly one grounding state:
 - `INSUFFICIENT_EVIDENCE`
 - `CONTRADICTED`
 
-A model may propose this classification. A deterministic policy decides whether the resulting assessment is eligible to proceed.
+A model may propose this classification. A deterministic policy checks whether the resulting assessment is mechanically eligible to proceed, and a human explicitly verifies the current assessment before approval.
+
+### GroundingReviewSnapshot
+
+The human verification record is bound to:
+
+- exact final-content SHA-256,
+- exact GroundingAssessment SHA-256,
+- Grounding policy version,
+- visible inference warnings,
+- explicit human action timestamp.
+
+Changing final content invalidates this review.
 
 ## Gate semantics
 
-Allowed:
+Allowed by deterministic policy:
 
 - `FACT` / `EXPERIENCE` -> `GROUNDED`
 - `INFERENCE` / `ESTIMATE` / `PREDICTION` -> `SUPPORTED_INFERENCE`
@@ -93,15 +127,29 @@ Blocking:
 
 Supported inferences remain visible to human review even when the deterministic gate passes.
 
-## Anti-loophole rule
+A deterministic `PASS` is necessary but not sufficient for approval. The current assessment must also carry an explicit human `VERIFIED` Grounding review.
 
-Grounding only means something if the assessment is bound to the exact final-content bytes/revision. `GroundingAssessment.content_sha256` exists for this reason.
+## Anti-loophole rules
 
-Any human or agent edit that changes final content must invalidate the prior grounding assessment before approval. A later implementation slice must enforce this at the `ContentRun` lifecycle boundary.
+Grounding only means something if the assessment is bound to the exact final-content bytes/revision. `GroundingAssessment.content_sha256` enforces this identity.
+
+Implemented safeguards:
+
+1. `grounding/evaluate` rejects an assessment whose `content_sha256` differs from the current `final_content`.
+2. `SourcePacket.workspace_id` must equal the authoritative `ContentRun.workspace_id`.
+3. A new evaluation clears any prior human Grounding review.
+4. A content edit clears the assessment, gate and human review.
+5. A human cannot mark a policy `BLOCK` assessment as `VERIFIED`.
+6. Approval recomputes `GroundingPolicy` from the persisted SourcePacket + Assessment rather than trusting the stored gate snapshot.
+7. Approval verifies that human review hashes still match the exact current content and assessment.
+8. Approval freezes Grounding digests and policy version into the immutable approval bundle.
+9. Existing optimistic concurrency prevents a review/edit/evaluation race from approving stale material.
+
+This means direct tampering of the cached `grounding_gate` from `BLOCK` to `PASS` is not enough to cross the approval boundary.
 
 ## Writer contract
 
-Generation should eventually receive an explicit factual envelope:
+Generation should receive an explicit factual envelope:
 
 ```text
 ALLOWED FACTS
@@ -162,59 +210,97 @@ Rejected:
 
 Neither rejected statement exists in the evidence.
 
-## Implementation slices
+## Implemented slices
 
 ### GROUNDING-01A — domain contracts
+
+Implemented:
 
 - `EvidenceRef`
 - `SourcePacket`
 - `Claim`
 - `GroundingAssessment`
 - `GroundingGateResult`
+- `GroundingReviewSnapshot`
 
 ### GROUNDING-01B — deterministic policy
 
-Pure policy code that cannot be relaxed by model creativity.
+Implemented as `GroundingPolicy` with versioned, pure policy behavior that cannot be relaxed by model creativity.
 
-### GROUNDING-01C — regression tests
+### GROUNDING-01C — policy regression tests
 
-Golden policy cases for grounded facts, unsupported facts, contradictions, supported inference, unknown evidence references and incomplete extraction.
+Implemented golden policy cases for grounded facts, unsupported facts, contradictions, supported inference, unknown evidence references and incomplete extraction.
 
-### GROUNDING-01E — ContentRun integration
+### GROUNDING-01E — ContentRun lifecycle integration
 
-Next:
+Implemented:
 
-- persist source packet and grounding assessment on the authoritative run,
-- bind assessment to exact final-content SHA-256,
-- invalidate grounding after edits,
-- prevent `READY_FOR_REVIEW -> APPROVED` unless the exact current revision has `PASS`,
-- freeze grounding evidence identifiers/digest into approval evidence.
+- source packet + assessment persisted on authoritative `ContentRun`,
+- assessment bound to exact final-content SHA-256,
+- workspace boundary enforced,
+- edit invalidation,
+- explicit human Grounding review,
+- policy re-evaluation at approval time,
+- `READY_FOR_REVIEW -> APPROVED` fail-closed unless current policy is `PASS` and review is `VERIFIED`,
+- Grounding digests/policy version frozen into approval bundle,
+- release E2E updated to use `edit -> evaluate -> verify -> approve`.
 
-### GROUNDING-02 — claim extraction and evaluation
+### GROUNDING-01P — lifecycle/adversarial tests
 
-Next after lifecycle integration:
+Implemented focused tests for:
 
-- claim extractor,
-- evidence matcher,
+- exact-revision persistence,
+- stale assessment rejection,
+- cross-workspace rejection,
+- inspectable BLOCK result that cannot be verified,
+- human review bound to exact hashes,
+- stored-gate tampering that cannot bypass fresh policy evaluation.
+
+## Next: GROUNDING-02 — semantic extraction and evidence matching
+
+GROUNDING-01 establishes the authority boundary. It does **not** yet claim that prodAgentic can autonomously determine semantic truth reliably.
+
+Next work:
+
+- claim extractor with completeness contract,
+- evidence matcher / entailment evaluation,
 - contradiction detection,
-- explicit rewrite/soften protocol,
-- local golden dataset evaluation.
+- factual-envelope builder for Writer,
+- explicit rewrite / soften protocol,
+- Golden Content Set with real project evidence,
+- local blind evaluation of faithfulness + editorial quality.
 
 ## Trust boundary
 
-Grounding remains separate from Content Memory and from publication authority:
-
 ```text
-Evidence -> SourcePacket -> Writer -> Claim Extraction -> Grounding Gate
-                                                       |
-                                                       v
-                                                  Human Review
-                                                       |
-                                                       v
-                                               Immutable Approval
-                                                       |
-                                                       v
-                                                    Publisher
+Evidence
+   |
+   v
+SourcePacket
+   |
+   v
+Writer / Editor
+   |
+   v
+Claim Extraction
+   |
+   v
+Grounding evaluation
+   |
+   v
+Deterministic GroundingPolicy
+   |
+   v
+Human Grounding Review
+   |
+   v
+Human Content Approval
+   |
+   v
+Immutable Approval Bundle
+   |
+   v
+Publisher
 ```
 
-Content Memory may suggest evidence or similar content. It may never mark a claim true or authorize publication.
+Grounding remains separate from Content Memory and publication authority. Content Memory may suggest evidence or similar content; it may never mark a claim true or authorize publication.
