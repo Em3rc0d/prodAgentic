@@ -1,8 +1,8 @@
 # prodAgentic Content Intelligence Program
 
-Status: DOCUMENTATION GATE
-Branch: `feat/content-intelligence-foundation`
-Base: `feat/release-e2e-certification`
+Status: IMPLEMENTATION ACTIVE
+Branch: `reconcile/commercial-v1-main-first`
+Base: `main`
 
 ## Purpose
 
@@ -10,11 +10,15 @@ Turn prodAgentic from a strong content generation and publication workflow into 
 
 The governing product principle is:
 
-> prodAgentic should remember content, not simulate a person.
+> **prodAgentic does not invent a better story. It finds the best story the evidence already contains.**
 
-The governing engineering principle is:
+The Writer may improve expression. It may not improve reality.
+
+The governing engineering principles are:
 
 > Compute on demand, persist durable evidence, remain almost idle when the user is idle.
+
+> Every factual increase in specificity requires an equivalent increase in evidence.
 
 ## Current foundation we are preserving
 
@@ -39,9 +43,16 @@ A user can still reasonably ask: "Why not just use a general chat model to write
 This program answers with capabilities a stateless chat window does not naturally own:
 
 1. **Content Memory** — know what has already been created and published, including near-duplicate ideas.
-2. **Source Grounding** — bind a run to explicit sources and make source use inspectable.
+2. **Source Grounding** — bind a run to explicit evidence, classify meaningful claims, and make source use inspectable.
 3. **Visual Intelligence** — choose the correct communicative visual form before generating a render prompt.
 4. **Reliable Distribution** — continue using the existing approval, scheduling, publication and evidence contracts.
+
+The target product has two complementary halves:
+
+- **Value Engine** — knowledge, angles, voice, writing and attention quality.
+- **Trust Engine** — provenance, grounding, human review, immutable approval and publication evidence.
+
+Both are required. Attention without evidence is risk; evidence without attention is documentation nobody reads.
 
 ## Explicit non-goals
 
@@ -70,7 +81,7 @@ The program is intentionally staged:
 5. `test/` — automated, integration, scale and release gates.
 6. `mining-site/` — evidence gathered from the existing repository and experiments. Every quarry must distinguish OBSERVED from PROPOSED.
 7. `golden-dataset/` — deterministic cases used to prevent regressions in memory, grounding and visual-intent decisions.
-8. Only after the documentation gate is internally coherent do code changes begin.
+8. Code reaches a release gate only after its documentation, lifecycle and tests tell the same story.
 
 ## Priority sequence
 
@@ -89,16 +100,29 @@ This system is workspace-scoped and on-demand. It is not a user personality mode
 
 ### CI-02 — Source-Grounded ContentRuns
 
-Goal: a run may carry explicit source snapshots/references used during generation.
+Goal: a run carries explicit source/evidence references used during generation and an inspectable claim-level assessment bound to the exact final-content revision.
 
-Initial source types:
+Initial source types include:
 
 - pasted note/text,
 - URL metadata/text snapshot when supplied by an integration,
 - document/repository excerpt supplied by an integration,
-- explicit user assertions.
+- explicit user assertions,
+- CI evidence,
+- approval evidence,
+- external publication evidence.
 
-The first release does NOT require claim-level provenance. It requires run-level source traceability and a strict mode that can instruct generation to use only attached sources.
+Claim-level provenance is now a Commercial V1 trust target.
+
+`GROUNDING-01` is non-negotiable:
+
+> **No unsupported factual claim may reach APPROVED.**
+
+Meaningful claims are classified as `FACT`, `INFERENCE`, `OPINION`, `EXPERIENCE`, `ESTIMATE`, or `PREDICTION`, and receive an explicit grounding state. Contradicted or insufficiently supported claims block the gate. Supported inferences remain visible during human review.
+
+Grounding is revision-bound: changing final content invalidates the prior assessment.
+
+See `design/GROUNDING-01.md` for the active contract and implementation slices.
 
 ### CI-03 — Visual Intelligence
 
@@ -119,7 +143,7 @@ The existing render service remains the rendering boundary. Visual Intelligence 
 
 ### CI-04 — Lightweight Voice Profile
 
-Deferred until CI-01 through CI-03 are proven. If implemented, it remains a compact explicit profile or one-time imported-post analysis. No continuous invisible learning.
+Deferred until the grounding/value loop is proven. If implemented, it remains a compact explicit profile or one-time imported-post analysis. No continuous invisible learning.
 
 ### CI-05 — Opportunity Mining
 
@@ -150,21 +174,30 @@ prodAgentic may infer a recommendation during a request, but persisted facts mus
 
 Important identity/expertise claims are never silently converted from inference into user truth.
 
-## Documentation gate exit criteria
+Additional invariants:
 
-Construction may begin only when all of the following are documented:
+- Never fabricate significance.
+- The Writer may improve expression, never reality.
+- A fact cannot be relabeled as an inference to bypass evidence requirements.
+- A `CONTRADICTED` claim is a hard block.
+- A content edit invalidates the prior grounding result.
+- Content Memory may recommend or retrieve; it never establishes factual truth or publication authority.
 
-- Product behavior for CI-01, CI-02 and CI-03.
-- Data ownership and lifecycle additions to `ContentRun`.
-- Workspace isolation contract.
-- Failure behavior and fallback behavior.
-- Cost/compute boundary at 1000 users.
-- Golden dataset format and minimum cases.
-- Test gates proving no regression to approval/publishing/scheduling.
-- Explicit statement of what is NOT being built.
+## Implementation gate exit criteria
+
+Commercial V1 grounding is not complete until all of the following are true:
+
+- `SourcePacket` and evidence ownership are persisted on the authoritative `ContentRun`.
+- Claim extraction is inspectable and bound to exact final-content SHA-256.
+- Deterministic Grounding policy is covered by golden regression cases.
+- Human edits invalidate stale grounding.
+- `READY_FOR_REVIEW -> APPROVED` fails closed unless current Grounding is `PASS`.
+- Approval freezes sufficient Grounding provenance to prove what was reviewed.
+- The local Golden Content Set demonstrates both editorial value and factual faithfulness.
+- Existing approval/publishing/scheduling safety tests remain green.
 
 ## Release sequencing
 
-This branch does not supersede the existing external release gate. Real LinkedIn publication proof remains a separate prerequisite for calling the current publishing layer production-certified.
+This program does not supersede the external publication release gate. Existing OAuth/publication evidence remains a separate prerequisite for calling the publishing layer production-certified.
 
 Content Intelligence is layered on top of that trusted lifecycle; it must never weaken publication idempotency, approval immutability, or publication evidence.
