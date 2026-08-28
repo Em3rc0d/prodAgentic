@@ -1,3 +1,4 @@
+import hashlib
 import os
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -10,6 +11,19 @@ from core.content_memory import ContentMemoryService
 from db.content_memory import ContentMemoryRepository
 from models.content_memory import ContentMemoryKind
 from models.content_run import ContentRunApprovalRequest, ContentRunEditRequest
+from models.grounding import (
+    Claim,
+    ClaimType,
+    EvidenceRef,
+    GroundingAssessment,
+    GroundingEvaluationRequest,
+    GroundingReviewDecision,
+    GroundingReviewRequest,
+    GroundingStatus,
+    SourceAuthority,
+    SourcePacket,
+    SourceType,
+)
 import routes.content_runs as content_run_routes
 
 
@@ -18,6 +32,40 @@ def _as_utc(value: datetime) -> datetime:
     # tz_aware=True is configured. Compare the same instant rather than codec
     # representation so this test still proves root updated_at was untouched.
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _grounding_request(final_content: str, workspace_id: str) -> GroundingEvaluationRequest:
+    packet = SourcePacket(
+        packet_id=f"packet-{uuid4().hex}",
+        workspace_id=workspace_id,
+        title="Real-Mongo approval grounding fixture",
+        evidence=[
+            EvidenceRef(
+                evidence_id="ev-current-approval-text",
+                authority=SourceAuthority.USER_PROVIDED,
+                source_type=SourceType.PASTED_TEXT,
+                excerpt=final_content,
+            )
+        ],
+    )
+    assessment = GroundingAssessment(
+        assessment_id=f"assessment-{uuid4().hex}",
+        packet_id=packet.packet_id,
+        content_sha256=hashlib.sha256(final_content.encode("utf-8")).hexdigest(),
+        evaluator_version="real-mongo-fixture-v1",
+        extraction_complete=True,
+        claims=[
+            Claim(
+                claim_id="claim-current-approval-text",
+                statement=final_content,
+                claim_type=ClaimType.FACT,
+                grounding_status=GroundingStatus.GROUNDED,
+                source_refs=["ev-current-approval-text"],
+                confidence=1.0,
+            )
+        ],
+    )
+    return GroundingEvaluationRequest(source_packet=packet, assessment=assessment)
 
 
 @pytest.mark.asyncio
@@ -142,9 +190,24 @@ async def test_real_mongodb_edit_refreshes_memory_and_approval_repairs_stale_has
             {"run_id": "editable-run"},
             {"$set": {
                 "final_content": "current approval text",
+                "grounding_assessment": None,
+                "grounding_gate": None,
+                "grounding_review": None,
                 "updated_at": approval_updated_at,
             }},
         )
+
+        evaluated = await content_run_routes.evaluate_content_run_grounding(
+            "editable-run",
+            _grounding_request("current approval text", "workspace-a"),
+        )
+        assert evaluated["grounding_gate"]["decision"] == "PASS"
+
+        reviewed = await content_run_routes.review_content_run_grounding(
+            "editable-run",
+            GroundingReviewRequest(decision=GroundingReviewDecision.VERIFIED),
+        )
+        assert reviewed["grounding_review"]["decision"] == "VERIFIED"
 
         approved = await content_run_routes.approve_content_run(
             "editable-run",
@@ -154,6 +217,7 @@ async def test_real_mongodb_edit_refreshes_memory_and_approval_repairs_stale_has
 
         assert approved["status"] == "APPROVED"
         assert approved["approval"]["final_content"] == "current approval text"
+        assert approved["approval"]["grounding_policy_version"] == "grounding-policy-v1"
         assert approved["memory_check"]["normalized_sha256"] == approval_identity.normalized_sha256
         assert approved["memory_check"]["normalized_sha256"] != new_identity.normalized_sha256
     finally:
