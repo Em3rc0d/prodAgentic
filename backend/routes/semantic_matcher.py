@@ -9,6 +9,7 @@ from db.mongo import get_db
 from db.source_packets import SourcePacketRepository
 from models.content_run import ContentRunStatus
 from models.semantic_matcher import SemanticMatchDraftRequest, SemanticMatcherInput
+from routes.claim_extractor import require_verified_claim_extraction
 
 
 router = APIRouter(tags=["grounding-semantic-matcher"])
@@ -26,9 +27,10 @@ async def match_content_run_grounding_draft(
 ):
     """Return a provider-generated Grounding draft without persisting authority.
 
-    The semantic provider remains advisory. This endpoint never writes
-    Grounding state to the ContentRun; callers must pass the returned draft
-    through the existing deterministic evaluate-draft endpoint separately.
+    Claims and extraction completeness are server-owned inputs derived from the
+    exact claim-extraction snapshot that a human explicitly verified complete.
+    The semantic provider remains advisory and this route never writes Grounding
+    authority to the ContentRun.
     """
     db = get_db()
     if db is None:
@@ -47,6 +49,8 @@ async def match_content_run_grounding_draft(
     if not isinstance(final_content, str) or not final_content.strip():
         raise HTTPException(status_code=409, detail="Final content is not ready for grounding")
 
+    extraction = require_verified_claim_extraction(existing)
+
     workspace_id = existing.get("workspace_id") or "legacy-default"
     source_packet = await SourcePacketRepository(db).get(workspace_id, req.packet_id)
     if source_packet is None:
@@ -61,7 +65,7 @@ async def match_content_run_grounding_draft(
     matcher_input = SemanticMatcherInput(
         packet_id=source_packet.packet_id,
         content_sha256=_sha256_text(final_content),
-        claims=req.claims,
+        claims=extraction.claims,
     )
 
     try:
@@ -70,7 +74,7 @@ async def match_content_run_grounding_draft(
             matcher_input,
             matcher_output,
             source_packet,
-            extraction_complete=req.extraction_complete,
+            extraction_complete=True,
         )
     except ModelExecutionError as exc:
         raise HTTPException(
