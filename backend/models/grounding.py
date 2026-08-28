@@ -50,6 +50,12 @@ class GroundingReviewDecision(str, Enum):
     REJECTED = "REJECTED"
 
 
+class EvidenceRelation(str, Enum):
+    SUPPORTS = "SUPPORTS"
+    CONTRADICTS = "CONTRADICTS"
+    INSUFFICIENT = "INSUFFICIENT"
+
+
 class EvidenceRef(BaseModel):
     evidence_id: str
     authority: SourceAuthority
@@ -125,6 +131,114 @@ class SourcePacket(BaseModel):
         evidence_ids = [item.evidence_id for item in self.evidence]
         if len(evidence_ids) != len(set(evidence_ids)):
             raise ValueError("evidence_id values must be unique within a source packet")
+        return self
+
+
+class ClaimProposal(BaseModel):
+    """Non-authoritative claim extraction output.
+
+    A model/extractor may propose claim identity, wording and semantic type, but
+    it cannot assign GroundingStatus. That authority belongs to the deterministic
+    assessment builder and policy layers.
+    """
+
+    claim_id: str
+    statement: str
+    claim_type: ClaimType
+    confidence: float = Field(ge=0.0, le=1.0)
+    text_start: Optional[int] = Field(default=None, ge=0)
+    text_end: Optional[int] = Field(default=None, ge=0)
+
+    @field_validator("claim_id", "statement")
+    @classmethod
+    def require_non_blank(cls, value: str):
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def require_valid_text_span(self):
+        if (self.text_start is None) != (self.text_end is None):
+            raise ValueError("text_start and text_end must be provided together")
+        if self.text_start is not None and self.text_end <= self.text_start:
+            raise ValueError("text_end must be greater than text_start")
+        return self
+
+
+class EvidenceMatchProposal(BaseModel):
+    """Non-authoritative proposed relation between one claim and evidence."""
+
+    claim_id: str
+    evidence_id: str
+    relation: EvidenceRelation
+    confidence: float = Field(ge=0.0, le=1.0)
+    rationale: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("claim_id", "evidence_id")
+    @classmethod
+    def require_non_blank(cls, value: str):
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @field_validator("rationale")
+    @classmethod
+    def normalize_rationale(cls, value: Optional[str]):
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+
+class GroundingEvaluationDraft(BaseModel):
+    """Proposal envelope produced before authoritative GroundingAssessment."""
+
+    draft_id: str
+    packet_id: str
+    content_sha256: str = Field(min_length=64, max_length=64)
+    evaluator_version: str
+    extraction_complete: bool
+    claims: list[ClaimProposal] = Field(default_factory=list)
+    evidence_matches: list[EvidenceMatchProposal] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("draft_id", "packet_id", "evaluator_version")
+    @classmethod
+    def require_non_blank(cls, value: str):
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @field_validator("content_sha256")
+    @classmethod
+    def require_sha256_hex(cls, value: str):
+        value = value.lower()
+        if any(ch not in "0123456789abcdef" for ch in value):
+            raise ValueError("content_sha256 must be hexadecimal")
+        return value
+
+    @model_validator(mode="after")
+    def require_coherent_proposals(self):
+        claim_ids = [claim.claim_id for claim in self.claims]
+        if len(claim_ids) != len(set(claim_ids)):
+            raise ValueError("claim_id values must be unique within a grounding draft")
+
+        known_claims = set(claim_ids)
+        for match in self.evidence_matches:
+            if match.claim_id not in known_claims:
+                raise ValueError(
+                    f"evidence match references unknown claim_id {match.claim_id}"
+                )
+
+        match_keys = [
+            (match.claim_id, match.evidence_id, match.relation.value)
+            for match in self.evidence_matches
+        ]
+        if len(match_keys) != len(set(match_keys)):
+            raise ValueError("duplicate evidence relation proposals are not allowed")
         return self
 
 
@@ -259,6 +373,17 @@ class GroundingEvaluationRequest(BaseModel):
     def require_matching_packet_ids(self):
         if self.source_packet.packet_id != self.assessment.packet_id:
             raise ValueError("assessment packet_id must match source_packet packet_id")
+        return self
+
+
+class GroundingDraftEvaluationRequest(BaseModel):
+    source_packet: SourcePacket
+    draft: GroundingEvaluationDraft
+
+    @model_validator(mode="after")
+    def require_matching_packet_ids(self):
+        if self.source_packet.packet_id != self.draft.packet_id:
+            raise ValueError("draft packet_id must match source_packet packet_id")
         return self
 
 
