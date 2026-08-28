@@ -10,7 +10,14 @@ class GoogleDirectAdapter(ProviderAdapter):
         self.client = client
         self.async_client = client.aio
 
-    def _translate_error(self, e: Exception, model_id: str, attempt_id: str) -> ModelExecutionError:
+    def _translate_error(
+        self,
+        e: Exception,
+        model_id: str,
+        attempt_id: str,
+        *,
+        structured_output: bool = False,
+    ) -> ModelExecutionError:
         code = getattr(e, "code", 500) if isinstance(e, APIError) else None
         message = str(e).lower()
         http_status = code
@@ -22,7 +29,28 @@ class GoogleDirectAdapter(ProviderAdapter):
 
         if isinstance(e, APIError):
             if code in (400, 401, 403):
-                if code == 400 and "invalid" in message:
+                structured_markers = (
+                    "response_schema",
+                    "response schema",
+                    "response_json_schema",
+                    "response json schema",
+                    "structured output",
+                    "json schema",
+                    "schema is not supported",
+                    "unsupported schema",
+                )
+                if (
+                    code == 400
+                    and structured_output
+                    and any(marker in message for marker in structured_markers)
+                ):
+                    # Structured-output capability can differ by model even when
+                    # ordinary text generation works. This is safe to fall back
+                    # across the configured model set; downstream Pydantic
+                    # validation remains mandatory.
+                    category = ErrorCode.MODEL_CAPABILITY_UNAVAILABLE
+                    fallback_allowed = True
+                elif code == 400:
                     category = ErrorCode.INVALID_REQUEST
                 else:
                     category = ErrorCode.AUTHENTICATION
@@ -68,8 +96,12 @@ class GoogleDirectAdapter(ProviderAdapter):
         profile = kwargs.get("profile_name", "UNKNOWN")
         system_instruction = kwargs.get("system_instruction")
         response_schema = kwargs.get("response_schema")
+        response_json_schema = kwargs.get("response_json_schema")
         response_mime_type = kwargs.get("response_mime_type")
         temperature = kwargs.get("temperature")
+
+        if response_schema is not None and response_json_schema is not None:
+            raise ValueError("response_schema and response_json_schema are mutually exclusive")
 
         config = None
         config_kwargs = {}
@@ -80,6 +112,12 @@ class GoogleDirectAdapter(ProviderAdapter):
             # must still validate the returned JSON before trusting it.
             config_kwargs["response_schema"] = response_schema
             config_kwargs["response_mime_type"] = response_mime_type or "application/json"
+        elif response_json_schema is not None:
+            # The current Google Gen AI SDK/API also accepts raw JSON Schema.
+            # Keeping this surface available lets callers avoid SDK-side Pydantic
+            # conversion differences while retaining server-side Pydantic validation.
+            config_kwargs["response_json_schema"] = response_json_schema
+            config_kwargs["response_mime_type"] = response_mime_type or "application/json"
         elif response_mime_type:
             config_kwargs["response_mime_type"] = response_mime_type
         if temperature is not None:
@@ -89,6 +127,8 @@ class GoogleDirectAdapter(ProviderAdapter):
             from google.genai import types
 
             config = types.GenerateContentConfig(**config_kwargs)
+
+        structured_output = response_schema is not None or response_json_schema is not None
 
         try:
             response = await self.async_client.models.generate_content(
@@ -124,7 +164,12 @@ class GoogleDirectAdapter(ProviderAdapter):
         except ModelExecutionError:
             raise
         except Exception as e:
-            raise self._translate_error(e, model, attempt_id) from e
+            raise self._translate_error(
+                e,
+                model,
+                attempt_id,
+                structured_output=structured_output,
+            ) from e
 
     async def stream(self, model: str, prompt: str, **kwargs) -> AsyncGenerator[tuple, None]:
         attempt_id = kwargs.get("attempt_id", "default")
