@@ -16,7 +16,9 @@ from core.context import GenerationContext, LanguageCode, TargetLanguageCode, Im
 from core.language import language_detector
 from core.content_memory import ContentMemoryService
 from core.grounding import FactualEnvelopeBuilder
+from core.value_engine import AngleSelectionPolicy, ContentQualityPolicy
 from models.grounding import SourcePacket
+from models.value_engine import ContentQualityDecision, ContentQualitySnapshot
 
 
 logger = logging.getLogger(__name__)
@@ -31,9 +33,17 @@ class PipelineAbortError(Exception):
 
 
 class PipelineOrchestrator:
-    def __init__(self, router, workspace_id: str = "legacy-default"):
+    def __init__(
+        self,
+        router,
+        workspace_id: str = "legacy-default",
+        angle_engine=None,
+        attention_critic=None,
+    ):
         self.router = router
         self.workspace_id = workspace_id
+        self.angle_engine = angle_engine
+        self.attention_critic = attention_critic
         self.idea_agent = IdeaGeneratorAgent(router)
         self.research_agent = ResearchAgent(router)
         self.writer_agent = ContentWriterAgent(router)
@@ -49,6 +59,13 @@ class PipelineOrchestrator:
         except Exception as exc:
             logger.warning("ContentRun auxiliary persistence degraded: %s", exc)
             return None
+
+    async def _persist_named(self, method_name: str, *args, **kwargs):
+        """Best-effort optional advisory persistence without expanding repository authority."""
+        method = getattr(self.content_runs, method_name, None)
+        if method is None:
+            return None
+        return await self._persist(method, *args, **kwargs)
 
     async def _persist_required(self, method, *args, **kwargs):
         """Persist an authoritative lifecycle boundary or fail the pipeline closed."""
@@ -298,6 +315,12 @@ class PipelineOrchestrator:
                     )
                     raise PipelineAbortError()
 
+        angle_snapshot = None
+        angle_brief = None
+        quality_snapshot = None
+        quality_needs_review = False
+        quality_rewrite_performed = False
+
         try:
             def research_stream(ctx):
                 if factual_envelope_text is None:
@@ -312,15 +335,48 @@ class PipelineOrchestrator:
             async for event in run_stage(research_stream, "research", self.research_agent.profile.value, research_ref):
                 yield event
 
+            # Value Engine is advisory. Failure degrades framing quality but must
+            # never invent an angle, fail factual trust, or replace lifecycle authority.
+            if self.angle_engine is not None:
+                try:
+                    angle_output = await self.angle_engine.discover(
+                        idea=idea,
+                        research=research_ref[0],
+                        audience=context.audience,
+                        profile_snapshot=context.content_profile_snapshot,
+                        factual_envelope=factual_envelope,
+                    )
+                    angle_snapshot = AngleSelectionPolicy.select(angle_output, factual_envelope)
+                    angle_brief = AngleSelectionPolicy.render_for_writer(angle_snapshot)
+                    await self._persist_named(
+                        "record_angle_selection",
+                        context.run_id,
+                        angle_snapshot,
+                    )
+                    yield _sse(
+                        "value.angle_selected",
+                        run_id=context.run_id,
+                        content_family=angle_snapshot.selected_candidate.content_family.value,
+                        candidate_id=angle_snapshot.selected_candidate_id,
+                        selection_score=angle_snapshot.selected_score,
+                        policy_version=angle_snapshot.selection_policy_version,
+                    )
+                except Exception as exc:
+                    logger.warning("Angle Engine degraded for run %s: %s", context.run_id, exc)
+                    yield _sse(
+                        "value.angle_degraded",
+                        run_id=context.run_id,
+                        reason="Angle discovery unavailable; continuing with original idea and research",
+                    )
+
             def writer_stream(ctx):
-                if factual_envelope_text is None:
-                    return self.writer_agent.stream(idea, research_ref[0], context=ctx, attempt_id=None)
                 return self.writer_agent.stream(
                     idea,
                     research_ref[0],
                     context=ctx,
                     attempt_id=None,
                     factual_envelope=factual_envelope_text,
+                    angle_brief=angle_brief,
                 )
 
             async for event in run_stage(writer_stream, "write", self.writer_agent.profile.value, draft_ref):
@@ -329,8 +385,6 @@ class PipelineOrchestrator:
             final_flags = {}
 
             def edit_stream(ctx):
-                if factual_envelope_text is None:
-                    return self.editor_agent.stream(draft_ref[0], context=ctx, attempt_id=None)
                 return self.editor_agent.stream(
                     draft_ref[0],
                     context=ctx,
@@ -347,7 +401,131 @@ class PipelineOrchestrator:
             ):
                 yield event
 
-            final_status = "NEEDS_LANGUAGE_REVIEW" if final_flags.get("has_validation_warning") else "READY"
+            # Attention Critic is an editorial advisor, not approval authority.
+            # It receives at most one automatic rewrite opportunity.
+            if self.attention_critic is not None:
+                try:
+                    first_assessment = await self.attention_critic.critique(
+                        content=final_ref[0],
+                        pass_number=1,
+                        angle_snapshot=angle_snapshot,
+                        profile_snapshot=context.content_profile_snapshot,
+                    )
+                    first_gate = ContentQualityPolicy.evaluate(first_assessment, final_ref[0])
+                    yield _sse(
+                        "value.quality_evaluated",
+                        run_id=context.run_id,
+                        pass_number=1,
+                        decision=first_gate.decision.value,
+                        editorial_score=first_gate.editorial_score,
+                        hard_flags=first_gate.hard_flags,
+                    )
+
+                    if first_gate.decision == ContentQualityDecision.REWRITE:
+                        feedback = ContentQualityPolicy.render_rewrite_feedback(
+                            first_assessment,
+                            first_gate,
+                        )
+                        rewrite_ref = [""]
+                        rewrite_flags = {}
+
+                        def quality_rewrite_stream(ctx):
+                            return self.editor_agent.stream(
+                                final_ref[0],
+                                context=ctx,
+                                attempt_id=None,
+                                factual_envelope=factual_envelope_text,
+                                quality_feedback=feedback,
+                            )
+
+                        async for event in run_stage(
+                            quality_rewrite_stream,
+                            "edit_quality_rewrite",
+                            self.editor_agent.profile.value,
+                            rewrite_ref,
+                            ignore_failure=True,
+                            stage_flags=rewrite_flags,
+                        ):
+                            yield event
+
+                        if rewrite_ref[0] and not rewrite_flags.get("failed"):
+                            final_ref[0] = rewrite_ref[0]
+                            quality_rewrite_performed = True
+                            if rewrite_flags.get("has_validation_warning"):
+                                final_flags["has_validation_warning"] = True
+                            second_assessment = await self.attention_critic.critique(
+                                content=final_ref[0],
+                                pass_number=2,
+                                angle_snapshot=angle_snapshot,
+                                profile_snapshot=context.content_profile_snapshot,
+                            )
+                            second_gate = ContentQualityPolicy.evaluate(
+                                second_assessment,
+                                final_ref[0],
+                            )
+                            quality_snapshot = ContentQualitySnapshot(
+                                content_sha256=second_assessment.content_sha256,
+                                assessment=second_assessment,
+                                gate=second_gate,
+                                rewrite_performed=True,
+                            )
+                            quality_needs_review = (
+                                second_gate.decision == ContentQualityDecision.REWRITE
+                            )
+                            yield _sse(
+                                "value.quality_evaluated",
+                                run_id=context.run_id,
+                                pass_number=2,
+                                decision=second_gate.decision.value,
+                                editorial_score=second_gate.editorial_score,
+                                hard_flags=second_gate.hard_flags,
+                                max_auto_rewrites_reached=True,
+                            )
+                        else:
+                            quality_snapshot = ContentQualitySnapshot(
+                                content_sha256=first_assessment.content_sha256,
+                                assessment=first_assessment,
+                                gate=first_gate,
+                                rewrite_performed=False,
+                            )
+                            quality_needs_review = True
+                            yield _sse(
+                                "value.quality_rewrite_degraded",
+                                run_id=context.run_id,
+                                reason="Quality rewrite failed; preserving the previous edited post for human review",
+                            )
+                    else:
+                        quality_snapshot = ContentQualitySnapshot(
+                            content_sha256=first_assessment.content_sha256,
+                            assessment=first_assessment,
+                            gate=first_gate,
+                            rewrite_performed=False,
+                        )
+
+                    if quality_snapshot is not None:
+                        await self._persist_named(
+                            "record_content_quality",
+                            context.run_id,
+                            quality_snapshot,
+                        )
+                except Exception as exc:
+                    logger.warning("Attention Critic degraded for run %s: %s", context.run_id, exc)
+                    quality_needs_review = True
+                    yield _sse(
+                        "value.quality_degraded",
+                        run_id=context.run_id,
+                        reason="Editorial quality critique unavailable; explicit human content review recommended",
+                    )
+
+            language_needs_review = bool(final_flags.get("has_validation_warning"))
+            if language_needs_review and quality_needs_review:
+                final_status = "NEEDS_LANGUAGE_AND_CONTENT_REVIEW"
+            elif language_needs_review:
+                final_status = "NEEDS_LANGUAGE_REVIEW"
+            elif quality_needs_review:
+                final_status = "NEEDS_CONTENT_REVIEW"
+            else:
+                final_status = "READY"
         except PipelineAbortError:
             return
         except Exception as exc:
@@ -471,6 +649,18 @@ class PipelineOrchestrator:
             content_profile_id=context.content_profile_id,
             generation_source_packet_id=source_packet.packet_id if source_packet else None,
             factual_envelope_version=factual_envelope.envelope_version if factual_envelope else None,
+            angle_family=(
+                angle_snapshot.selected_candidate.content_family.value
+                if angle_snapshot is not None
+                else None
+            ),
+            content_quality_decision=(
+                quality_snapshot.gate.decision.value if quality_snapshot is not None else None
+            ),
+            content_quality_score=(
+                quality_snapshot.gate.editorial_score if quality_snapshot is not None else None
+            ),
+            quality_rewrite_performed=quality_rewrite_performed,
             final_status=final_status,
             visual_status=visual_status,
             post_id=post_id,
