@@ -23,7 +23,7 @@ class ContentRunRepository:
         db = get_db()
         return None if db is None else db["content_runs"]
 
-    async def create(self, context, idea: str) -> bool:
+    async def create(self, context, idea: str, generation_source_packet=None, factual_envelope=None) -> bool:
         collection = self._collection()
         if collection is None:
             return False
@@ -56,11 +56,25 @@ class ContentRunRepository:
             "resolved_target_language": context.resolved_target_language.value,
             "image_prompt_language": context.image_prompt_language.value,
             "stages": stages,
+            "generation_source_packet": (
+                generation_source_packet.model_dump(mode="python")
+                if hasattr(generation_source_packet, "model_dump")
+                else generation_source_packet
+            ),
+            "factual_envelope": (
+                factual_envelope.model_dump(mode="python")
+                if hasattr(factual_envelope, "model_dump")
+                else factual_envelope
+            ),
             "final_status": None,
             "final_content": None,
             "visual_prompt": None,
             "visual_render": None,
             "memory_check": None,
+            "source_packet": None,
+            "grounding_assessment": None,
+            "grounding_gate": None,
+            "grounding_review": None,
             "approval": None,
             "post_id": None,
             "failure_stage": None,
