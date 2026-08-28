@@ -129,6 +129,7 @@ Be conservative when wording is broader or more certain than the evidence."""
                 last_error = exc
                 if exc.category in {
                     ErrorCode.MODEL_NOT_FOUND,
+                    ErrorCode.MODEL_CAPABILITY_UNAVAILABLE,
                     ErrorCode.SERVICE_UNAVAILABLE,
                     ErrorCode.TIMEOUT,
                     ErrorCode.RATE_LIMITED,
