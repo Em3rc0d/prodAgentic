@@ -170,7 +170,13 @@ async def edit_content_run(run_id: str, req: ContentRunEditRequest):
 
     updates = {"updated_at": datetime.now(timezone.utc)}
     if req.final_content is not None:
-        updates["final_content"] = req.final_content.strip()
+        updated_final_content = req.final_content.strip()
+        updates["final_content"] = updated_final_content
+        if updated_final_content != (existing.get("final_content") or ""):
+            # Grounding is revision-bound. A previously valid assessment may not
+            # survive even a one-character human edit to the publishable text.
+            updates["grounding_assessment"] = None
+            updates["grounding_gate"] = None
     if req.visual_prompt is not None:
         updates["visual_prompt"] = req.visual_prompt
         if req.visual_prompt != (existing.get("visual_prompt") or ""):
