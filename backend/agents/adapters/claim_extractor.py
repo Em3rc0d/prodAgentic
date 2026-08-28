@@ -147,6 +147,7 @@ Return only the provided structured schema."""
                 last_error = exc
                 if exc.category in {
                     ErrorCode.MODEL_NOT_FOUND,
+                    ErrorCode.MODEL_CAPABILITY_UNAVAILABLE,
                     ErrorCode.SERVICE_UNAVAILABLE,
                     ErrorCode.TIMEOUT,
                     ErrorCode.RATE_LIMITED,
