@@ -5,6 +5,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from models.grounding import (
+    FactualEnvelope,
     GroundingAssessment,
     GroundingGateResult,
     GroundingReviewSnapshot,
@@ -143,6 +144,8 @@ class ContentRun(BaseModel):
     resolved_target_language: Optional[str] = None
     image_prompt_language: Optional[str] = None
     stages: dict[str, StageSnapshot] = Field(default_factory=dict)
+    generation_source_packet: Optional[SourcePacket] = None
+    factual_envelope: Optional[FactualEnvelope] = None
     final_status: Optional[str] = None
     final_content: Optional[str] = None
     visual_prompt: Optional[str] = None
