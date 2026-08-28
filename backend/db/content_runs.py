@@ -4,7 +4,7 @@ from db.mongo import get_db
 from models.content_run import ContentRunStatus, StageStatus
 
 
-_STAGE_NAMES = ("research", "write", "edit", "visual")
+_STAGE_NAMES = ("research", "write", "edit", "edit_quality_rewrite", "visual")
 _REVIEWABLE_STATUSES = (
     ContentRunStatus.TEXT_READY.value,
     ContentRunStatus.READY_FOR_REVIEW.value,
@@ -66,6 +66,8 @@ class ContentRunRepository:
                 if hasattr(factual_envelope, "model_dump")
                 else factual_envelope
             ),
+            "angle_selection": None,
+            "content_quality": None,
             "final_status": None,
             "final_content": None,
             "visual_prompt": None,
@@ -150,6 +152,32 @@ class ContentRunRepository:
                 "failure_reason": reason,
             })
         await collection.update_one({"run_id": run_id}, {"$set": fields})
+
+    async def record_angle_selection(self, run_id: str, snapshot) -> bool:
+        """Persist advisory editorial framing without changing lifecycle authority."""
+        collection = self._collection()
+        if collection is None:
+            return False
+        now = _now()
+        payload = snapshot.model_dump(mode="python") if hasattr(snapshot, "model_dump") else snapshot
+        result = await collection.update_one(
+            {"run_id": run_id, "status": ContentRunStatus.GENERATING.value},
+            {"$set": {"angle_selection": payload, "updated_at": now}},
+        )
+        return bool(result.matched_count)
+
+    async def record_content_quality(self, run_id: str, snapshot) -> bool:
+        """Persist advisory editorial quality evidence; never approval authority."""
+        collection = self._collection()
+        if collection is None:
+            return False
+        now = _now()
+        payload = snapshot.model_dump(mode="python") if hasattr(snapshot, "model_dump") else snapshot
+        result = await collection.update_one(
+            {"run_id": run_id, "status": ContentRunStatus.GENERATING.value},
+            {"$set": {"content_quality": payload, "updated_at": now}},
+        )
+        return bool(result.matched_count)
 
     async def mark_text_ready(self, run_id: str, final_content: str, final_status: str):
         collection = self._collection()
