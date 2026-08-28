@@ -122,6 +122,7 @@ def verified_grounding(final_content: str, *, decision=GroundingReviewDecision.V
         review_id="review-approval",
         decision=decision,
         content_sha256=assessment.content_sha256,
+        source_packet_sha256=content_runs_routes._sha256_json(source_packet.model_dump(mode="python")),
         assessment_sha256=content_runs_routes._sha256_json(assessment.model_dump(mode="python")),
         policy_version=gate.policy_version,
         warning_claim_ids=gate.warning_claim_ids,
@@ -252,6 +253,25 @@ async def test_approval_rejects_stale_grounding_revision(monkeypatch):
 
     assert exc.value.status_code == 409
     assert "stale" in exc.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_approval_rejects_source_packet_changed_after_human_verification(monkeypatch):
+    run = review_run()
+    run["source_packet"]["evidence"][0]["excerpt"] = "Evidence was replaced after verification."
+    db = FakeDb(run)
+    monkeypatch.setattr(content_runs_routes, "get_db", lambda: db)
+
+    with pytest.raises(HTTPException) as exc:
+        await approve_content_run(
+            "run-review",
+            ContentRunApprovalRequest(include_visual=False),
+        )
+
+    assert exc.value.status_code == 409
+    assert "source evidence" in exc.value.detail.lower()
+    assert db.content_runs.doc["status"] == ContentRunStatus.READY_FOR_REVIEW.value
+    assert db.content_runs.doc["approval"] is None
 
 
 @pytest.mark.asyncio
