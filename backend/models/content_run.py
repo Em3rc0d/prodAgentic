@@ -4,7 +4,12 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from models.grounding import GroundingAssessment, GroundingGateResult, SourcePacket
+from models.grounding import (
+    GroundingAssessment,
+    GroundingGateResult,
+    GroundingReviewSnapshot,
+    SourcePacket,
+)
 
 
 class ContentRunStatus(str, Enum):
@@ -86,6 +91,11 @@ class ApprovalSnapshot(BaseModel):
     final_content_sha256: str
     visual_render: Optional[VisualArtifactSnapshot] = None
     visual_render_sha256: Optional[str] = None
+    source_packet_sha256: Optional[str] = None
+    grounding_assessment_sha256: Optional[str] = None
+    grounding_gate_sha256: Optional[str] = None
+    grounding_review_sha256: Optional[str] = None
+    grounding_policy_version: Optional[str] = None
     bundle_sha256: str
 
 
@@ -141,6 +151,7 @@ class ContentRun(BaseModel):
     source_packet: Optional[SourcePacket] = None
     grounding_assessment: Optional[GroundingAssessment] = None
     grounding_gate: Optional[GroundingGateResult] = None
+    grounding_review: Optional[GroundingReviewSnapshot] = None
     approval: Optional[ApprovalSnapshot] = None
     schedule: Optional[ScheduleSnapshot] = None
     publication: Optional[PublicationSnapshot] = None
