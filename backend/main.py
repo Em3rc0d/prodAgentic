@@ -25,6 +25,7 @@ from routes.publishing import router as publishing_router
 from routes.scheduling import router as scheduling_router
 from routes.linkedin_oauth import router as linkedin_oauth_router
 from routes.source_packets import router as source_packets_router
+from routes.semantic_matcher import router as semantic_matcher_router
 
 
 load_dotenv()
@@ -100,6 +101,7 @@ app.include_router(posts_router, prefix="/api")
 app.include_router(content_runs_router, prefix="/api")
 app.include_router(content_profiles_router, prefix="/api")
 app.include_router(source_packets_router, prefix="/api")
+app.include_router(semantic_matcher_router, prefix="/api")
 app.include_router(publishing_router, prefix="/api")
 app.include_router(scheduling_router, prefix="/api")
 app.include_router(linkedin_oauth_router, prefix="/api")
