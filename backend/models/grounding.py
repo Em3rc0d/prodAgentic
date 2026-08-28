@@ -396,6 +396,7 @@ class GroundingReviewSnapshot(BaseModel):
     decision: GroundingReviewDecision
     source: str = "explicit_user_action"
     content_sha256: str = Field(min_length=64, max_length=64)
+    source_packet_sha256: str = Field(min_length=64, max_length=64)
     assessment_sha256: str = Field(min_length=64, max_length=64)
     policy_version: str
     warning_claim_ids: list[str] = Field(default_factory=list)
@@ -409,7 +410,7 @@ class GroundingReviewSnapshot(BaseModel):
             raise ValueError("value must not be blank")
         return value
 
-    @field_validator("content_sha256", "assessment_sha256")
+    @field_validator("content_sha256", "source_packet_sha256", "assessment_sha256")
     @classmethod
     def require_sha256_hex(cls, value: str):
         value = value.lower()
