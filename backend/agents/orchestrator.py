@@ -15,6 +15,8 @@ from agents.router import AttemptStarted, ContentChunk, AttemptFailed, AttemptRe
 from core.context import GenerationContext, LanguageCode, TargetLanguageCode, ImagePromptLanguageCode
 from core.language import language_detector
 from core.content_memory import ContentMemoryService
+from core.grounding import FactualEnvelopeBuilder
+from models.grounding import SourcePacket
 
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,7 @@ class PipelineOrchestrator:
         image_prompt_language: str = "en",
         content_profile_id: str | None = None,
         content_profile_snapshot: dict | None = None,
+        source_packet: SourcePacket | None = None,
     ) -> AsyncGenerator[dict, None]:
         context = self._resolve_context(
             topic,
@@ -139,11 +142,33 @@ class PipelineOrchestrator:
             content_profile_snapshot,
         )
 
+        factual_envelope = None
+        factual_envelope_text = None
+        if source_packet is not None:
+            if source_packet.workspace_id != context.workspace_id:
+                yield _sse(
+                    "error",
+                    reason="Source packet workspace does not match authoritative ContentRun workspace",
+                    run_id=context.run_id,
+                )
+                return
+            factual_envelope = FactualEnvelopeBuilder.build(source_packet)
+            factual_envelope_text = FactualEnvelopeBuilder.render_for_agent(factual_envelope)
+
         # Commercial trust boundary: generation may not begin without the
-        # authoritative ContentRun. A user must never receive seemingly valid
-        # output whose lifecycle/evidence object was never created.
+        # authoritative ContentRun. If evidence was supplied, the exact packet
+        # and factual envelope are snapshotted on that run before Research starts.
         try:
-            created = await self._persist_required(self.content_runs.create, context, idea)
+            if source_packet is None:
+                created = await self._persist_required(self.content_runs.create, context, idea)
+            else:
+                created = await self._persist_required(
+                    self.content_runs.create,
+                    context,
+                    idea,
+                    source_packet,
+                    factual_envelope,
+                )
         except PipelineAbortError:
             yield _sse(
                 "pipeline.persistence_failed",
@@ -275,13 +300,28 @@ class PipelineOrchestrator:
 
         try:
             def research_stream(ctx):
-                return self.research_agent.stream(idea, context=ctx, attempt_id=None)
+                if factual_envelope_text is None:
+                    return self.research_agent.stream(idea, context=ctx, attempt_id=None)
+                return self.research_agent.stream(
+                    idea,
+                    context=ctx,
+                    attempt_id=None,
+                    factual_envelope=factual_envelope_text,
+                )
 
             async for event in run_stage(research_stream, "research", self.research_agent.profile.value, research_ref):
                 yield event
 
             def writer_stream(ctx):
-                return self.writer_agent.stream(idea, research_ref[0], context=ctx, attempt_id=None)
+                if factual_envelope_text is None:
+                    return self.writer_agent.stream(idea, research_ref[0], context=ctx, attempt_id=None)
+                return self.writer_agent.stream(
+                    idea,
+                    research_ref[0],
+                    context=ctx,
+                    attempt_id=None,
+                    factual_envelope=factual_envelope_text,
+                )
 
             async for event in run_stage(writer_stream, "write", self.writer_agent.profile.value, draft_ref):
                 yield event
@@ -289,7 +329,14 @@ class PipelineOrchestrator:
             final_flags = {}
 
             def edit_stream(ctx):
-                return self.editor_agent.stream(draft_ref[0], context=ctx, attempt_id=None)
+                if factual_envelope_text is None:
+                    return self.editor_agent.stream(draft_ref[0], context=ctx, attempt_id=None)
+                return self.editor_agent.stream(
+                    draft_ref[0],
+                    context=ctx,
+                    attempt_id=None,
+                    factual_envelope=factual_envelope_text,
+                )
 
             async for event in run_stage(
                 edit_stream,
@@ -422,6 +469,8 @@ class PipelineOrchestrator:
             content_run_status="READY_FOR_REVIEW",
             persistence_active=persistence_active,
             content_profile_id=context.content_profile_id,
+            generation_source_packet_id=source_packet.packet_id if source_packet else None,
+            factual_envelope_version=factual_envelope.envelope_version if factual_envelope else None,
             final_status=final_status,
             visual_status=visual_status,
             post_id=post_id,
