@@ -8,6 +8,7 @@ from agents.idea_generator import GenerationIdeasFailed
 from core.context import TargetLanguageCode, ImagePromptLanguageCode
 from db.content_runs import ContentRunRepository
 from db.mongo import get_db
+from db.source_packets import SourcePacketRepository
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,15 @@ async def _resolve_content_profile(profile_id: str | None):
 
     snapshot = {key: value for key, value in doc.items() if key != "_id"}
     return doc["profile_id"], snapshot
+
+
+def _authoritative_workspace_id(request: Request) -> str:
+    container = getattr(request.app.state, "container", None)
+    settings = getattr(container, "settings", None)
+    workspace_id = getattr(settings, "app_workspace_id", None)
+    if not isinstance(workspace_id, str) or not workspace_id:
+        raise HTTPException(status_code=503, detail="Authoritative workspace configuration is unavailable")
+    return workspace_id
 
 
 router = APIRouter(tags=["pipeline"])
@@ -78,41 +88,80 @@ async def get_ideas(req: IdeasRequest, pipeline=Depends(get_ready_pipeline_servi
 
 @router.get("/pipeline/stream")
 async def pipeline_stream(
+    request: Request,
     idea: str = Query(..., description="The selected idea to expand"),
     topic: str = Query(..., description="Original topic"),
     style: str = Query("educational", description="Post style"),
     target_language: TargetLanguageCode = Query(TargetLanguageCode.ES),
     image_prompt_language: ImagePromptLanguageCode = Query(ImagePromptLanguageCode.EN),
     content_profile_id: str | None = Query(None),
+    source_packet_id: str | None = Query(
+        None,
+        description="Opaque id of an immutable server-scoped SourcePacket to constrain generation",
+    ),
     pipeline=Depends(get_ready_pipeline_service),
 ):
     # Commercial trust boundary: the content pipeline owns a durable ContentRun.
     # Ideas may still be generated without Mongo, but a reviewable/publishable run
     # may not start when its authoritative persistence boundary is unavailable.
-    if get_db() is None:
+    db = get_db()
+    if db is None:
         raise HTTPException(status_code=503, detail="MongoDB required for durable content generation")
+
+    source_packet = None
+    if source_packet_id:
+        source_packet = await SourcePacketRepository(db).get(
+            _authoritative_workspace_id(request),
+            source_packet_id,
+        )
+        if source_packet is None:
+            # Wrong-workspace packet ids intentionally resolve exactly like an
+            # unknown id; this endpoint must not reveal cross-workspace existence.
+            raise HTTPException(status_code=404, detail="Source packet not found")
 
     profile_id, profile_snapshot = await _resolve_content_profile(content_profile_id)
 
     async def event_generator():
         if profile_snapshot is None:
-            stream = pipeline.run_pipeline_stream(
-                idea,
-                topic,
-                style,
-                target_language,
-                image_prompt_language,
-            )
+            if source_packet is None:
+                stream = pipeline.run_pipeline_stream(
+                    idea,
+                    topic,
+                    style,
+                    target_language,
+                    image_prompt_language,
+                )
+            else:
+                stream = pipeline.run_pipeline_stream(
+                    idea,
+                    topic,
+                    style,
+                    target_language,
+                    image_prompt_language,
+                    source_packet=source_packet,
+                )
         else:
-            stream = pipeline.run_pipeline_stream(
-                idea,
-                topic,
-                style,
-                target_language,
-                image_prompt_language,
-                profile_id,
-                profile_snapshot,
-            )
+            if source_packet is None:
+                stream = pipeline.run_pipeline_stream(
+                    idea,
+                    topic,
+                    style,
+                    target_language,
+                    image_prompt_language,
+                    profile_id,
+                    profile_snapshot,
+                )
+            else:
+                stream = pipeline.run_pipeline_stream(
+                    idea,
+                    topic,
+                    style,
+                    target_language,
+                    image_prompt_language,
+                    profile_id,
+                    profile_snapshot,
+                    source_packet=source_packet,
+                )
 
         async for event in stream:
             data = event.get("data", "{}")
