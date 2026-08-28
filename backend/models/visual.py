@@ -32,8 +32,9 @@ class VisualRenderRequest(BaseModel):
     run_id: str = Field(..., min_length=1, max_length=256)
     idempotency_key: str = Field(..., min_length=8, max_length=128)
     prompt: str = Field(..., min_length=1, max_length=2048)
-    aspect_ratio: AspectRatio = AspectRatio.WIDESCREEN
-    style: VisualStyle = VisualStyle.DEFAULT
+    # LinkedIn feed-first default. Callers may still explicitly request square or widescreen.
+    aspect_ratio: AspectRatio = AspectRatio.PORTRAIT
+    style: VisualStyle = VisualStyle.TECHNICAL_EDITORIAL
 
 
 class VisualRenderResponse(BaseModel):
