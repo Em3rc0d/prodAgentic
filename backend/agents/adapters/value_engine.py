@@ -25,6 +25,7 @@ class ValueEngineProtocolError(RuntimeError):
 
 _FALLBACK_CATEGORIES = {
     ErrorCode.MODEL_NOT_FOUND,
+    ErrorCode.MODEL_CAPABILITY_UNAVAILABLE,
     ErrorCode.SERVICE_UNAVAILABLE,
     ErrorCode.TIMEOUT,
     ErrorCode.RATE_LIMITED,
