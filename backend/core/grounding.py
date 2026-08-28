@@ -1,11 +1,99 @@
 from models.grounding import (
+    Claim,
     ClaimType,
+    EvidenceRelation,
     GroundingAssessment,
     GroundingDecision,
+    GroundingEvaluationDraft,
     GroundingGateResult,
     GroundingStatus,
     SourcePacket,
 )
+
+
+class GroundingAssessmentBuilder:
+    """Convert non-authoritative semantic proposals into an assessment.
+
+    Extractors and LLM evaluators may propose claims and evidence relations, but
+    they never assign GroundingStatus directly. This builder derives those
+    states mechanically and conservatively.
+    """
+
+    VERSION = "grounding-assessment-builder-v1"
+
+    @classmethod
+    def build(
+        cls,
+        draft: GroundingEvaluationDraft,
+        source_packet: SourcePacket,
+    ) -> GroundingAssessment:
+        if draft.packet_id != source_packet.packet_id:
+            raise ValueError("grounding draft packet_id does not match source packet")
+
+        matches_by_claim = {claim.claim_id: [] for claim in draft.claims}
+        for match in draft.evidence_matches:
+            matches_by_claim[match.claim_id].append(match)
+
+        claims: list[Claim] = []
+        for proposal in draft.claims:
+            matches = matches_by_claim[proposal.claim_id]
+            contradictions = [
+                match for match in matches if match.relation == EvidenceRelation.CONTRADICTS
+            ]
+            supports = [
+                match for match in matches if match.relation == EvidenceRelation.SUPPORTS
+            ]
+
+            if proposal.claim_type == ClaimType.OPINION:
+                status = GroundingStatus.OPINION
+                source_refs: list[str] = []
+                rationale = "Opinion classification remains explicit and does not borrow factual authority from evidence."
+                confidence = proposal.confidence
+            elif contradictions:
+                status = GroundingStatus.CONTRADICTED
+                source_refs = sorted({match.evidence_id for match in contradictions})
+                rationale = "At least one proposed evidence relation contradicts this claim."
+                confidence = min(
+                    proposal.confidence,
+                    max(match.confidence for match in contradictions),
+                )
+            elif supports:
+                if proposal.claim_type in {ClaimType.FACT, ClaimType.EXPERIENCE}:
+                    status = GroundingStatus.GROUNDED
+                else:
+                    status = GroundingStatus.SUPPORTED_INFERENCE
+                source_refs = sorted({match.evidence_id for match in supports})
+                rationale = "At least one proposed evidence relation supports this claim and no contradiction was proposed."
+                confidence = min(
+                    proposal.confidence,
+                    max(match.confidence for match in supports),
+                )
+            else:
+                status = GroundingStatus.INSUFFICIENT_EVIDENCE
+                source_refs = []
+                rationale = "No supporting evidence relation was proposed for this claim."
+                confidence = proposal.confidence
+
+            claims.append(
+                Claim(
+                    claim_id=proposal.claim_id,
+                    statement=proposal.statement,
+                    claim_type=proposal.claim_type,
+                    grounding_status=status,
+                    source_refs=source_refs,
+                    rationale=rationale,
+                    confidence=confidence,
+                )
+            )
+
+        return GroundingAssessment(
+            assessment_id=f"assessment:{draft.draft_id}",
+            packet_id=draft.packet_id,
+            content_sha256=draft.content_sha256,
+            evaluator_version=f"{draft.evaluator_version}+{cls.VERSION}",
+            extraction_complete=draft.extraction_complete,
+            claims=claims,
+        )
 
 
 class GroundingPolicy:
