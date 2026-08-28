@@ -70,10 +70,14 @@ class DuplicateClaimCollection(FakeCollection):
 class FakeDb:
     def __init__(self, doc, collection_cls=FakeCollection):
         self.collection = collection_cls(doc)
+        self.source_packets = FakeCollection({})
 
     def __getitem__(self, name):
-        assert name == 'content_runs'
-        return self.collection
+        if name == 'content_runs':
+            return self.collection
+        if name == 'source_packets':
+            return self.source_packets
+        raise AssertionError(f'unexpected collection: {name}')
 
 
 class FakeConfig:
@@ -98,7 +102,7 @@ def approved_doc():
 
 
 @pytest.mark.asyncio
-async def test_publication_dedupe_index_is_installed_before_publication_workers_run():
+async def test_mandatory_release_indexes_are_installed_before_publication_workers_run():
     db = FakeDb(approved_doc())
 
     await _ensure_indexes(db)
@@ -106,6 +110,10 @@ async def test_publication_dedupe_index_is_installed_before_publication_workers_
     assert db.collection.indexes == [(
         'publication.dedupe_key',
         {'unique': True, 'sparse': True, 'name': 'publication_dedupe_key_unique'},
+    )]
+    assert db.source_packets.indexes == [(
+        [('workspace_id', 1), ('packet_id', 1)],
+        {'unique': True, 'name': 'source_packet_workspace_packet_unique'},
     )]
 
 
