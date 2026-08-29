@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +8,8 @@ from agents.adapters.image import ImageRenderProvider, ImageRenderResult
 from core.visual import VisualRenderService
 from db.content_runs import ContentRunRepository
 from main import app
+from models.visual import AspectRatio, VisualRenderRequest, VisualStyle
+from routes.pipeline import _resolve_visual_render_request
 
 
 class MockPollinationsProvider(ImageRenderProvider):
@@ -180,3 +183,72 @@ def test_visual_render_persistence_failure_does_not_fabricate_render_failure(cli
     assert response.status_code == 200
     assert response.json()["status"] == "READY"
     assert response.json()["asset_url"].startswith("/assets/renders/")
+
+
+@pytest.mark.asyncio
+async def test_legacy_studio_widescreen_default_is_resolved_from_authoritative_visual_direction(monkeypatch):
+    class FakeCollection:
+        async def find_one(self, query, projection=None):
+            assert query == {
+                "run_id": "run-legacy",
+                "workspace_id": "workspace-test",
+            }
+            assert projection == {"final_content": 1, "style": 1}
+            return {
+                "final_content": (
+                    "Una arquitectura de grounding separa recuperación, validación y publicación "
+                    "en un pipeline con una frontera de confianza explícita."
+                ),
+                "style": "storytelling",
+            }
+
+    class FakeDb:
+        def __getitem__(self, name):
+            assert name == "content_runs"
+            return FakeCollection()
+
+    monkeypatch.setattr("routes.pipeline.get_db", lambda: FakeDb())
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                container=SimpleNamespace(
+                    settings=SimpleNamespace(app_workspace_id="workspace-test")
+                )
+            )
+        )
+    )
+    legacy_req = VisualRenderRequest(
+        run_id="run-legacy",
+        idempotency_key="legacy-render-123",
+        prompt="Technical architecture schematic",
+        aspect_ratio=AspectRatio.WIDESCREEN,
+        style=VisualStyle.DEFAULT,
+    )
+
+    effective = await _resolve_visual_render_request(legacy_req, request)
+
+    assert effective.aspect_ratio == AspectRatio.PORTRAIT
+    assert effective.style == VisualStyle.TECHNICAL_EDITORIAL
+    assert effective.prompt == legacy_req.prompt
+    assert effective.run_id == legacy_req.run_id
+
+
+@pytest.mark.asyncio
+async def test_explicit_visual_choice_is_never_overridden_by_legacy_compatibility(monkeypatch):
+    def fail_if_db_is_touched():
+        raise AssertionError("explicit visual choices must not consult compatibility state")
+
+    monkeypatch.setattr("routes.pipeline.get_db", fail_if_db_is_touched)
+    manual_req = VisualRenderRequest(
+        run_id="run-manual",
+        idempotency_key="manual-render-123",
+        prompt="Minimal comparison",
+        aspect_ratio=AspectRatio.SQUARE,
+        style=VisualStyle.MINIMAL,
+    )
+
+    effective = await _resolve_visual_render_request(manual_req, SimpleNamespace())
+
+    assert effective is manual_req
+    assert effective.aspect_ratio == AspectRatio.SQUARE
+    assert effective.style == VisualStyle.MINIMAL
