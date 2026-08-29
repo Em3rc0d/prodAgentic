@@ -24,6 +24,11 @@ class MarkdownEditorRouter:
         yield AttemptCompleted("attempt-plain-text")
 
 
+class CompletionlessEditorRouter:
+    async def stream_generation(self, request):
+        yield ContentChunk(r"Contenido guardado con \*grounding\* y **plain text**.", "attempt-no-completion")
+
+
 def context(style: str) -> GenerationContext:
     return GenerationContext(
         run_id="run-voice",
@@ -122,3 +127,21 @@ async def test_editor_withholds_raw_markdown_and_emits_only_normalized_final_chu
     assert chunks == ["Tratar el grounding con Zero Trust y GroundingPolicy."]
     assert any(isinstance(event, AttemptStarted) for event in events)
     assert any(isinstance(event, AttemptCompleted) for event in events)
+
+
+@pytest.mark.asyncio
+async def test_editor_flushes_normalized_content_when_stream_ends_without_completion_event():
+    agent = EditorAgent(CompletionlessEditorRouter())
+
+    events = [
+        event
+        async for event in agent.stream(
+            "Draft",
+            context=context("storytelling"),
+        )
+    ]
+
+    chunks = [event.text for event in events if isinstance(event, ContentChunk)]
+
+    assert chunks == ["Contenido guardado con grounding y plain text."]
+    assert not any(isinstance(event, AttemptCompleted) for event in events)
