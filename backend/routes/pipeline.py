@@ -6,9 +6,11 @@ from models.post import IdeasRequest
 from agents.idea_generator import GenerationIdeasFailed
 
 from core.context import TargetLanguageCode, ImagePromptLanguageCode
+from core.visual_direction import VisualDirectionPolicy
 from db.content_runs import ContentRunRepository
 from db.mongo import get_db
 from db.source_packets import SourcePacketRepository
+from models.visual import AspectRatio, VisualRenderRequest, VisualStyle
 
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,45 @@ def _authoritative_workspace_id(request: Request) -> str:
     if not isinstance(workspace_id, str) or not workspace_id:
         raise HTTPException(status_code=503, detail="Authoritative workspace configuration is unavailable")
     return workspace_id
+
+
+async def _resolve_visual_render_request(req: VisualRenderRequest, request: Request) -> VisualRenderRequest:
+    """Translate only the legacy Studio default into the deterministic visual direction.
+
+    Older Create Studio clients explicitly send 16:9 + empty style even when they
+    did not make a visual choice. That pair used to override VisualDirectionPolicy.
+    Any non-legacy pair is treated as an intentional user choice and is preserved.
+    """
+    if not (
+        req.aspect_ratio == AspectRatio.WIDESCREEN
+        and req.style == VisualStyle.DEFAULT
+    ):
+        return req
+
+    db = get_db()
+    if db is None:
+        return req
+
+    run_doc = await db["content_runs"].find_one(
+        {
+            "run_id": req.run_id,
+            "workspace_id": _authoritative_workspace_id(request),
+        },
+        {"final_content": 1, "style": 1},
+    )
+    if not run_doc or not isinstance(run_doc.get("final_content"), str) or not run_doc["final_content"].strip():
+        return req
+
+    direction = VisualDirectionPolicy.select(
+        run_doc["final_content"],
+        style=run_doc.get("style") or "educational",
+    )
+    return req.model_copy(
+        update={
+            "aspect_ratio": AspectRatio(direction.recommended_aspect_ratio),
+            "style": VisualStyle(direction.recommended_style),
+        }
+    )
 
 
 router = APIRouter(tags=["pipeline"])
@@ -179,21 +220,19 @@ async def pipeline_stream(
     )
 
 
-from models.visual import VisualRenderRequest
-
-
 @router.post("/visual-renders")
 async def render_visual(req: VisualRenderRequest, request: Request):
     visual_service = request.app.state.container.visual_service
     run_repository = ContentRunRepository()
+    effective_req = await _resolve_visual_render_request(req, request)
     try:
-        result = await visual_service.render(req)
+        result = await visual_service.render(effective_req)
         try:
-            await run_repository.record_visual_render(req, result)
+            await run_repository.record_visual_render(effective_req, result)
         except Exception as persistence_error:
             logger.warning(
                 "Visual render completed but ContentRun attachment failed for run_id=%s: %s",
-                req.run_id,
+                effective_req.run_id,
                 persistence_error,
             )
         return result.model_dump()
@@ -205,15 +244,15 @@ async def render_visual(req: VisualRenderRequest, request: Request):
             render_id=str(uuid.uuid4()),
             status=RenderStatus.FAILED,
             provider="Unknown",
-            prompt_used=req.prompt,
+            prompt_used=effective_req.prompt,
             error_message="Internal Server Error",
         )
         try:
-            await run_repository.record_visual_render(req, err_res)
+            await run_repository.record_visual_render(effective_req, err_res)
         except Exception as persistence_error:
             logger.warning(
                 "Visual failure snapshot could not be attached for run_id=%s: %s",
-                req.run_id,
+                effective_req.run_id,
                 persistence_error,
             )
         return err_res.model_dump()
