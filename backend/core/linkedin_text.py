@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 
-_HEADING_PREFIX = re.compile(r"(?m)^\s{0,3}#{1,6}\s+")
+_HEADING_PREFIX = re.compile(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+")
 _BOLD_ASTERISK = re.compile(r"\*\*([^*\n]+?)\*\*")
 _BOLD_UNDERSCORE = re.compile(r"__([^_\n]+?)__")
 _ITALIC_ASTERISK = re.compile(r"(?<!\w)\*([^*\n]+?)\*(?!\w)")
