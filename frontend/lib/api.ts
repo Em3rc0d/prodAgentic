@@ -133,8 +133,8 @@ export interface VisualRenderResponse {
 
 export async function renderVisual(
   prompt: string,
-  aspect_ratio: string = "16:9",
-  style: string = "",
+  aspect_ratio: string = "4:5",
+  style: string = "technical_editorial",
   run_id?: string,
   idempotency_key?: string
 ): Promise<VisualRenderResponse> {
