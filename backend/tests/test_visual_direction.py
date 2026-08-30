@@ -1,5 +1,5 @@
 from agents.visual_agent import SYSTEM_PROMPT
-from core.visual_direction import VisualDirectionPolicy, VisualFormat
+from core.visual_direction import VisualDirectionPolicy, VisualFormat, VisualRenderer
 from models.visual import AspectRatio, VisualRenderRequest, VisualStyle
 
 
@@ -11,18 +11,20 @@ def test_architecture_content_chooses_schematic_not_cinematic_art():
     direction = VisualDirectionPolicy.select(content, style="educational")
 
     assert direction.visual_format == VisualFormat.ARCHITECTURE_SCHEMATIC
+    assert direction.renderer == VisualRenderer.DETERMINISTIC
     assert direction.recommended_aspect_ratio == "4:5"
     assert direction.recommended_style == "technical_editorial"
     assert "photorealistic server rooms" in direction.treatment
 
 
-def test_ci_story_chooses_artifact_board():
+def test_ci_story_chooses_artifact_board_and_deterministic_renderer():
     content = (
         "Un test de pytest dejó rojo el CI. El commit siguiente corrigió el boundary y el workflow volvió a verde."
     )
     direction = VisualDirectionPolicy.select(content, style="storytelling")
 
     assert direction.visual_format == VisualFormat.ARTIFACT_BOARD
+    assert direction.renderer == VisualRenderer.DETERMINISTIC
     assert "artifact board" in direction.composition.lower()
 
 
@@ -33,6 +35,7 @@ def test_process_content_chooses_process_flow():
     direction = VisualDirectionPolicy.select(content, style="educational")
 
     assert direction.visual_format == VisualFormat.PROCESS_FLOW
+    assert direction.renderer == VisualRenderer.DETERMINISTIC
 
 
 def test_comparison_wins_over_other_visual_signals():
@@ -42,6 +45,7 @@ def test_comparison_wins_over_other_visual_signals():
     direction = VisualDirectionPolicy.select(content, style="educational")
 
     assert direction.visual_format == VisualFormat.COMPARISON
+    assert direction.renderer == VisualRenderer.DETERMINISTIC
 
 
 def test_strong_position_without_system_artifacts_becomes_editorial_poster():
@@ -49,6 +53,16 @@ def test_strong_position_without_system_artifacts_becomes_editorial_poster():
     direction = VisualDirectionPolicy.select(content, style="controversial")
 
     assert direction.visual_format == VisualFormat.EDITORIAL_POSTER
+    assert direction.renderer == VisualRenderer.DETERMINISTIC
+
+
+def test_storytelling_without_technical_or_artifact_signal_can_use_generative_illustration():
+    content = "Una decisión incómoda cambió la forma en que pensamos sobre creatividad y criterio profesional."
+    direction = VisualDirectionPolicy.select(content, style="storytelling")
+
+    assert direction.visual_format == VisualFormat.ILLUSTRATION
+    assert direction.renderer == VisualRenderer.GENERATIVE
+    assert direction.recommended_style == "illustration"
 
 
 def test_visual_agent_explicitly_blocks_generic_ai_wallpaper_language():
