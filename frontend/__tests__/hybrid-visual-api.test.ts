@@ -64,7 +64,7 @@ describe('hybrid visual API dispatch', () => {
     )
     const renderCall = (global.fetch as jest.Mock).mock.calls.find(([input]) => String(input).endsWith('/api/visual-renders'))
     expect(renderCall).toBeDefined()
-    const payload = JSON.parse(renderCall[1].body)
+    const payload = JSON.parse(renderCall![1].body)
     expect(payload.deterministic_png_base64).toBe('iVBORw0KGgo=')
     expect(payload.deterministic_png_sha256).toBe('a'.repeat(64))
   })
@@ -98,7 +98,8 @@ describe('hybrid visual API dispatch', () => {
 
     expect(rasterizeEditorialVisual).not.toHaveBeenCalled()
     const renderCall = (global.fetch as jest.Mock).mock.calls.find(([input]) => String(input).endsWith('/api/visual-renders'))
-    const payload = JSON.parse(renderCall[1].body)
+    expect(renderCall).toBeDefined()
+    const payload = JSON.parse(renderCall![1].body)
     expect(payload.deterministic_png_base64).toBeUndefined()
     expect(payload.deterministic_png_sha256).toBeUndefined()
   })
