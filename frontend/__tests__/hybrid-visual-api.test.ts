@@ -36,7 +36,7 @@ describe('hybrid visual API dispatch', () => {
       if (url.endsWith('/api/auth/session')) {
         return response({ authenticated: true, auth_enabled: true, csrf_token: 'csrf-test' })
       }
-      if (url.endsWith('/api/visual-renders/run-det/plan')) {
+      if (url.endsWith('/api/visual-plans/run-det')) {
         return response({
           run_id: 'run-det',
           policy_version: 'visual-direction-policy-v2',
@@ -75,7 +75,7 @@ describe('hybrid visual API dispatch', () => {
       if (url.endsWith('/api/auth/session')) {
         return response({ authenticated: true, auth_enabled: true, csrf_token: 'csrf-test' })
       }
-      if (url.endsWith('/api/visual-renders/run-story/plan')) {
+      if (url.endsWith('/api/visual-plans/run-story')) {
         return response({
           run_id: 'run-story',
           policy_version: 'visual-direction-policy-v2',
