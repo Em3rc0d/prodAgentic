@@ -6,7 +6,7 @@ from models.post import IdeasRequest
 from agents.idea_generator import GenerationIdeasFailed
 
 from core.context import TargetLanguageCode, ImagePromptLanguageCode
-from core.visual_direction import VisualDirectionPolicy
+from core.visual_direction import VisualDirection, VisualDirectionPolicy, VisualRenderer
 from db.content_runs import ContentRunRepository
 from db.mongo import get_db
 from db.source_packets import SourcePacketRepository
@@ -54,22 +54,19 @@ def _authoritative_workspace_id(request: Request) -> str:
     return workspace_id
 
 
-async def _resolve_visual_render_request(req: VisualRenderRequest, request: Request) -> VisualRenderRequest:
-    """Translate only the legacy Studio default into the deterministic visual direction.
+async def _resolve_visual_render_request(
+    req: VisualRenderRequest,
+    request: Request,
+) -> tuple[VisualRenderRequest, VisualDirection | None]:
+    """Resolve the server-owned visual direction and legacy request defaults.
 
-    Older Create Studio clients explicitly send 16:9 + empty style even when they
-    did not make a visual choice. That pair used to override VisualDirectionPolicy.
-    Any non-legacy pair is treated as an intentional user choice and is preserved.
+    The renderer choice never comes from the browser. The ContentRun's final
+    content/style are the authority for deciding deterministic vs generative
+    rendering. The old 16:9 + Default pair remains a compatibility shim only.
     """
-    if not (
-        req.aspect_ratio == AspectRatio.WIDESCREEN
-        and req.style == VisualStyle.DEFAULT
-    ):
-        return req
-
     db = get_db()
     if db is None:
-        return req
+        return req, None
 
     run_doc = await db["content_runs"].find_one(
         {
@@ -79,18 +76,24 @@ async def _resolve_visual_render_request(req: VisualRenderRequest, request: Requ
         {"final_content": 1, "style": 1},
     )
     if not run_doc or not isinstance(run_doc.get("final_content"), str) or not run_doc["final_content"].strip():
-        return req
+        return req, None
 
     direction = VisualDirectionPolicy.select(
         run_doc["final_content"],
         style=run_doc.get("style") or "educational",
     )
-    return req.model_copy(
-        update={
-            "aspect_ratio": AspectRatio(direction.recommended_aspect_ratio),
-            "style": VisualStyle(direction.recommended_style),
-        }
-    )
+
+    # Translate only the exact legacy Studio default. Any other pair remains an
+    # intentional user choice for ratio/style while renderer authority stays on
+    # the server.
+    if req.aspect_ratio == AspectRatio.WIDESCREEN and req.style == VisualStyle.DEFAULT:
+        req = req.model_copy(
+            update={
+                "aspect_ratio": AspectRatio(direction.recommended_aspect_ratio),
+                "style": VisualStyle(direction.recommended_style),
+            }
+        )
+    return req, direction
 
 
 router = APIRouter(tags=["pipeline"])
@@ -224,9 +227,20 @@ async def pipeline_stream(
 async def render_visual(req: VisualRenderRequest, request: Request):
     visual_service = request.app.state.container.visual_service
     run_repository = ContentRunRepository()
-    effective_req = await _resolve_visual_render_request(req, request)
+    effective_req, direction = await _resolve_visual_render_request(req, request)
     try:
-        result = await visual_service.render(effective_req)
+        if direction is not None and direction.renderer == VisualRenderer.DETERMINISTIC:
+            result = await visual_service.render_deterministic(effective_req)
+        else:
+            # A deterministic payload may never force an unknown/generative run
+            # into deterministic rendering. Renderer choice is server-owned.
+            if effective_req.deterministic_png_base64 or effective_req.deterministic_png_sha256:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Deterministic PNG supplied for a run whose server-owned renderer is not deterministic",
+                )
+            result = await visual_service.render(effective_req)
+
         try:
             await run_repository.record_visual_render(effective_req, result)
         except Exception as persistence_error:
@@ -236,6 +250,8 @@ async def render_visual(req: VisualRenderRequest, request: Request):
                 persistence_error,
             )
         return result.model_dump()
+    except HTTPException:
+        raise
     except Exception:
         from models.visual import VisualRenderResponse, RenderStatus
         import uuid
