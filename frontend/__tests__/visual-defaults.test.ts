@@ -12,6 +12,21 @@ describe('visual render defaults', () => {
           json: () => Promise.resolve({ authenticated: true, auth_enabled: true, csrf_token: 'csrf-test' }),
         })
       }
+      if (url.endsWith('/api/visual-renders/run-1/plan')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            run_id: 'run-1',
+            policy_version: 'visual-direction-policy-v2',
+            visual_format: 'ILLUSTRATION',
+            renderer: 'GENERATIVE',
+            final_content: 'A professional editorial story.',
+            recommended_aspect_ratio: '4:5',
+            recommended_style: 'illustration',
+          }),
+        })
+      }
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -33,7 +48,7 @@ describe('visual render defaults', () => {
     )
     expect(renderCall).toBeDefined()
 
-    const [, init] = renderCall
+    const [, init] = renderCall!
     const payload = JSON.parse(init.body)
 
     expect(payload.aspect_ratio).toBe('4:5')
