@@ -48,6 +48,16 @@ class VisualRenderRequest(BaseModel):
     )
 
 
+class VisualRenderPlan(BaseModel):
+    run_id: str
+    policy_version: str
+    visual_format: str
+    renderer: str
+    final_content: str
+    recommended_aspect_ratio: AspectRatio
+    recommended_style: VisualStyle
+
+
 class VisualRenderResponse(BaseModel):
     render_id: str
     status: RenderStatus
