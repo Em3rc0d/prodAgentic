@@ -17,12 +17,13 @@ def _workspace_id(request: Request) -> str:
     return workspace_id
 
 
-@router.get("/visual-renders/{run_id}/plan", response_model=VisualRenderPlan)
+@router.get("/visual-plans/{run_id}", response_model=VisualRenderPlan)
 async def get_visual_render_plan(run_id: str, request: Request) -> VisualRenderPlan:
     """Return the server-owned renderer/format plan for one ContentRun.
 
-    Only the already-authored final content is returned; evidence packets and
-    hidden prompts remain outside this surface. Unknown and cross-workspace run
+    Planning and rendering are deliberately separate resources. Only the
+    already-authored final content is returned; evidence packets and hidden
+    prompts remain outside this surface. Unknown and cross-workspace run
     identifiers are intentionally indistinguishable.
     """
     db = get_db()
