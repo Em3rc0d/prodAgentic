@@ -152,7 +152,7 @@ const DETERMINISTIC_FORMATS = new Set<EditorialVisualFormat>([
 ]);
 
 export async function fetchVisualRenderPlan(runId: string): Promise<VisualRenderPlan> {
-  const res = await secureFetch(`${API}/api/visual-renders/${encodeURIComponent(runId)}/plan`, { cache: "no-store" });
+  const res = await secureFetch(`${API}/api/visual-plans/${encodeURIComponent(runId)}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Visual render plan failed: ${res.status}`);
   return res.json();
 }
