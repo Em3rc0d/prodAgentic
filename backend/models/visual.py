@@ -36,6 +36,17 @@ class VisualRenderRequest(BaseModel):
     aspect_ratio: AspectRatio = AspectRatio.PORTRAIT
     style: VisualStyle = VisualStyle.TECHNICAL_EDITORIAL
 
+    # HYBRID-VISUAL-01: for server-selected deterministic formats the browser
+    # rasterizes an exact SVG/layout into PNG. The backend still owns authority:
+    # it validates the PNG, byte digest, dimensions and run-bound renderer choice
+    # before persisting the asset. These fields are ignored/rejected for
+    # generative illustration renders.
+    deterministic_png_base64: Optional[str] = Field(default=None, max_length=14_000_000)
+    deterministic_png_sha256: Optional[str] = Field(
+        default=None,
+        pattern=r"^[0-9a-fA-F]{64}$",
+    )
+
 
 class VisualRenderResponse(BaseModel):
     render_id: str
