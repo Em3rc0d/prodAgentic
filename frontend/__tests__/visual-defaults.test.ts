@@ -12,7 +12,7 @@ describe('visual render defaults', () => {
           json: () => Promise.resolve({ authenticated: true, auth_enabled: true, csrf_token: 'csrf-test' }),
         })
       }
-      if (url.endsWith('/api/visual-renders/run-1/plan')) {
+      if (url.endsWith('/api/visual-plans/run-1')) {
         return Promise.resolve({
           ok: true,
           status: 200,
