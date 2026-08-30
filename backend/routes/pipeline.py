@@ -54,19 +54,13 @@ def _authoritative_workspace_id(request: Request) -> str:
     return workspace_id
 
 
-async def _resolve_visual_render_request(
+async def _load_visual_direction(
     req: VisualRenderRequest,
     request: Request,
-) -> tuple[VisualRenderRequest, VisualDirection | None]:
-    """Resolve the server-owned visual direction and legacy request defaults.
-
-    The renderer choice never comes from the browser. The ContentRun's final
-    content/style are the authority for deciding deterministic vs generative
-    rendering. The old 16:9 + Default pair remains a compatibility shim only.
-    """
+) -> VisualDirection | None:
     db = get_db()
     if db is None:
-        return req, None
+        return None
 
     run_doc = await db["content_runs"].find_one(
         {
@@ -76,24 +70,34 @@ async def _resolve_visual_render_request(
         {"final_content": 1, "style": 1},
     )
     if not run_doc or not isinstance(run_doc.get("final_content"), str) or not run_doc["final_content"].strip():
-        return req, None
-
-    direction = VisualDirectionPolicy.select(
+        return None
+    return VisualDirectionPolicy.select(
         run_doc["final_content"],
         style=run_doc.get("style") or "educational",
     )
 
-    # Translate only the exact legacy Studio default. Any other pair remains an
-    # intentional user choice for ratio/style while renderer authority stays on
-    # the server.
-    if req.aspect_ratio == AspectRatio.WIDESCREEN and req.style == VisualStyle.DEFAULT:
-        req = req.model_copy(
-            update={
-                "aspect_ratio": AspectRatio(direction.recommended_aspect_ratio),
-                "style": VisualStyle(direction.recommended_style),
-            }
-        )
-    return req, direction
+
+async def _resolve_visual_render_request(
+    req: VisualRenderRequest,
+    request: Request,
+) -> VisualRenderRequest:
+    """Translate only the exact legacy Studio 16:9 + Default pair.
+
+    Intentional manual aspect/style choices remain untouched. Renderer choice is
+    a separate server authority resolved by ``_load_visual_direction``.
+    """
+    if not (req.aspect_ratio == AspectRatio.WIDESCREEN and req.style == VisualStyle.DEFAULT):
+        return req
+
+    direction = await _load_visual_direction(req, request)
+    if direction is None:
+        return req
+    return req.model_copy(
+        update={
+            "aspect_ratio": AspectRatio(direction.recommended_aspect_ratio),
+            "style": VisualStyle(direction.recommended_style),
+        }
+    )
 
 
 router = APIRouter(tags=["pipeline"])
@@ -145,9 +149,6 @@ async def pipeline_stream(
     ),
     pipeline=Depends(get_ready_pipeline_service),
 ):
-    # Commercial trust boundary: the content pipeline owns a durable ContentRun.
-    # Ideas may still be generated without Mongo, but a reviewable/publishable run
-    # may not start when its authoritative persistence boundary is unavailable.
     db = get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="MongoDB required for durable content generation")
@@ -159,8 +160,6 @@ async def pipeline_stream(
             source_packet_id,
         )
         if source_packet is None:
-            # Wrong-workspace packet ids intentionally resolve exactly like an
-            # unknown id; this endpoint must not reveal cross-workspace existence.
             raise HTTPException(status_code=404, detail="Source packet not found")
 
     profile_id, profile_snapshot = await _resolve_content_profile(content_profile_id)
@@ -227,13 +226,12 @@ async def pipeline_stream(
 async def render_visual(req: VisualRenderRequest, request: Request):
     visual_service = request.app.state.container.visual_service
     run_repository = ContentRunRepository()
-    effective_req, direction = await _resolve_visual_render_request(req, request)
+    effective_req = await _resolve_visual_render_request(req, request)
+    direction = await _load_visual_direction(effective_req, request)
     try:
         if direction is not None and direction.renderer == VisualRenderer.DETERMINISTIC:
             result = await visual_service.render_deterministic(effective_req)
         else:
-            # A deterministic payload may never force an unknown/generative run
-            # into deterministic rendering. Renderer choice is server-owned.
             if effective_req.deterministic_png_base64 or effective_req.deterministic_png_sha256:
                 raise HTTPException(
                     status_code=409,
