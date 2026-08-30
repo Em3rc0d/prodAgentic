@@ -15,11 +15,24 @@ class VisualFormat(str, Enum):
     ILLUSTRATION = "ILLUSTRATION"
 
 
+class VisualRenderer(str, Enum):
+    """Server-owned choice of the rendering mechanism.
+
+    Technical/editorial layouts require exact geometry and typography, so they
+    are rendered deterministically. Only genuine illustration work is delegated
+    to a generative image provider.
+    """
+
+    DETERMINISTIC = "DETERMINISTIC"
+    GENERATIVE = "GENERATIVE"
+
+
 @dataclass(frozen=True)
 class VisualDirection:
     visual_format: VisualFormat
     composition: str
     treatment: str
+    renderer: VisualRenderer = VisualRenderer.DETERMINISTIC
     recommended_aspect_ratio: str = "4:5"
     recommended_style: str = "technical_editorial"
 
@@ -27,12 +40,12 @@ class VisualDirection:
 class VisualDirectionPolicy:
     """Deterministically choose a visual communication format before prompting AI.
 
-    The policy is intentionally boring code: an image model may execute the
-    direction, but it cannot decide that every software topic deserves the same
-    neon/cyberpunk metaphor.
+    The policy is intentionally boring code: an image model may execute only the
+    directions assigned to GENERATIVE rendering. It cannot decide that every
+    software topic deserves the same neon/cyberpunk metaphor.
     """
 
-    VERSION = "visual-direction-policy-v1"
+    VERSION = "visual-direction-policy-v2"
 
     _COMPARISON = re.compile(
         r"\b(vs\.?|versus|compar(?:a|ar|ación)|antes\s+y\s+después|before\s+and\s+after|before/after|trade-?off)\b",
@@ -43,7 +56,7 @@ class VisualDirectionPolicy:
         re.IGNORECASE,
     )
     _ARCHITECTURE = re.compile(
-        r"\b(arquitectura|architecture|system design|microserv(?:ice|icio)|kafka|rag|distributed|distribuid|event(?:o|s)?|broker|queue|sourcepacket|grounding|oauth|api gateway|database|base de datos|mongo(?:db)?|spring boot)\b",
+        r"\b(arquitectura|architecture|system design|diseño de sistemas|microserv(?:ice|icio)|kafka|rag|distributed|distribuid|event(?:o|s)?|broker|queue|sourcepacket|grounding|oauth|api gateway|database|base de datos|mongo(?:db)?|spring boot)\b",
         re.IGNORECASE,
     )
     _PROCESS = re.compile(
@@ -51,7 +64,7 @@ class VisualDirectionPolicy:
         re.IGNORECASE,
     )
     _STRONG_POSITION = re.compile(
-        r"\b(no deber[ií]a|nunca|jam[aá]s|the hard part|el verdadero riesgo|la regla|no es|debe|should never|must not)\b",
+        r"\b(no deber[ií]a|nunca|jam[aá]s|the hard part|el verdadero riesgo|la regla|no es|no acelera|debe|should never|must not)\b",
         re.IGNORECASE,
     )
 
@@ -132,6 +145,8 @@ class VisualDirectionPolicy:
                 "Sophisticated editorial illustration, tactile and restrained; no cyberpunk, no holograms, no "
                 "glowing brains, no generic futuristic workspace."
             ),
+            renderer=VisualRenderer.GENERATIVE,
+            recommended_style="illustration",
         ),
     }
 
@@ -162,6 +177,7 @@ class VisualDirectionPolicy:
                 "<VISUAL_DIRECTION_DATA>",
                 f"policy_version={cls.VERSION}",
                 f"format={direction.visual_format.value}",
+                f"renderer={direction.renderer.value}",
                 f"recommended_aspect_ratio={direction.recommended_aspect_ratio}",
                 f"recommended_style={direction.recommended_style}",
                 f"composition={direction.composition}",
