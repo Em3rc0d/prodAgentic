@@ -28,6 +28,7 @@ from routes.source_packets import router as source_packets_router
 from routes.claim_extractor import router as claim_extractor_router
 from routes.semantic_matcher import router as semantic_matcher_router
 from routes.remediation import router as remediation_router
+from routes.visual_plans import router as visual_plans_router
 
 
 load_dotenv()
@@ -99,6 +100,7 @@ app.add_middleware(
 app.middleware("http")(security_boundary)
 
 app.include_router(pipeline_router, prefix="/api")
+app.include_router(visual_plans_router, prefix="/api")
 app.include_router(posts_router, prefix="/api")
 app.include_router(content_runs_router, prefix="/api")
 app.include_router(content_profiles_router, prefix="/api")
