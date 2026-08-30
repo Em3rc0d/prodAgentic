@@ -1,4 +1,5 @@
 import { secureFetch } from "./auth";
+import { EditorialVisualFormat, rasterizeEditorialVisual } from "./editorial-visual";
 
 const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -131,6 +132,31 @@ export interface VisualRenderResponse {
   error_message?: string;
 }
 
+export interface VisualRenderPlan {
+  run_id: string;
+  policy_version: string;
+  visual_format: string;
+  renderer: "DETERMINISTIC" | "GENERATIVE";
+  final_content: string;
+  recommended_aspect_ratio: "16:9" | "1:1" | "4:5";
+  recommended_style: string;
+}
+
+const DETERMINISTIC_FORMATS = new Set<EditorialVisualFormat>([
+  "TECHNICAL_DIAGRAM",
+  "ARCHITECTURE_SCHEMATIC",
+  "PROCESS_FLOW",
+  "COMPARISON",
+  "ARTIFACT_BOARD",
+  "EDITORIAL_POSTER",
+]);
+
+export async function fetchVisualRenderPlan(runId: string): Promise<VisualRenderPlan> {
+  const res = await secureFetch(`${API}/api/visual-renders/${encodeURIComponent(runId)}/plan`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Visual render plan failed: ${res.status}`);
+  return res.json();
+}
+
 export async function renderVisual(
   prompt: string,
   aspect_ratio: string = "4:5",
@@ -140,10 +166,40 @@ export async function renderVisual(
 ): Promise<VisualRenderResponse> {
   const finalIdempotencyKey = idempotency_key || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const finalRunId = run_id || finalIdempotencyKey;
+  let deterministic_png_base64: string | undefined;
+  let deterministic_png_sha256: string | undefined;
+
+  // A real ContentRun always resolves its renderer from the server. The browser
+  // is only a deterministic rasterizer; it never decides whether a run should
+  // bypass or use the external image model.
+  if (run_id) {
+    const plan = await fetchVisualRenderPlan(finalRunId);
+    if (plan.renderer === "DETERMINISTIC") {
+      if (!DETERMINISTIC_FORMATS.has(plan.visual_format as EditorialVisualFormat)) {
+        throw new Error(`Unsupported deterministic visual format: ${plan.visual_format}`);
+      }
+      const raster = await rasterizeEditorialVisual(
+        plan.final_content,
+        plan.visual_format as EditorialVisualFormat,
+        aspect_ratio,
+      );
+      deterministic_png_base64 = raster.base64;
+      deterministic_png_sha256 = raster.sha256;
+    }
+  }
+
   const res = await secureFetch(`${API}/api/visual-renders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, aspect_ratio, style, run_id: finalRunId, idempotency_key: finalIdempotencyKey }),
+    body: JSON.stringify({
+      prompt,
+      aspect_ratio,
+      style,
+      run_id: finalRunId,
+      idempotency_key: finalIdempotencyKey,
+      deterministic_png_base64,
+      deterministic_png_sha256,
+    }),
   });
   if (!res.ok) throw new Error(`Render request failed: ${res.status}`);
   const result = await res.json() as VisualRenderResponse;
