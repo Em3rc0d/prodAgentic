@@ -21,3 +21,17 @@ class SourcePacketRepository:
         if doc is None:
             return None
         return SourcePacket.model_validate(doc)
+
+    async def list_recent(self, workspace_id: str, limit: int = 25) -> list[SourcePacket]:
+        cursor = (
+            self.collection.find(
+                {"workspace_id": workspace_id},
+                {"_id": 0},
+            )
+            .sort("created_at", -1)
+            .limit(limit)
+        )
+        packets: list[SourcePacket] = []
+        async for doc in cursor:
+            packets.append(SourcePacket.model_validate(doc))
+        return packets
