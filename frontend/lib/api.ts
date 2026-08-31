@@ -31,10 +31,12 @@ export function createPipelineStream(
   style: string,
   target_language: string = "es",
   image_prompt_language: string = "en",
-  content_profile_id?: string
+  content_profile_id?: string,
+  source_packet_id?: string
 ): EventSource {
   const params = new URLSearchParams({ idea, topic, style, target_language, image_prompt_language });
   if (content_profile_id) params.set("content_profile_id", content_profile_id);
+  if (source_packet_id) params.set("source_packet_id", source_packet_id);
   return new EventSource(`${API}/api/pipeline/stream?${params}`, { withCredentials: true });
 }
 
@@ -53,6 +55,59 @@ export async function updatePostStatus(postId: string, status: string) {
 export async function deletePost(postId: string) {
   const res = await secureFetch(`${API}/api/posts/${postId}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete post");
+  return res.json();
+}
+
+export interface SourcePacketSummary {
+  packet_id: string;
+  title: string;
+  summary?: string | null;
+  strict_mode: boolean;
+  evidence_count: number;
+  allowed_fact_count: number;
+  allowed_inference_count: number;
+  created_at: string;
+}
+
+export interface SourcePacketRecord {
+  packet_id: string;
+  workspace_id: string;
+  title: string;
+  summary?: string | null;
+  strict_mode: boolean;
+  evidence: unknown[];
+  allowed_facts: unknown[];
+  allowed_inferences: unknown[];
+  prohibited_claims: string[];
+  created_at: string;
+}
+
+export async function fetchSourcePackets(limit: number = 25): Promise<{ packets: SourcePacketSummary[]; count: number }> {
+  const res = await secureFetch(`${API}/api/source-packets?limit=${limit}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch source packets: ${res.status}`);
+  const data = await res.json();
+  const packets = Array.isArray(data?.packets) ? data.packets as SourcePacketSummary[] : [];
+  return {
+    packets,
+    count: typeof data?.count === "number" ? data.count : packets.length,
+  };
+}
+
+export async function createQuickSourcePacket(input: {
+  title: string;
+  facts: string[];
+  summary?: string;
+}): Promise<SourcePacketRecord> {
+  const res = await secureFetch(`${API}/api/source-packets/quick`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...input, strict_mode: true }),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const detail = payload?.detail ? `: ${typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail)}` : "";
+    throw new Error(`Failed to create source packet (${res.status})${detail}`);
+  }
   return res.json();
 }
 
