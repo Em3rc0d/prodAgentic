@@ -128,8 +128,17 @@ def _angle() -> AngleSelectionSnapshot:
     )
 
 
-def _human(verdict: EditorialVerdict = EditorialVerdict.WOULD_PUBLISH_NOW):
+def _human(
+    run: ContentRun,
+    verdict: EditorialVerdict = EditorialVerdict.WOULD_PUBLISH_NOW,
+) -> HumanEditorialReview:
+    assert run.final_content is not None
+    assert run.visual_render is not None
+    assert run.visual_render.asset_sha256 is not None
     return HumanEditorialReview(
+        run_id=run.run_id,
+        final_content_sha256=hashlib.sha256(run.final_content.encode("utf-8")).hexdigest(),
+        visual_asset_sha256=run.visual_render.asset_sha256,
         topic_fidelity=0.9,
         pov_strength=0.9,
         human_voice=0.9,
@@ -215,17 +224,16 @@ def _signed_run(*, trust_decision: GroundingDecision = GroundingDecision.PASS) -
 
 
 def test_signed_pass_requires_trust_human_publish_now_and_no_high_losses():
-    report = ContentDynoAnalyzer.analyze(_signed_run(), _human())
+    run = _signed_run()
+    report = ContentDynoAnalyzer.analyze(run, _human(run))
     assert report.trust_at_wheels.status == TrustWheelStatus.PASS
     assert report.signature == DynoSignature.SIGNED_PASS
     assert not [loss for loss in report.drivetrain_losses if loss.severity.value == "HIGH"]
 
 
 def test_trust_fail_cannot_be_overridden_by_strong_human_review():
-    report = ContentDynoAnalyzer.analyze(
-        _signed_run(trust_decision=GroundingDecision.BLOCK),
-        _human(),
-    )
+    run = _signed_run(trust_decision=GroundingDecision.BLOCK)
+    report = ContentDynoAnalyzer.analyze(run, _human(run))
     assert report.trust_at_wheels.status == TrustWheelStatus.FAIL
     assert report.signature == DynoSignature.TRUST_FAIL
     assert "TRUST_FAIL" in {loss.code for loss in report.drivetrain_losses}
@@ -233,8 +241,9 @@ def test_trust_fail_cannot_be_overridden_by_strong_human_review():
 
 def test_stale_human_grounding_review_cannot_produce_trust_pass():
     run = _signed_run()
+    human = _human(run)
     run.source_packet.title = "Evidence changed after human verification"
-    report = ContentDynoAnalyzer.analyze(run, _human())
+    report = ContentDynoAnalyzer.analyze(run, human)
     assert report.trust_at_wheels.status == TrustWheelStatus.NOT_MEASURED
     assert report.signature == DynoSignature.UNSIGNED
     assert "TRUST_NOT_MEASURED" in {loss.code for loss in report.drivetrain_losses}
@@ -242,27 +251,63 @@ def test_stale_human_grounding_review_cannot_produce_trust_pass():
 
 def test_stale_editorial_sensor_snapshot_is_a_high_drivetrain_loss():
     run = _signed_run()
+    human = _human(run)
     run.content_quality.content_sha256 = "b" * 64
-    report = ContentDynoAnalyzer.analyze(run, _human())
+    report = ContentDynoAnalyzer.analyze(run, human)
     assert report.signature == DynoSignature.UNSIGNED
     assert "ATTENTION_CRITIC_STALE" in {loss.code for loss in report.drivetrain_losses}
 
 
 def test_would_publish_now_cannot_hide_weak_human_dimensions():
-    human = _human()
+    run = _signed_run()
+    human = _human(run)
     human.visual_message_fit = 0.35
-    report = ContentDynoAnalyzer.analyze(_signed_run(), human)
+    report = ContentDynoAnalyzer.analyze(run, human)
     assert report.signature == DynoSignature.UNSIGNED
     assert "VISUAL_MESSAGE_FIT_LOW" in {loss.code for loss in report.drivetrain_losses}
 
 
 def test_publishable_is_not_equivalent_to_would_publish_now():
+    run = _signed_run()
     report = ContentDynoAnalyzer.analyze(
-        _signed_run(),
-        _human(EditorialVerdict.PUBLISHABLE),
+        run,
+        _human(run, EditorialVerdict.PUBLISHABLE),
     )
     assert report.signature == DynoSignature.UNSIGNED
     assert "NOT_WOULD_PUBLISH_NOW" in {loss.code for loss in report.drivetrain_losses}
+
+
+def test_human_editorial_review_is_bound_to_exact_run_id():
+    run = _signed_run()
+    human = _human(run)
+    human.run_id = "different-run"
+    report = ContentDynoAnalyzer.analyze(run, human)
+    assert report.signature == DynoSignature.UNSIGNED
+    assert "HUMAN_EDITORIAL_REVIEW_RUN_MISMATCH" in {
+        loss.code for loss in report.drivetrain_losses
+    }
+
+
+def test_human_editorial_review_is_bound_to_exact_content_revision():
+    run = _signed_run()
+    human = _human(run)
+    run.final_content = f"{run.final_content} Cambio posterior."
+    report = ContentDynoAnalyzer.analyze(run, human)
+    assert report.signature == DynoSignature.UNSIGNED
+    assert "HUMAN_EDITORIAL_REVIEW_CONTENT_STALE" in {
+        loss.code for loss in report.drivetrain_losses
+    }
+
+
+def test_human_editorial_review_is_bound_to_exact_visual_asset():
+    run = _signed_run()
+    human = _human(run)
+    run.visual_render.asset_sha256 = "b" * 64
+    report = ContentDynoAnalyzer.analyze(run, human)
+    assert report.signature == DynoSignature.UNSIGNED
+    assert "HUMAN_EDITORIAL_REVIEW_VISUAL_STALE" in {
+        loss.code for loss in report.drivetrain_losses
+    }
 
 
 def test_missing_evidence_profile_and_visual_are_visible_drivetrain_losses():
@@ -290,10 +335,12 @@ def test_missing_evidence_profile_and_visual_are_visible_drivetrain_losses():
 
 
 def test_batch_report_never_collapses_trust_and_editorial_into_combined_score():
-    signed = ContentDynoAnalyzer.analyze(_signed_run(), _human())
+    signed_run = _signed_run()
+    unsigned_run = _signed_run()
+    signed = ContentDynoAnalyzer.analyze(signed_run, _human(signed_run))
     unsigned = ContentDynoAnalyzer.analyze(
-        _signed_run(),
-        _human(EditorialVerdict.STRONG),
+        unsigned_run,
+        _human(unsigned_run, EditorialVerdict.STRONG),
     )
     batch = ContentDynoAnalyzer.batch([signed, unsigned])
     payload = batch.model_dump(mode="json")
@@ -302,6 +349,20 @@ def test_batch_report_never_collapses_trust_and_editorial_into_combined_score():
     assert batch.would_publish_now_rate == 0.5
     assert "combined_score" not in payload
     assert "wheel_hp" not in payload
+
+
+def test_stale_publish_now_review_does_not_count_toward_batch_rate():
+    current_run = _signed_run()
+    stale_run = _signed_run()
+    current = ContentDynoAnalyzer.analyze(current_run, _human(current_run))
+    stale_human = _human(stale_run)
+    stale_run.visual_render.asset_sha256 = "c" * 64
+    stale = ContentDynoAnalyzer.analyze(stale_run, stale_human)
+
+    batch = ContentDynoAnalyzer.batch([current, stale])
+    assert batch.would_publish_now_count == 1
+    assert batch.would_publish_now_rate == 0.5
+    assert batch.loss_frequency["HUMAN_EDITORIAL_REVIEW_VISUAL_STALE"] == 1
 
 
 def test_content_dyno_plan_contains_five_real_evidence_fed_cases():
