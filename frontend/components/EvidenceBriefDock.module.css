@@ -1,0 +1,260 @@
+.dock {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.trigger,
+.panel {
+  pointer-events: auto;
+}
+
+.trigger {
+  min-width: 190px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid rgba(150, 158, 190, 0.28);
+  border-radius: 16px;
+  background: rgba(12, 14, 23, 0.94);
+  color: #f6f7ff;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(18px);
+  cursor: pointer;
+  text-align: left;
+}
+
+.triggerActive {
+  border-color: rgba(118, 87, 255, 0.72);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(118, 87, 255, 0.12);
+}
+
+.trigger span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.trigger small {
+  color: #969eba;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.trigger strong {
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #586078;
+  box-shadow: 0 0 0 5px rgba(88, 96, 120, 0.12);
+}
+
+.triggerActive .dot {
+  background: #8f78ff;
+  box-shadow: 0 0 0 5px rgba(118, 87, 255, 0.15), 0 0 16px rgba(118, 87, 255, 0.48);
+}
+
+.panel {
+  width: min(390px, calc(100vw - 32px));
+  max-height: min(650px, calc(100vh - 120px));
+  overflow-y: auto;
+  padding: 18px;
+  border: 1px solid rgba(150, 158, 190, 0.26);
+  border-radius: 20px;
+  background: rgba(10, 12, 20, 0.98);
+  color: #f6f7ff;
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(22px);
+}
+
+.heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.heading span {
+  color: #9da5c2;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.heading strong {
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.heading button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(150, 158, 190, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #c9cee2;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.intro {
+  margin: 12px 0 16px;
+  color: #aeb5ce;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.label {
+  display: block;
+  margin: 0 0 7px;
+  color: #dfe3f3;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.select,
+.textarea {
+  width: 100%;
+  border: 1px solid rgba(150, 158, 190, 0.24);
+  border-radius: 12px;
+  outline: none;
+  background: #111420;
+  color: #f5f7ff;
+}
+
+.select {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.textarea {
+  min-height: 132px;
+  resize: vertical;
+  padding: 11px 12px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.select:focus,
+.textarea:focus {
+  border-color: rgba(118, 87, 255, 0.75);
+  box-shadow: 0 0 0 3px rgba(118, 87, 255, 0.12);
+}
+
+.packetMeta {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid rgba(118, 87, 255, 0.22);
+  border-radius: 12px;
+  background: rgba(118, 87, 255, 0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.packetMeta strong {
+  font-size: 12px;
+}
+
+.packetMeta span,
+.packetMeta small,
+.note {
+  color: #9fa7c2;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0;
+  color: #747c98;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(150, 158, 190, 0.18);
+}
+
+.note {
+  display: block;
+  margin-top: 7px;
+}
+
+.error {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 109, 127, 0.34);
+  border-radius: 10px;
+  background: rgba(255, 109, 127, 0.08);
+  color: #ffadb8;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.saveButton {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 12px;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #7657ff, #927cff);
+  color: white;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.saveButton:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .dock {
+    right: 16px;
+    bottom: 92px;
+  }
+
+  .trigger {
+    min-width: 168px;
+  }
+
+  .panel {
+    max-height: calc(100vh - 190px);
+  }
+}
