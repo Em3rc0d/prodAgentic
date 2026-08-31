@@ -48,7 +48,9 @@ def test_idea_generator_forbids_fake_autobiography_and_manufactured_incidents():
     prompt = IDEA_SYSTEM_PROMPT.lower()
 
     assert "never invent first-person experiences" in prompt
-    assert "idea generation currently receives no such evidence" in prompt
+    assert "if an authoritative factual_envelope is supplied" in prompt
+    assert "if no factual_envelope is supplied" in prompt
+    assert "assume there is no authoritative event evidence" in prompt
     assert "the day we" in prompt
     assert "i spent three days" in prompt
     assert "manufactured outrage" in prompt
