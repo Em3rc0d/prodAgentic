@@ -14,12 +14,24 @@ export async function fetchIdeas(
   topic: string,
   style: string,
   target_language: string = "es",
-  content_profile_id?: string
+  content_profile_id?: string,
+  source_packet_id?: string
 ): Promise<string[]> {
+  const sessionPacketId = !source_packet_id && typeof window !== "undefined"
+    ? window.sessionStorage.getItem(ACTIVE_SOURCE_PACKET_STORAGE_KEY) || undefined
+    : undefined;
+  const effectiveSourcePacketId = source_packet_id || sessionPacketId;
+
   const res = await secureFetch(`${API}/api/ideas`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topic, style, target_language, content_profile_id }),
+    body: JSON.stringify({
+      topic,
+      style,
+      target_language,
+      content_profile_id,
+      source_packet_id: effectiveSourcePacketId,
+    }),
   });
   if (!res.ok) throw new Error(`Ideas request failed: ${res.status}`);
   const data = await res.json();
