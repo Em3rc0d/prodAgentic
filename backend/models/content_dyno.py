@@ -33,15 +33,33 @@ class LossSeverity(str, Enum):
     HIGH = "HIGH"
 
 
-class HumanEditorialReview(BaseModel):
+class HumanEditorialReviewInput(BaseModel):
+    """Subjective human judgement only; the server owns revision identity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    topic_fidelity: float = Field(ge=0.0, le=1.0)
+    pov_strength: float = Field(ge=0.0, le=1.0)
+    human_voice: float = Field(ge=0.0, le=1.0)
+    usefulness: float = Field(ge=0.0, le=1.0)
+    visual_message_fit: float = Field(ge=0.0, le=1.0)
+    publish_readiness: float = Field(ge=0.0, le=1.0)
+    verdict: EditorialVerdict
+    notes: list[str] = Field(default_factory=list, max_length=12)
+
+    @field_validator("notes")
+    @classmethod
+    def normalize_notes(cls, value: list[str]):
+        return [item.strip() for item in value if item.strip()]
+
+
+class HumanEditorialReview(HumanEditorialReviewInput):
     """Explicit human product judgement bound to the exact reviewed asset.
 
     The subjective scores remain human authority. The identity fields make that
     authority revision-bound so a verdict cannot silently migrate to another
     ContentRun, text revision, or visual asset.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     run_id: str = Field(min_length=1, max_length=200)
     final_content_sha256: str = Field(
@@ -54,21 +72,8 @@ class HumanEditorialReview(BaseModel):
         max_length=64,
         pattern=r"^[0-9a-f]{64}$",
     )
-    topic_fidelity: float = Field(ge=0.0, le=1.0)
-    pov_strength: float = Field(ge=0.0, le=1.0)
-    human_voice: float = Field(ge=0.0, le=1.0)
-    usefulness: float = Field(ge=0.0, le=1.0)
-    visual_message_fit: float = Field(ge=0.0, le=1.0)
-    publish_readiness: float = Field(ge=0.0, le=1.0)
-    verdict: EditorialVerdict
-    notes: list[str] = Field(default_factory=list, max_length=12)
     source: str = "explicit_human_review"
     reviewed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    @field_validator("notes")
-    @classmethod
-    def normalize_notes(cls, value: list[str]):
-        return [item.strip() for item in value if item.strip()]
 
 
 class EditorialSensorSnapshot(BaseModel):
