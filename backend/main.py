@@ -27,6 +27,7 @@ from routes.linkedin_oauth import router as linkedin_oauth_router
 from routes.source_packets import router as source_packets_router
 from routes.claim_extractor import router as claim_extractor_router
 from routes.semantic_matcher import router as semantic_matcher_router
+from routes.review_cockpit import router as review_cockpit_router
 from routes.remediation import router as remediation_router
 from routes.visual_plans import router as visual_plans_router
 
@@ -107,6 +108,7 @@ app.include_router(content_profiles_router, prefix="/api")
 app.include_router(source_packets_router, prefix="/api")
 app.include_router(claim_extractor_router, prefix="/api")
 app.include_router(semantic_matcher_router, prefix="/api")
+app.include_router(review_cockpit_router, prefix="/api")
 app.include_router(remediation_router, prefix="/api")
 app.include_router(publishing_router, prefix="/api")
 app.include_router(scheduling_router, prefix="/api")
