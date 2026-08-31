@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from core.content_dyno import ContentDynoAnalyzer
+from core.grounding import GroundingPolicy
 from models.content_dyno import (
     DynoSignature,
     EditorialVerdict,
@@ -19,7 +20,6 @@ from models.grounding import (
     EvidenceRef,
     GroundingAssessment,
     GroundingDecision,
-    GroundingGateResult,
     GroundingReviewDecision,
     GroundingReviewSnapshot,
     GroundingStatus,
@@ -39,6 +39,7 @@ from models.value_engine import (
 
 
 HEX = "a" * 64
+VISUAL_PROMPT = "technical editorial"
 
 
 def _packet() -> SourcePacket:
@@ -168,19 +169,15 @@ def _signed_run(*, trust_decision: GroundingDecision = GroundingDecision.PASS) -
             )
         ],
     )
-    gate = GroundingGateResult(
-        policy_version="grounding-policy-v1",
-        decision=trust_decision,
-        blocking_claim_ids=[] if trust_decision == GroundingDecision.PASS else ["claim-1"],
-        reasons=[] if trust_decision == GroundingDecision.PASS else ["Unsupported claim"],
-    )
+    gate = GroundingPolicy.evaluate(assessment, packet)
+    assert gate.decision == trust_decision
     review = GroundingReviewSnapshot(
         review_id="review-1",
         decision=GroundingReviewDecision.VERIFIED,
         content_sha256=digest,
-        source_packet_sha256=HEX,
-        assessment_sha256=HEX,
-        policy_version="grounding-policy-v1",
+        source_packet_sha256=ContentDynoAnalyzer._sha256_json(packet.model_dump(mode="python")),
+        assessment_sha256=ContentDynoAnalyzer._sha256_json(assessment.model_dump(mode="python")),
+        policy_version=gate.policy_version,
     )
     visual = VisualArtifactSnapshot(
         render_id="render-1",
@@ -190,8 +187,8 @@ def _signed_run(*, trust_decision: GroundingDecision = GroundingDecision.PASS) -
         asset_sha256=HEX,
         width=1080,
         height=1350,
-        prompt_used="technical editorial",
-        requested_prompt="technical editorial",
+        prompt_used=VISUAL_PROMPT,
+        requested_prompt=VISUAL_PROMPT,
         aspect_ratio="4:5",
         style="technical_editorial",
         idempotency_key="dyno-render-1",
@@ -208,6 +205,7 @@ def _signed_run(*, trust_decision: GroundingDecision = GroundingDecision.PASS) -
         content_quality=_quality(content),
         final_status="READY",
         final_content=content,
+        visual_prompt=VISUAL_PROMPT,
         visual_render=visual,
         source_packet=packet,
         grounding_assessment=assessment,
@@ -231,6 +229,31 @@ def test_trust_fail_cannot_be_overridden_by_strong_human_review():
     assert report.trust_at_wheels.status == TrustWheelStatus.FAIL
     assert report.signature == DynoSignature.TRUST_FAIL
     assert "TRUST_FAIL" in {loss.code for loss in report.drivetrain_losses}
+
+
+def test_stale_human_grounding_review_cannot_produce_trust_pass():
+    run = _signed_run()
+    run.source_packet.title = "Evidence changed after human verification"
+    report = ContentDynoAnalyzer.analyze(run, _human())
+    assert report.trust_at_wheels.status == TrustWheelStatus.NOT_MEASURED
+    assert report.signature == DynoSignature.UNSIGNED
+    assert "TRUST_NOT_MEASURED" in {loss.code for loss in report.drivetrain_losses}
+
+
+def test_stale_editorial_sensor_snapshot_is_a_high_drivetrain_loss():
+    run = _signed_run()
+    run.content_quality.content_sha256 = "b" * 64
+    report = ContentDynoAnalyzer.analyze(run, _human())
+    assert report.signature == DynoSignature.UNSIGNED
+    assert "ATTENTION_CRITIC_STALE" in {loss.code for loss in report.drivetrain_losses}
+
+
+def test_would_publish_now_cannot_hide_weak_human_dimensions():
+    human = _human()
+    human.visual_message_fit = 0.35
+    report = ContentDynoAnalyzer.analyze(_signed_run(), human)
+    assert report.signature == DynoSignature.UNSIGNED
+    assert "VISUAL_MESSAGE_FIT_LOW" in {loss.code for loss in report.drivetrain_losses}
 
 
 def test_publishable_is_not_equivalent_to_would_publish_now():
