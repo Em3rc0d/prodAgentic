@@ -68,7 +68,11 @@ def packet(*, title="Immutable evidence") -> SourcePacket:
     )
 
 
-def reviewed_doc(content="CI #608 completed successfully."):
+def reviewed_doc(
+    content="CI #608 completed successfully.",
+    *,
+    source_packet: SourcePacket | None = None,
+):
     content_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
     claim = ClaimProposal(
         claim_id="c1",
@@ -91,12 +95,13 @@ def reviewed_doc(content="CI #608 completed successfully."):
         content_sha256=content_sha,
         extraction_sha256=claim_extraction_sha256(extraction),
     )
+    packet_snapshot = source_packet or packet()
     return {
         "run_id": "run-1",
         "workspace_id": "workspace-1",
         "status": ContentRunStatus.READY_FOR_REVIEW.value,
         "final_content": content,
-        "generation_source_packet": packet().model_dump(mode="python"),
+        "generation_source_packet": packet_snapshot.model_dump(mode="python"),
         "claim_extraction": extraction.model_dump(mode="python"),
         "claim_extraction_review": extraction_review.model_dump(mode="python"),
         "updated_at": "revision-1",
@@ -134,9 +139,9 @@ class SupportingMatcher:
 
 @pytest.mark.asyncio
 async def test_match_evaluate_current_uses_server_owned_generation_packet_and_persists_chain(monkeypatch):
-    doc = reviewed_doc()
-    fake_db = FakeDB(doc)
     immutable_packet = packet()
+    doc = reviewed_doc(source_packet=immutable_packet)
+    fake_db = FakeDB(doc)
 
     class FakeRepository:
         def __init__(self, db):
@@ -225,7 +230,8 @@ async def test_match_evaluate_current_requires_human_verified_complete_extractio
 
 @pytest.mark.asyncio
 async def test_match_evaluate_current_fails_closed_without_matcher(monkeypatch):
-    doc = reviewed_doc()
+    immutable_packet = packet()
+    doc = reviewed_doc(source_packet=immutable_packet)
     fake_db = FakeDB(doc)
 
     class FakeRepository:
@@ -233,7 +239,7 @@ async def test_match_evaluate_current_fails_closed_without_matcher(monkeypatch):
             pass
 
         async def get(self, workspace_id, packet_id):
-            return packet()
+            return immutable_packet
 
     monkeypatch.setattr(cockpit_routes, "get_db", lambda: fake_db)
     monkeypatch.setattr(cockpit_routes, "SourcePacketRepository", FakeRepository)
