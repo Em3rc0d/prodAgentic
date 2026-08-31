@@ -43,10 +43,10 @@ export default function ReviewQueuePage() {
       <div className="premium-container">
         <section className="premium-hero">
           <div>
-            <div className="premium-kicker">Trust cockpit</div>
+            <div className="premium-kicker">Trust + product cockpit</div>
             <h1 className="premium-title">Human review center</h1>
             <p className="premium-subtitle">
-              Inspect extracted claims, verify completeness, run server-owned semantic Grounding, and explicitly retain human authority before approval.
+              Verify factual Grounding independently, then measure the exact final text + visual on the product dyno. No model can retain human authority on your behalf.
             </p>
           </div>
         </section>
@@ -61,7 +61,7 @@ export default function ReviewQueuePage() {
           <header className="premium-panel__header">
             <div>
               <h2>Review queue</h2>
-              <p>No model can mark extraction complete, verify Grounding, or approve publication on your behalf.</p>
+              <p>Trust and editorial publishability are separate gauges. Open either cockpit against the same persisted ContentRun.</p>
             </div>
           </header>
           <div className="premium-panel__body">
@@ -83,11 +83,15 @@ export default function ReviewQueuePage() {
                             <span className={`premium-status premium-status--${state.tone}`}>{state.label}</span>
                             <span style={{ color: "var(--text-3)", fontSize: 12 }}>{run.style}</span>
                             <span style={{ color: "var(--text-3)", fontSize: 12 }}>{grounded.generation_source_packet ? "Evidence-fed" : "No generation evidence"}</span>
+                            <span style={{ color: "var(--text-3)", fontSize: 12 }}>{run.visual_render?.status === "READY" ? "Visual ready" : "Visual pending"}</span>
                           </div>
                           <strong style={{ display: "block", fontSize: 16, marginBottom: 5 }}>{run.idea}</strong>
                           <p style={{ margin: 0, color: "var(--text-2)", lineHeight: 1.45 }}>{run.topic}</p>
                         </div>
-                        <Link href={`/review/${encodeURIComponent(run.run_id)}`} className="premium-button-secondary">Open trust cockpit</Link>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <Link href={`/review/${encodeURIComponent(run.run_id)}`} className="premium-button-secondary">Trust cockpit</Link>
+                          <Link href={`/review/${encodeURIComponent(run.run_id)}/dyno`} className="premium-button">Product dyno</Link>
+                        </div>
                       </div>
                     </article>
                   );
