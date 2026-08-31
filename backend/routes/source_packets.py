@@ -80,11 +80,11 @@ async def create_source_packet(req: SourcePacketCreateRequest, request: Request)
         created_at=datetime.now(timezone.utc),
     )
     await SourcePacketRepository(db).create(packet)
-    return packet
+    return packet.model_dump(mode="json")
 
 
 @router.post("/source-packets/quick", response_model=SourcePacket)
-async def create_quick_source_packet(req: QuickSourcePacketRequest, request: Request) -> SourcePacket:
+async def create_quick_source_packet(req: QuickSourcePacketRequest, request: Request):
     """Create an immutable packet from explicit user-authored factual statements.
 
     The quick path does not reinterpret arbitrary pasted evidence. The submitted
@@ -130,7 +130,7 @@ async def create_quick_source_packet(req: QuickSourcePacketRequest, request: Req
         created_at=captured_at,
     )
     await SourcePacketRepository(db).create(packet)
-    return packet
+    return packet.model_dump(mode="json")
 
 
 @router.get("/source-packets/{packet_id}", response_model=SourcePacket)
@@ -142,4 +142,4 @@ async def get_source_packet(packet_id: str, request: Request):
     packet = await SourcePacketRepository(db).get(_workspace_id(request), packet_id)
     if packet is None:
         raise HTTPException(status_code=404, detail="Source packet not found")
-    return packet
+    return packet.model_dump(mode="json")
