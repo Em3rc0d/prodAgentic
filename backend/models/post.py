@@ -37,6 +37,7 @@ class IdeasRequest(BaseModel):
     target_language: TargetLanguageCode = TargetLanguageCode.ES
     image_prompt_language: ImagePromptLanguageCode = ImagePromptLanguageCode.EN
     content_profile_id: Optional[str] = None
+    source_packet_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
 
 
 class PipelineRequest(BaseModel):
