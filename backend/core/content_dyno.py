@@ -31,7 +31,7 @@ class ContentDynoAnalyzer:
     A SIGNED_PASS is deliberately harder than an internal quality PASS.
     """
 
-    VERSION = "content-dyno-v1"
+    VERSION = "content-dyno-v2"
 
     HUMAN_MINIMUMS = {
         "topic_fidelity": 0.80,
