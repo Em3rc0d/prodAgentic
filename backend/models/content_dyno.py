@@ -34,10 +34,26 @@ class LossSeverity(str, Enum):
 
 
 class HumanEditorialReview(BaseModel):
-    """Explicit human product judgement. Never inferred from model scores."""
+    """Explicit human product judgement bound to the exact reviewed asset.
+
+    The subjective scores remain human authority. The identity fields make that
+    authority revision-bound so a verdict cannot silently migrate to another
+    ContentRun, text revision, or visual asset.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    run_id: str = Field(min_length=1, max_length=200)
+    final_content_sha256: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    visual_asset_sha256: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     topic_fidelity: float = Field(ge=0.0, le=1.0)
     pov_strength: float = Field(ge=0.0, le=1.0)
     human_voice: float = Field(ge=0.0, le=1.0)
