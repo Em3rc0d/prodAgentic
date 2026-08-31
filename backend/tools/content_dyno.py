@@ -56,7 +56,7 @@ def _release_gate(batch: dict) -> None:
             f"would_publish_now_rate={batch.get('would_publish_now_rate', 0.0):.3f} != 1.000"
         )
     if failures:
-        raise SystemExit("CONTENT-DYNO-01 release gate failed: " + "; ".join(failures))
+        raise SystemExit("CONTENT-DYNO v2 release gate failed: " + "; ".join(failures))
 
 
 def _plan(args: argparse.Namespace) -> None:
@@ -68,13 +68,15 @@ def _plan(args: argparse.Namespace) -> None:
             raise SystemExit(f"Unknown dyno case: {args.case}")
     _render(
         {
-            "dyno_version": payload.get("dyno_version"),
+            "dyno_version": ContentDynoAnalyzer.VERSION,
+            "plan_version": payload.get("dyno_version"),
             "purpose": payload.get("purpose"),
             "cases": cases,
             "operator_rule": (
                 "Run each case through Create Studio without manual content edits. "
                 "Create/select an immutable SourcePacket from source_assertions, complete final Grounding, "
-                "render the final visual, then record the run_id for scoring."
+                "render the final visual, then use the Product Dyno cockpit for server-bound human review. "
+                "CLI review files remain supported only when they already contain exact run/content/visual identity digests."
             ),
         },
         args.output,
@@ -95,7 +97,8 @@ async def _score(args: argparse.Namespace) -> None:
             if document is None:
                 raise SystemExit(f"Unknown ContentRun: {run_id}")
             run = ContentRun.model_validate(document)
-            reports.append(ContentDynoAnalyzer.analyze(run, reviews.get(run_id)))
+            human_review = reviews.get(run_id) or run.content_dyno_review
+            reports.append(ContentDynoAnalyzer.analyze(run, human_review))
 
         batch = ContentDynoAnalyzer.batch(reports)
         payload = batch.model_dump(mode="json")
@@ -109,7 +112,7 @@ async def _score(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "CONTENT-DYNO-01: measure final product output without collapsing Trust and editorial quality into one score."
+            "CONTENT-DYNO v2: measure final product output without collapsing Trust and editorial quality into one score."
         )
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -124,14 +127,17 @@ def main() -> None:
     score.add_argument(
         "--reviews",
         type=Path,
-        help="JSON object keyed by run_id containing explicit HumanEditorialReview payloads",
+        help=(
+            "Optional JSON object keyed by run_id containing revision-bound HumanEditorialReview payloads. "
+            "If omitted, persisted Product Dyno cockpit reviews are used."
+        ),
     )
     score.add_argument("--output", type=Path)
     score.add_argument(
         "--release-gate",
         action="store_true",
         help=(
-            "Fail unless at least 3 cases are SIGNED_PASS, Trust has no failures, and every human verdict is WOULD_PUBLISH_NOW."
+            "Fail unless at least 3 cases are SIGNED_PASS, Trust has no failures, and every current human verdict is WOULD_PUBLISH_NOW."
         ),
     )
 
