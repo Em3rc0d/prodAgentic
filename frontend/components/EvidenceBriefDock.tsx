@@ -40,20 +40,34 @@ export function EvidenceBriefDock() {
   const [packets, setPackets] = useState<SourcePacketSummary[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [quickFacts, setQuickFacts] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (pathname !== "/") return;
 
+    let active = true;
     const stored = window.sessionStorage.getItem(ACTIVE_SOURCE_PACKET_STORAGE_KEY) || "";
-    setSelectedId(stored);
-    setLoading(true);
+
     fetchSourcePackets()
-      .then((result) => setPackets(result.packets))
-      .catch(() => setPackets([]))
-      .finally(() => setLoading(false));
+      .then((result) => {
+        if (!active) return;
+        setPackets(result.packets);
+        setSelectedId(stored);
+      })
+      .catch(() => {
+        if (!active) return;
+        setPackets([]);
+        setSelectedId(stored);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
   }, [pathname]);
 
   const selected = useMemo(
