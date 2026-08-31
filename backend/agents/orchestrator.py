@@ -128,6 +128,7 @@ class PipelineOrchestrator:
         target_language: str = "es",
         content_profile_id: str | None = None,
         content_profile_snapshot: dict | None = None,
+        source_packet: SourcePacket | None = None,
     ) -> list[str]:
         context = self._resolve_context(
             topic,
@@ -137,7 +138,20 @@ class PipelineOrchestrator:
             content_profile_id,
             content_profile_snapshot,
         )
-        return await self.idea_agent.generate_ideas(context)
+
+        factual_envelope_text = None
+        if source_packet is not None:
+            if source_packet.workspace_id != context.workspace_id:
+                raise ValueError(
+                    "Source packet workspace does not match authoritative idea-generation workspace"
+                )
+            factual_envelope = FactualEnvelopeBuilder.build(source_packet)
+            factual_envelope_text = FactualEnvelopeBuilder.render_for_agent(factual_envelope)
+
+        return await self.idea_agent.generate_ideas(
+            context,
+            factual_envelope=factual_envelope_text,
+        )
 
     async def run_pipeline_stream(
         self,
