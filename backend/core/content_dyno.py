@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import Counter
+from datetime import datetime
 
+from core.grounding import GroundingPolicy
 from core.visual_direction import VisualDirectionPolicy, VisualRenderer
 from models.content_dyno import (
     ContentDynoBatchReport,
@@ -17,6 +20,7 @@ from models.content_dyno import (
     TrustWheelStatus,
 )
 from models.content_run import ContentRun, StageStatus
+from models.grounding import GroundingDecision, GroundingReviewDecision
 
 
 class ContentDynoAnalyzer:
@@ -24,9 +28,19 @@ class ContentDynoAnalyzer:
 
     Internal model scores are preserved as advisory sensors. They never become
     the human editorial verdict and they never compensate for factual failure.
+    A SIGNED_PASS is deliberately harder than an internal quality PASS.
     """
 
     VERSION = "content-dyno-v1"
+
+    HUMAN_MINIMUMS = {
+        "topic_fidelity": 0.80,
+        "pov_strength": 0.80,
+        "human_voice": 0.80,
+        "usefulness": 0.80,
+        "visual_message_fit": 0.80,
+        "publish_readiness": 0.85,
+    }
 
     @staticmethod
     def _enum_value(value) -> str | None:
@@ -39,6 +53,26 @@ class ContentDynoAnalyzer:
         if value is None:
             return None
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _canonicalize(cls, value):
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {key: cls._canonicalize(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._canonicalize(item) for item in value]
+        return value
+
+    @classmethod
+    def _sha256_json(cls, value) -> str:
+        canonical = json.dumps(
+            cls._canonicalize(value),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @classmethod
     def _editorial_sensors(cls, run: ContentRun) -> EditorialSensorSnapshot:
@@ -68,12 +102,12 @@ class ContentDynoAnalyzer:
 
     @classmethod
     def _trust_report(cls, run: ContentRun) -> TrustWheelReport:
-        gate = run.grounding_gate
+        stored_gate = run.grounding_gate
         review = run.grounding_review
         assessment = run.grounding_assessment
         packet = run.source_packet
 
-        if packet is None or assessment is None or gate is None:
+        if packet is None or assessment is None or stored_gate is None:
             return TrustWheelReport(
                 status=TrustWheelStatus.NOT_MEASURED,
                 reasons=[
@@ -81,42 +115,102 @@ class ContentDynoAnalyzer:
                 ],
             )
 
-        gate_decision = cls._enum_value(gate.decision)
-        review_decision = cls._enum_value(review.decision) if review is not None else None
-        human_verified = review_decision == "VERIFIED"
-
-        if gate_decision != "PASS":
+        if packet.workspace_id != run.workspace_id:
             return TrustWheelReport(
-                status=TrustWheelStatus.FAIL,
-                grounding_decision=gate_decision,
-                grounding_policy_version=gate.policy_version,
-                human_grounding_verified=human_verified,
-                blocking_claim_ids=list(gate.blocking_claim_ids),
-                warning_claim_ids=list(gate.warning_claim_ids),
-                reasons=list(gate.reasons),
+                status=TrustWheelStatus.NOT_MEASURED,
+                reasons=["Grounding SourcePacket workspace does not match the ContentRun workspace."],
             )
 
-        if not human_verified:
+        content_sha256 = cls._sha256(run.final_content)
+        if content_sha256 is None or assessment.content_sha256 != content_sha256:
+            return TrustWheelReport(
+                status=TrustWheelStatus.NOT_MEASURED,
+                reasons=["Grounding assessment is stale relative to current final content."],
+            )
+
+        # The dyno independently recomputes current policy authority instead of
+        # trusting a persisted gate snapshot as a magical PASS bit.
+        current_gate = GroundingPolicy.evaluate(assessment, packet)
+        gate_decision = cls._enum_value(current_gate.decision)
+        if current_gate.model_dump(mode="json") != stored_gate.model_dump(mode="json"):
+            if current_gate.decision == GroundingDecision.BLOCK:
+                return TrustWheelReport(
+                    status=TrustWheelStatus.FAIL,
+                    grounding_decision=gate_decision,
+                    grounding_policy_version=current_gate.policy_version,
+                    human_grounding_verified=False,
+                    blocking_claim_ids=list(current_gate.blocking_claim_ids),
+                    warning_claim_ids=list(current_gate.warning_claim_ids),
+                    reasons=[
+                        "Current GroundingPolicy recomputation BLOCKS this content; persisted gate is stale or inconsistent.",
+                        *current_gate.reasons,
+                    ],
+                )
             return TrustWheelReport(
                 status=TrustWheelStatus.NOT_MEASURED,
                 grounding_decision=gate_decision,
-                grounding_policy_version=gate.policy_version,
+                grounding_policy_version=current_gate.policy_version,
                 human_grounding_verified=False,
-                blocking_claim_ids=list(gate.blocking_claim_ids),
-                warning_claim_ids=list(gate.warning_claim_ids),
+                blocking_claim_ids=list(current_gate.blocking_claim_ids),
+                warning_claim_ids=list(current_gate.warning_claim_ids),
+                reasons=["Persisted Grounding gate is stale or inconsistent with current policy recomputation."],
+            )
+
+        if current_gate.decision != GroundingDecision.PASS:
+            return TrustWheelReport(
+                status=TrustWheelStatus.FAIL,
+                grounding_decision=gate_decision,
+                grounding_policy_version=current_gate.policy_version,
+                human_grounding_verified=False,
+                blocking_claim_ids=list(current_gate.blocking_claim_ids),
+                warning_claim_ids=list(current_gate.warning_claim_ids),
+                reasons=list(current_gate.reasons),
+            )
+
+        if review is None or review.decision != GroundingReviewDecision.VERIFIED:
+            return TrustWheelReport(
+                status=TrustWheelStatus.NOT_MEASURED,
+                grounding_decision=gate_decision,
+                grounding_policy_version=current_gate.policy_version,
+                human_grounding_verified=False,
+                blocking_claim_ids=list(current_gate.blocking_claim_ids),
+                warning_claim_ids=list(current_gate.warning_claim_ids),
                 reasons=[
                     "Deterministic Grounding passed, but explicit human Grounding verification is missing."
                 ],
             )
 
+        packet_sha256 = cls._sha256_json(packet.model_dump(mode="python"))
+        assessment_sha256 = cls._sha256_json(assessment.model_dump(mode="python"))
+        integrity_failures: list[str] = []
+        if review.content_sha256 != content_sha256:
+            integrity_failures.append("Human Grounding review is stale relative to final content.")
+        if review.source_packet_sha256 != packet_sha256:
+            integrity_failures.append("Human Grounding review is stale relative to source evidence.")
+        if review.assessment_sha256 != assessment_sha256:
+            integrity_failures.append("Human Grounding review is stale relative to the assessment.")
+        if review.policy_version != current_gate.policy_version:
+            integrity_failures.append("Grounding policy changed after human verification.")
+
+        if integrity_failures:
+            return TrustWheelReport(
+                status=TrustWheelStatus.NOT_MEASURED,
+                grounding_decision=gate_decision,
+                grounding_policy_version=current_gate.policy_version,
+                human_grounding_verified=False,
+                blocking_claim_ids=list(current_gate.blocking_claim_ids),
+                warning_claim_ids=list(current_gate.warning_claim_ids),
+                reasons=integrity_failures,
+            )
+
         return TrustWheelReport(
             status=TrustWheelStatus.PASS,
             grounding_decision=gate_decision,
-            grounding_policy_version=gate.policy_version,
+            grounding_policy_version=current_gate.policy_version,
             human_grounding_verified=True,
-            blocking_claim_ids=list(gate.blocking_claim_ids),
-            warning_claim_ids=list(gate.warning_claim_ids),
-            reasons=list(gate.reasons),
+            blocking_claim_ids=list(current_gate.blocking_claim_ids),
+            warning_claim_ids=list(current_gate.warning_claim_ids),
+            reasons=list(current_gate.reasons),
         )
 
     @classmethod
@@ -149,8 +243,8 @@ class ContentDynoAnalyzer:
             add(
                 "PROFILE_ABSENT",
                 "voice",
-                LossSeverity.MEDIUM,
-                "No content profile was bound to the run, so recognizable voice is not being measured at full fidelity.",
+                LossSeverity.HIGH,
+                "No content profile was bound to the run; the M4 dyno requires an explicit voice/profile boundary.",
             )
         if run.angle_selection is None:
             add(
@@ -167,6 +261,14 @@ class ContentDynoAnalyzer:
                 "No persisted Attention Critic snapshot exists for the final content.",
             )
         else:
+            final_sha = cls._sha256(run.final_content)
+            if final_sha is None or run.content_quality.content_sha256 != final_sha:
+                add(
+                    "ATTENTION_CRITIC_STALE",
+                    "value_engine",
+                    LossSeverity.HIGH,
+                    "Persisted editorial-quality sensors do not describe the current final-content revision.",
+                )
             if cls._enum_value(run.content_quality.gate.decision) != "PASS":
                 add(
                     "EDITORIAL_GATE_NOT_PASSING",
@@ -229,6 +331,27 @@ class ContentDynoAnalyzer:
                     LossSeverity.HIGH,
                     f"Visual render status is {run.visual_render.status}.",
                 )
+            if not run.visual_render.asset_sha256 or not run.visual_render.asset_url:
+                add(
+                    "VISUAL_ASSET_EVIDENCE_MISSING",
+                    "visual",
+                    LossSeverity.HIGH,
+                    "Final visual lacks immutable owned-asset evidence.",
+                )
+            if run.visual_prompt is None:
+                add(
+                    "VISUAL_PROMPT_MISSING",
+                    "visual",
+                    LossSeverity.HIGH,
+                    "A rendered visual exists without the persisted visual communication prompt.",
+                )
+            elif run.visual_render.requested_prompt != run.visual_prompt:
+                add(
+                    "VISUAL_RENDER_STALE",
+                    "visual",
+                    LossSeverity.HIGH,
+                    "Rendered visual is stale relative to the current visual prompt.",
+                )
             if run.final_content:
                 expected = VisualDirectionPolicy.select(run.final_content, style=run.style)
                 actual_provider = run.visual_render.provider
@@ -253,7 +376,7 @@ class ContentDynoAnalyzer:
                 "TRUST_NOT_MEASURED",
                 "trust",
                 LossSeverity.HIGH,
-                "Trust @ Wheels is incomplete: final Grounding plus explicit human verification are required.",
+                "Trust @ Wheels is incomplete or stale: current Grounding plus explicit human verification are required.",
             )
         elif trust.status == TrustWheelStatus.FAIL:
             add(
@@ -270,13 +393,31 @@ class ContentDynoAnalyzer:
                 LossSeverity.HIGH,
                 "The final publishability verdict must come from explicit human review.",
             )
-        elif human_review.verdict != EditorialVerdict.WOULD_PUBLISH_NOW:
-            add(
-                "NOT_WOULD_PUBLISH_NOW",
-                "human_dyno",
-                LossSeverity.HIGH,
-                f"Human verdict is {human_review.verdict.value}, not WOULD_PUBLISH_NOW.",
-            )
+        else:
+            if human_review.verdict != EditorialVerdict.WOULD_PUBLISH_NOW:
+                add(
+                    "NOT_WOULD_PUBLISH_NOW",
+                    "human_dyno",
+                    LossSeverity.HIGH,
+                    f"Human verdict is {human_review.verdict.value}, not WOULD_PUBLISH_NOW.",
+                )
+            dimension_codes = {
+                "topic_fidelity": "TOPIC_FIDELITY_LOW",
+                "pov_strength": "POV_STRENGTH_LOW",
+                "human_voice": "HUMAN_VOICE_LOW",
+                "usefulness": "USEFULNESS_LOW",
+                "visual_message_fit": "VISUAL_MESSAGE_FIT_LOW",
+                "publish_readiness": "PUBLISH_READINESS_LOW",
+            }
+            for field_name, minimum in cls.HUMAN_MINIMUMS.items():
+                observed = float(getattr(human_review, field_name))
+                if observed < minimum:
+                    add(
+                        dimension_codes[field_name],
+                        "human_dyno",
+                        LossSeverity.HIGH,
+                        f"Human {field_name}={observed:.2f} is below independent M4 minimum {minimum:.2f}.",
+                    )
 
         return losses
 
@@ -303,7 +444,7 @@ class ContentDynoAnalyzer:
         ):
             signature = DynoSignature.SIGNED_PASS
             signature_reasons = [
-                "Trust @ Wheels PASS and explicit human verdict WOULD_PUBLISH_NOW with no HIGH drivetrain losses."
+                "Trust @ Wheels PASS and explicit human verdict WOULD_PUBLISH_NOW with every independent M4 minimum satisfied and no HIGH drivetrain losses."
             ]
         else:
             signature = DynoSignature.UNSIGNED
