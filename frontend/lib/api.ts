@@ -4,6 +4,29 @@ import { EditorialVisualFormat, rasterizeEditorialVisual } from "./editorial-vis
 const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 export const ACTIVE_SOURCE_PACKET_STORAGE_KEY = "prodagentic.active_source_packet_id";
 
+type IdeaEvidenceBinding = {
+  topic: string;
+  style: string;
+  target_language: string;
+  source_packet_id: string | null;
+};
+
+let lastIdeaEvidenceBinding: IdeaEvidenceBinding | null = null;
+
+function ideaBindingMatches(
+  binding: IdeaEvidenceBinding | null,
+  topic: string,
+  style: string,
+  target_language: string,
+): binding is IdeaEvidenceBinding {
+  return Boolean(
+    binding
+    && binding.topic === topic
+    && binding.style === style
+    && binding.target_language === target_language,
+  );
+}
+
 export function resolveBackendAssetUrl(assetUrl?: string | null): string | null {
   if (!assetUrl) return null;
   if (/^(https?:|data:|blob:)/i.test(assetUrl)) return assetUrl;
@@ -35,6 +58,19 @@ export async function fetchIdeas(
   });
   if (!res.ok) throw new Error(`Ideas request failed: ${res.status}`);
   const data = await res.json();
+
+  // Bind the selectable ideas to the exact authoritative evidence packet the
+  // server says it used. A later Evidence Dock change must not silently swap
+  // provenance underneath an already-generated idea set.
+  lastIdeaEvidenceBinding = {
+    topic,
+    style,
+    target_language,
+    source_packet_id: typeof data?.source_packet_id === "string" && data.source_packet_id
+      ? data.source_packet_id
+      : null,
+  };
+
   return data.ideas as string[];
 }
 
@@ -50,10 +86,17 @@ export function createPipelineStream(
   const params = new URLSearchParams({ idea, topic, style, target_language, image_prompt_language });
   if (content_profile_id) params.set("content_profile_id", content_profile_id);
 
-  const sessionPacketId = !source_packet_id && typeof window !== "undefined"
-    ? window.sessionStorage.getItem(ACTIVE_SOURCE_PACKET_STORAGE_KEY) || undefined
-    : undefined;
-  const effectiveSourcePacketId = source_packet_id || sessionPacketId;
+  let effectiveSourcePacketId: string | undefined;
+  if (source_packet_id) {
+    effectiveSourcePacketId = source_packet_id;
+  } else if (ideaBindingMatches(lastIdeaEvidenceBinding, topic, style, target_language)) {
+    // `null` is meaningful here: ideas generated without evidence stay
+    // evidence-free even if the dock changes before the user selects one.
+    effectiveSourcePacketId = lastIdeaEvidenceBinding.source_packet_id || undefined;
+  } else if (typeof window !== "undefined") {
+    effectiveSourcePacketId = window.sessionStorage.getItem(ACTIVE_SOURCE_PACKET_STORAGE_KEY) || undefined;
+  }
+
   if (effectiveSourcePacketId) params.set("source_packet_id", effectiveSourcePacketId);
 
   return new EventSource(`${API}/api/pipeline/stream?${params}`, { withCredentials: true });
