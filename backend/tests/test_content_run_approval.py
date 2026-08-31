@@ -6,7 +6,20 @@ import pytest
 from fastapi import HTTPException
 
 import routes.content_runs as content_runs_routes
+from core.grounding import GroundingPolicy
 from models.content_run import ContentRunApprovalRequest, ContentRunStatus
+from models.grounding import (
+    Claim,
+    ClaimType,
+    EvidenceRef,
+    GroundingAssessment,
+    GroundingReviewDecision,
+    GroundingReviewSnapshot,
+    GroundingStatus,
+    SourceAuthority,
+    SourcePacket,
+    SourceType,
+)
 from routes.content_runs import approve_content_run
 
 
@@ -73,22 +86,75 @@ def current_visual(prompt="visual prompt"):
     }
 
 
+def verified_grounding(final_content: str, *, decision=GroundingReviewDecision.VERIFIED):
+    source_packet = SourcePacket(
+        packet_id="packet-approval",
+        workspace_id="legacy-default",
+        title="Approval grounding fixture",
+        evidence=[
+            EvidenceRef(
+                evidence_id="ev-approval",
+                authority=SourceAuthority.USER_PROVIDED,
+                source_type=SourceType.PASTED_TEXT,
+                excerpt="A publishable LinkedIn post.",
+            )
+        ],
+    )
+    assessment = GroundingAssessment(
+        assessment_id="assessment-approval",
+        packet_id=source_packet.packet_id,
+        content_sha256=hashlib.sha256(final_content.encode("utf-8")).hexdigest(),
+        evaluator_version="test-evaluator-v1",
+        extraction_complete=True,
+        claims=[
+            Claim(
+                claim_id="claim-approval",
+                statement=final_content,
+                claim_type=ClaimType.FACT,
+                grounding_status=GroundingStatus.GROUNDED,
+                source_refs=["ev-approval"],
+                confidence=1.0,
+            )
+        ],
+    )
+    gate = GroundingPolicy.evaluate(assessment, source_packet)
+    review = GroundingReviewSnapshot(
+        review_id="review-approval",
+        decision=decision,
+        content_sha256=assessment.content_sha256,
+        source_packet_sha256=content_runs_routes._sha256_json(source_packet.model_dump(mode="python")),
+        assessment_sha256=content_runs_routes._sha256_json(assessment.model_dump(mode="python")),
+        policy_version=gate.policy_version,
+        warning_claim_ids=gate.warning_claim_ids,
+        reviewed_at=datetime(2026, 8, 20, 12, 30, tzinfo=timezone.utc),
+    )
+    return {
+        "source_packet": source_packet.model_dump(mode="python"),
+        "grounding_assessment": assessment.model_dump(mode="python"),
+        "grounding_gate": gate.model_dump(mode="python"),
+        "grounding_review": review.model_dump(mode="python"),
+    }
+
+
 def review_run(**overrides):
+    final_content = overrides.get("final_content", "A publishable LinkedIn post.")
     doc = {
         "run_id": "run-review",
+        "workspace_id": "legacy-default",
         "status": ContentRunStatus.READY_FOR_REVIEW.value,
-        "final_content": "A publishable LinkedIn post.",
+        "final_content": final_content,
         "visual_prompt": "visual prompt",
         "visual_render": current_visual(),
         "approval": None,
         "updated_at": datetime(2026, 8, 20, 13, 0, tzinfo=timezone.utc),
+        **verified_grounding(final_content),
     }
     doc.update(overrides)
     return doc
 
 
 @pytest.mark.asyncio
-async def test_text_only_approval_freezes_exact_content_bundle(monkeypatch):
+async def test_text_only_approval_freezes_exact_content_and_grounding_bundle(monkeypatch):
     db = FakeDb(review_run())
     monkeypatch.setattr(content_runs_routes, "get_db", lambda: db)
 
@@ -107,6 +173,11 @@ async def test_text_only_approval_freezes_exact_content_bundle(monkeypatch):
     ).hexdigest()
     assert snapshot["visual_render"] is None
     assert snapshot["visual_render_sha256"] is None
+    assert len(snapshot["source_packet_sha256"]) == 64
+    assert len(snapshot["grounding_assessment_sha256"]) == 64
+    assert len(snapshot["grounding_gate_sha256"]) == 64
+    assert len(snapshot["grounding_review_sha256"]) == 64
+    assert snapshot["grounding_policy_version"] == GroundingPolicy.VERSION
     assert len(snapshot["bundle_sha256"]) == 64
 
 
@@ -127,6 +198,80 @@ async def test_visual_approval_freezes_current_owned_render_and_digests(monkeypa
     assert snapshot["visual_render"]["asset_sha256"] == "a" * 64
     assert len(snapshot["visual_render_sha256"]) == 64
     assert len(snapshot["bundle_sha256"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_approval_rejects_missing_grounding(monkeypatch):
+    run = review_run()
+    run["source_packet"] = None
+    run["grounding_assessment"] = None
+    run["grounding_gate"] = None
+    run["grounding_review"] = None
+    db = FakeDb(run)
+    monkeypatch.setattr(content_runs_routes, "get_db", lambda: db)
+
+    with pytest.raises(HTTPException) as exc:
+        await approve_content_run(
+            "run-review",
+            ContentRunApprovalRequest(include_visual=False),
+        )
+
+    assert exc.value.status_code == 409
+    assert "Grounding" in exc.value.detail
+    assert db.content_runs.doc["status"] == ContentRunStatus.READY_FOR_REVIEW.value
+
+
+@pytest.mark.asyncio
+async def test_approval_rejects_non_verified_grounding_review(monkeypatch):
+    run = review_run()
+    run.update(verified_grounding(run["final_content"], decision=GroundingReviewDecision.REJECTED))
+    db = FakeDb(run)
+    monkeypatch.setattr(content_runs_routes, "get_db", lambda: db)
+
+    with pytest.raises(HTTPException) as exc:
+        await approve_content_run(
+            "run-review",
+            ContentRunApprovalRequest(include_visual=False),
+        )
+
+    assert exc.value.status_code == 409
+    assert "not VERIFIED" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_approval_rejects_stale_grounding_revision(monkeypatch):
+    run = review_run()
+    run["final_content"] = "Edited after Grounding verification."
+    db = FakeDb(run)
+    monkeypatch.setattr(content_runs_routes, "get_db", lambda: db)
+
+    with pytest.raises(HTTPException) as exc:
+        await approve_content_run(
+            "run-review",
+            ContentRunApprovalRequest(include_visual=False),
+        )
+
+    assert exc.value.status_code == 409
+    assert "stale" in exc.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_approval_rejects_source_packet_changed_after_human_verification(monkeypatch):
+    run = review_run()
+    run["source_packet"]["evidence"][0]["excerpt"] = "Evidence was replaced after verification."
+    db = FakeDb(run)
+    monkeypatch.setattr(content_runs_routes, "get_db", lambda: db)
+
+    with pytest.raises(HTTPException) as exc:
+        await approve_content_run(
+            "run-review",
+            ContentRunApprovalRequest(include_visual=False),
+        )
+
+    assert exc.value.status_code == 409
+    assert "source evidence" in exc.value.detail.lower()
+    assert db.content_runs.doc["status"] == ContentRunStatus.READY_FOR_REVIEW.value
+    assert db.content_runs.doc["approval"] is None
 
 
 @pytest.mark.asyncio

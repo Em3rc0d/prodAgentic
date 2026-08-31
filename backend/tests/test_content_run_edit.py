@@ -52,6 +52,39 @@ def visual_snapshot(prompt="old visual"):
     }
 
 
+def grounding_snapshot():
+    return {
+        "assessment_id": "assessment-1",
+        "packet_id": "packet-1",
+        "content_sha256": "a" * 64,
+        "evaluator_version": "test-v1",
+        "extraction_complete": True,
+        "claims": [],
+    }
+
+
+def grounding_gate():
+    return {
+        "policy_version": "grounding-policy-v1",
+        "decision": "PASS",
+        "blocking_claim_ids": [],
+        "warning_claim_ids": [],
+        "reasons": [],
+    }
+
+
+def grounding_review():
+    return {
+        "review_id": "review-1",
+        "decision": "VERIFIED",
+        "source": "explicit_user_action",
+        "content_sha256": "a" * 64,
+        "assessment_sha256": "b" * 64,
+        "policy_version": "grounding-policy-v1",
+        "warning_claim_ids": [],
+    }
+
+
 @pytest.mark.asyncio
 async def test_reviewable_run_can_edit_human_owned_outputs_without_rewriting_provenance(monkeypatch):
     original_stages = {
@@ -68,6 +101,9 @@ async def test_reviewable_run_can_edit_human_owned_outputs_without_rewriting_pro
         "final_content": "old final",
         "visual_prompt": "old visual",
         "visual_render": visual_snapshot(),
+        "grounding_assessment": grounding_snapshot(),
+        "grounding_gate": grounding_gate(),
+        "grounding_review": grounding_review(),
         "stages": copy.deepcopy(original_stages),
     }
     db = FakeDb(run_doc)
@@ -81,13 +117,16 @@ async def test_reviewable_run_can_edit_human_owned_outputs_without_rewriting_pro
     assert updated["final_content"] == "new final"
     assert updated["visual_prompt"] == "new visual"
     assert updated["visual_render"] is None
+    assert updated["grounding_assessment"] is None
+    assert updated["grounding_gate"] is None
+    assert updated["grounding_review"] is None
     assert updated["status"] == ContentRunStatus.READY_FOR_REVIEW.value
     assert updated["stages"] == original_stages
     assert db["posts"].doc["final_content"] == "new final"
 
 
 @pytest.mark.asyncio
-async def test_final_copy_edit_keeps_current_visual_render(monkeypatch):
+async def test_final_copy_edit_keeps_current_visual_render_but_invalidates_grounding(monkeypatch):
     snapshot = visual_snapshot()
     run_doc = {
         "run_id": "run-copy-only",
@@ -95,6 +134,9 @@ async def test_final_copy_edit_keeps_current_visual_render(monkeypatch):
         "final_content": "old final",
         "visual_prompt": "old visual",
         "visual_render": copy.deepcopy(snapshot),
+        "grounding_assessment": grounding_snapshot(),
+        "grounding_gate": grounding_gate(),
+        "grounding_review": grounding_review(),
         "stages": {},
     }
     db = FakeDb(run_doc)
@@ -106,6 +148,38 @@ async def test_final_copy_edit_keeps_current_visual_render(monkeypatch):
     )
 
     assert updated["visual_render"] == snapshot
+    assert updated["grounding_assessment"] is None
+    assert updated["grounding_gate"] is None
+    assert updated["grounding_review"] is None
+
+
+@pytest.mark.asyncio
+async def test_same_final_copy_preserves_grounding(monkeypatch):
+    assessment = grounding_snapshot()
+    gate = grounding_gate()
+    review = grounding_review()
+    run_doc = {
+        "run_id": "run-same-copy",
+        "status": ContentRunStatus.READY_FOR_REVIEW.value,
+        "final_content": "same final",
+        "visual_prompt": "old visual",
+        "visual_render": visual_snapshot(),
+        "grounding_assessment": copy.deepcopy(assessment),
+        "grounding_gate": copy.deepcopy(gate),
+        "grounding_review": copy.deepcopy(review),
+        "stages": {},
+    }
+    db = FakeDb(run_doc)
+    monkeypatch.setattr(content_runs_routes, "get_db", lambda: db)
+
+    updated = await edit_content_run(
+        "run-same-copy",
+        ContentRunEditRequest(final_content="  same final  "),
+    )
+
+    assert updated["grounding_assessment"] == assessment
+    assert updated["grounding_gate"] == gate
+    assert updated["grounding_review"] == review
 
 
 @pytest.mark.asyncio

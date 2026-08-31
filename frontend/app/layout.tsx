@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AuthGate } from "@/components/AuthGate";
+import { EvidenceBriefDock } from "@/components/EvidenceBriefDock";
 import { ProductNav } from "@/components/ProductNav";
 import "./globals.css";
 import "./product-shell.css";
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <AuthGate>
           {children}
+          <EvidenceBriefDock />
           <ProductNav />
         </AuthGate>
       </body>

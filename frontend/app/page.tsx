@@ -73,8 +73,8 @@ export default function Home() {
   const [renderedImageUrl, setRenderedImageUrl] = useState<string | null>(null);
   const [renderStatus, setRenderStatus] = useState<"IDLE" | "QUEUED" | "RENDERING" | "READY" | "FAILED" | "CANCELLED">("IDLE");
   const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
-  const [selectedRatio, setSelectedRatio] = useState<string>("16:9");
-  const [selectedStyle, setSelectedStyle] = useState<string>("");
+  const [selectedRatio, setSelectedRatio] = useState<string>("4:5");
+  const [selectedStyle, setSelectedStyle] = useState<string>("technical_editorial");
   const [renderIntentId, setRenderIntentId] = useState<string>("");
   const [lastParams, setLastParams] = useState<{ prompt: string; ratio: string; style: string } | null>(null);
   const [stageStatus, setStageStatus] = useState<Record<StageKey, StageStatus>>({ research: "pending", write: "pending", edit: "pending", visual: "pending" });

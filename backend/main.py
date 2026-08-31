@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 import asyncio
 import json
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -14,6 +15,7 @@ from core.model_registry import validate_available_models, get_profile_readiness
 from core.scheduler import scheduler_loop
 from core.auth import AuthSettings, SessionManager, security_boundary, router as auth_router
 from core.production import validate_production_environment
+from db.content_memory import ContentMemoryRepository
 from db.mongo import connect_db, close_db, database_ready
 from routes.pipeline import router as pipeline_router
 from routes.posts import router as posts_router
@@ -22,10 +24,18 @@ from routes.content_profiles import router as content_profiles_router
 from routes.publishing import router as publishing_router
 from routes.scheduling import router as scheduling_router
 from routes.linkedin_oauth import router as linkedin_oauth_router
+from routes.source_packets import router as source_packets_router
+from routes.claim_extractor import router as claim_extractor_router
+from routes.semantic_matcher import router as semantic_matcher_router
+from routes.review_cockpit import router as review_cockpit_router
+from routes.content_dyno import router as content_dyno_router
+from routes.remediation import router as remediation_router
+from routes.visual_plans import router as visual_plans_router
 
 
 load_dotenv()
 validate_production_environment()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -34,6 +44,14 @@ async def lifespan(app: FastAPI):
     app.state.auth_settings = auth_settings
     app.state.session_manager = SessionManager(auth_settings)
     await connect_db()
+
+    try:
+        await ContentMemoryRepository().ensure_indexes()
+    except Exception as exc:
+        # Content memory is advisory. Its index failure is observable but must
+        # never replace the existing publication/persistence authority.
+        logger.warning("Content memory index initialization degraded: %s", exc)
+
     container = ApplicationContainer()
     container.startup()
     app.state.container = container
@@ -84,9 +102,16 @@ app.add_middleware(
 app.middleware("http")(security_boundary)
 
 app.include_router(pipeline_router, prefix="/api")
+app.include_router(visual_plans_router, prefix="/api")
 app.include_router(posts_router, prefix="/api")
 app.include_router(content_runs_router, prefix="/api")
 app.include_router(content_profiles_router, prefix="/api")
+app.include_router(source_packets_router, prefix="/api")
+app.include_router(claim_extractor_router, prefix="/api")
+app.include_router(semantic_matcher_router, prefix="/api")
+app.include_router(review_cockpit_router, prefix="/api")
+app.include_router(content_dyno_router, prefix="/api")
+app.include_router(remediation_router, prefix="/api")
 app.include_router(publishing_router, prefix="/api")
 app.include_router(scheduling_router, prefix="/api")
 app.include_router(linkedin_oauth_router, prefix="/api")

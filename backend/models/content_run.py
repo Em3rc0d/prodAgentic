@@ -4,6 +4,18 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from models.claim_extractor import ClaimExtractionOutput, ClaimExtractionReviewSnapshot
+from models.content_dyno import HumanEditorialReview
+from models.grounding import (
+    FactualEnvelope,
+    GroundingAssessment,
+    GroundingEvaluationDraft,
+    GroundingGateResult,
+    GroundingReviewSnapshot,
+    SourcePacket,
+)
+from models.value_engine import AngleSelectionSnapshot, ContentQualitySnapshot
+
 
 class ContentRunStatus(str, Enum):
     GENERATING = "GENERATING"
@@ -36,6 +48,28 @@ class StageSnapshot(BaseModel):
     completed_at: Optional[datetime] = None
 
 
+class MemoryCandidateSnapshot(BaseModel):
+    memory_id: str
+    run_id: str
+    content_status: str
+    external_post_urn: Optional[str] = None
+    text_preview: str = Field(max_length=500)
+
+
+class MemoryCheckSnapshot(BaseModel):
+    status: str
+    outcome: str
+    checked_at: datetime
+    canonicalizer_version: str
+    normalized_sha256: str
+    final_memory_id: Optional[str] = None
+    candidates: list[MemoryCandidateSnapshot] = Field(default_factory=list, max_length=3)
+    error_message: Optional[str] = None
+    published_memory_id: Optional[str] = None
+    published_index_status: Optional[str] = None
+    published_indexed_at: Optional[datetime] = None
+
+
 class VisualArtifactSnapshot(BaseModel):
     render_id: str
     status: str
@@ -62,6 +96,11 @@ class ApprovalSnapshot(BaseModel):
     final_content_sha256: str
     visual_render: Optional[VisualArtifactSnapshot] = None
     visual_render_sha256: Optional[str] = None
+    source_packet_sha256: Optional[str] = None
+    grounding_assessment_sha256: Optional[str] = None
+    grounding_gate_sha256: Optional[str] = None
+    grounding_review_sha256: Optional[str] = None
+    grounding_policy_version: Optional[str] = None
     bundle_sha256: str
 
 
@@ -71,12 +110,16 @@ class PublicationSnapshot(BaseModel):
     attempt_id: str
     approval_id: str
     bundle_sha256: str
+    content_sha256: Optional[str] = None
+    dedupe_key: Optional[str] = None
     author_urn: Optional[str] = None
     started_at: datetime
     completed_at: Optional[datetime] = None
     external_post_urn: Optional[str] = None
     external_image_urn: Optional[str] = None
     error_message: Optional[str] = None
+    failure_retry_safety: Optional[str] = None
+    failure_phase: Optional[str] = None
 
 
 class ScheduleSnapshot(BaseModel):
@@ -97,6 +140,7 @@ class ContentRun(BaseModel):
     topic: str
     style: str
     idea: str
+    workspace_id: str = "legacy-default"
     status: ContentRunStatus = ContentRunStatus.GENERATING
     content_profile_id: Optional[str] = None
     content_profile_snapshot: Optional[dict] = None
@@ -104,10 +148,23 @@ class ContentRun(BaseModel):
     resolved_target_language: Optional[str] = None
     image_prompt_language: Optional[str] = None
     stages: dict[str, StageSnapshot] = Field(default_factory=dict)
+    generation_source_packet: Optional[SourcePacket] = None
+    factual_envelope: Optional[FactualEnvelope] = None
+    angle_selection: Optional[AngleSelectionSnapshot] = None
+    content_quality: Optional[ContentQualitySnapshot] = None
     final_status: Optional[str] = None
     final_content: Optional[str] = None
     visual_prompt: Optional[str] = None
     visual_render: Optional[VisualArtifactSnapshot] = None
+    memory_check: Optional[MemoryCheckSnapshot] = None
+    claim_extraction: Optional[ClaimExtractionOutput] = None
+    claim_extraction_review: Optional[ClaimExtractionReviewSnapshot] = None
+    grounding_match_draft: Optional[GroundingEvaluationDraft] = None
+    source_packet: Optional[SourcePacket] = None
+    grounding_assessment: Optional[GroundingAssessment] = None
+    grounding_gate: Optional[GroundingGateResult] = None
+    grounding_review: Optional[GroundingReviewSnapshot] = None
+    content_dyno_review: Optional[HumanEditorialReview] = None
     approval: Optional[ApprovalSnapshot] = None
     schedule: Optional[ScheduleSnapshot] = None
     publication: Optional[PublicationSnapshot] = None

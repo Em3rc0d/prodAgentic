@@ -47,8 +47,17 @@ def validate_production_environment() -> None:
     if not _truthy("PRODAGENTIC_COOKIE_SECURE", "true"):
         raise ProductionConfigurationError("PRODAGENTIC_COOKIE_SECURE must be true in production")
 
+    same_origin_gateway = _truthy("PRODAGENTIC_SAME_ORIGIN_GATEWAY", "false")
     same_site = os.environ.get("PRODAGENTIC_COOKIE_SAMESITE", "").strip().lower()
-    if same_site != "none":
+    if same_origin_gateway:
+        # OAuth returns through a top-level GET navigation, for which Lax retains
+        # the signed session cookie while avoiding the broader cross-site cookie
+        # exposure required by a split frontend/backend deployment.
+        if same_site != "lax":
+            raise ProductionConfigurationError(
+                "PRODAGENTIC_COOKIE_SAMESITE must be lax for the production same-origin gateway"
+            )
+    elif same_site != "none":
         raise ProductionConfigurationError(
             "PRODAGENTIC_COOKIE_SAMESITE must be none in production so authenticated cross-origin requests work"
         )
@@ -69,6 +78,10 @@ def validate_production_environment() -> None:
     if frontend_origin not in allowed_origins:
         raise ProductionConfigurationError(
             "CORS_ALLOWED_ORIGINS must explicitly include FRONTEND_URL in production"
+        )
+    if same_origin_gateway and allowed_origins != {frontend_origin}:
+        raise ProductionConfigurationError(
+            "CORS_ALLOWED_ORIGINS must contain only FRONTEND_URL for the production same-origin gateway"
         )
 
     asset_root = os.environ.get("PRODAGENTIC_ASSET_ROOT", "").strip()

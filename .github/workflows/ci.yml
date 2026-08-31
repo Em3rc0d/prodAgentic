@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, feat/model-registry-router ]
+    branches: [ main, feat/model-registry-router, reconcile/commercial-v1-main-first ]
   pull_request:
     branches: [ main ]
 
@@ -21,6 +21,7 @@ jobs:
           --health-retries 10
     env:
       APP_DEFAULT_LANGUAGE: es
+      APP_WORKSPACE_ID: ci-workspace
       LANGUAGE_MIN_CONFIDENCE: "0.6"
       LANGUAGE_MIN_MARGIN: "0.2"
       IMAGE_RENDER_ENABLED: "true"
@@ -57,7 +58,15 @@ jobs:
         run: python -m compileall .
       - name: Run Backend Tests
         working-directory: backend
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=backend-pytest.xml
+      - name: Upload Backend Test Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-evidence
+          path: backend/backend-pytest.xml
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Build Production Backend Image
         run: docker build -t prodagentic-backend:ci ./backend
       - name: Smoke Production Backend Image
@@ -66,6 +75,7 @@ jobs:
             -p 18000:8000 \
             -e PORT=8000 \
             -e APP_DEFAULT_LANGUAGE=es \
+            -e APP_WORKSPACE_ID=ci-workspace \
             -e LANGUAGE_MIN_CONFIDENCE=0.6 \
             -e LANGUAGE_MIN_MARGIN=0.2 \
             -e IMAGE_RENDER_ENABLED=false \
@@ -120,6 +130,14 @@ jobs:
           fi
           cat /tmp/prodagentic-path-api-build.log
           grep -q "clean backend origin" /tmp/prodagentic-path-api-build.log
+
+          if NEXT_PUBLIC_API_URL="/" npm run build > /tmp/prodagentic-unflagged-same-origin.log 2>&1; then
+            cat /tmp/prodagentic-unflagged-same-origin.log
+            echo "Production build unexpectedly accepted unflagged same-origin gateway mode"
+            exit 1
+          fi
+          cat /tmp/prodagentic-unflagged-same-origin.log
+          grep -q "PRODAGENTIC_SAME_ORIGIN_GATEWAY=true" /tmp/prodagentic-unflagged-same-origin.log
       - name: Build Frontend
         working-directory: frontend
         env:
@@ -142,6 +160,7 @@ jobs:
           --health-retries 10
     env:
       APP_DEFAULT_LANGUAGE: es
+      APP_WORKSPACE_ID: ui-cert-workspace
       LANGUAGE_MIN_CONFIDENCE: "0.6"
       LANGUAGE_MIN_MARGIN: "0.2"
       IMAGE_RENDER_ENABLED: "false"
@@ -239,3 +258,91 @@ jobs:
             ui-cert-frontend.log
           if-no-files-found: ignore
           retention-days: 14
+
+  docker-stack-test:
+    name: DOCKER-01-CERT stack
+    needs: [backend-test, frontend-test]
+    runs-on: ubuntu-latest
+    env:
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_PORT: "8080"
+      PRODAGENTIC_PUBLIC_ORIGIN: http://localhost:8080
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create CI-only backend environment
+        run: |
+          cat > backend/.env <<'EOF'
+          GEMINI_API_KEY=docker-ci-placeholder
+          APP_DEFAULT_LANGUAGE=es
+          APP_WORKSPACE_ID=docker-ci-workspace
+          LANGUAGE_MIN_CONFIDENCE=0.6
+          LANGUAGE_MIN_MARGIN=0.2
+          IMAGE_RENDER_ENABLED=false
+          PRODAGENTIC_AUTH_ENABLED=true
+          PRODAGENTIC_ADMIN_USER=admin
+          PRODAGENTIC_ADMIN_PASSWORD=docker-ci-password
+          PRODAGENTIC_SESSION_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef
+          PRODAGENTIC_LINKEDIN_TOKEN_KEY=docker-ci-linkedin-token-key-that-is-long-enough
+          LINKEDIN_CLIENT_ID=docker-ci-client
+          LINKEDIN_CLIENT_SECRET=docker-ci-secret-no-external-call
+          LINKEDIN_API_VERSION=202607
+          EOF
+
+      - name: Validate Compose contract
+        run: docker compose config --quiet
+
+      - name: Build and start complete stack
+        run: docker compose up --build -d --wait --wait-timeout 300
+
+      - name: Verify gateway, isolation and authentication
+        run: |
+          curl -fsS http://127.0.0.1:8080/health/live
+          curl -fsS -o /dev/null http://127.0.0.1:8080/
+
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/openapi.json)" = "404"
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/docs)" = "404"
+
+          if curl --connect-timeout 1 -fsS http://127.0.0.1:8000/health/live; then
+            echo "FastAPI must not be host-exposed"
+            exit 1
+          fi
+
+          if timeout 1 bash -c '</dev/tcp/127.0.0.1/27017' 2>/dev/null; then
+            echo "MongoDB must not be host-exposed"
+            exit 1
+          fi
+
+          curl -fsS -c /tmp/prodagentic-cookies.txt \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"docker-ci-password"}' \
+            http://127.0.0.1:8080/api/auth/login \
+            | grep -q '"authenticated":true'
+
+          curl -fsS -b /tmp/prodagentic-cookies.txt \
+            http://127.0.0.1:8080/api/auth/session \
+            | grep -q '"authenticated":true'
+
+      - name: Verify durable Mongo and asset volumes across restart
+        run: |
+          docker compose exec -T mongo mongosh content_engine --quiet --eval \
+            'db.reconciliation.updateOne({_id:"docker-ci"},{$set:{value:"durable"}},{upsert:true})'
+          docker compose exec -T backend sh -c \
+            'mkdir -p /data/prodagentic/assets && printf durable > /data/prodagentic/assets/ci-durable.txt'
+
+          docker compose restart mongo
+          docker compose up -d --wait --wait-timeout 120 mongo
+          docker compose restart backend
+          docker compose up -d --wait --wait-timeout 180 backend frontend gateway
+
+          docker compose exec -T mongo mongosh content_engine --quiet --eval \
+            'if (db.reconciliation.findOne({_id:"docker-ci"}).value !== "durable") quit(1)'
+          test "$(curl -fsS -b /tmp/prodagentic-cookies.txt http://127.0.0.1:8080/assets/ci-durable.txt)" = "durable"
+
+      - name: Capture stack state
+        if: always()
+        run: docker compose ps && docker compose logs --no-color --tail=200
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v --remove-orphans

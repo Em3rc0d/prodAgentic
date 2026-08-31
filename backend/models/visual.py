@@ -32,8 +32,30 @@ class VisualRenderRequest(BaseModel):
     run_id: str = Field(..., min_length=1, max_length=256)
     idempotency_key: str = Field(..., min_length=8, max_length=128)
     prompt: str = Field(..., min_length=1, max_length=2048)
-    aspect_ratio: AspectRatio = AspectRatio.WIDESCREEN
-    style: VisualStyle = VisualStyle.DEFAULT
+    # LinkedIn feed-first default. Callers may still explicitly request square or widescreen.
+    aspect_ratio: AspectRatio = AspectRatio.PORTRAIT
+    style: VisualStyle = VisualStyle.TECHNICAL_EDITORIAL
+
+    # HYBRID-VISUAL-01: for server-selected deterministic formats the browser
+    # rasterizes an exact SVG/layout into PNG. The backend still owns authority:
+    # it validates the PNG, byte digest, dimensions and run-bound renderer choice
+    # before persisting the asset. These fields are ignored/rejected for
+    # generative illustration renders.
+    deterministic_png_base64: Optional[str] = Field(default=None, max_length=14_000_000)
+    deterministic_png_sha256: Optional[str] = Field(
+        default=None,
+        pattern=r"^[0-9a-fA-F]{64}$",
+    )
+
+
+class VisualRenderPlan(BaseModel):
+    run_id: str
+    policy_version: str
+    visual_format: str
+    renderer: str
+    final_content: str
+    recommended_aspect_ratio: AspectRatio
+    recommended_style: VisualStyle
 
 
 class VisualRenderResponse(BaseModel):

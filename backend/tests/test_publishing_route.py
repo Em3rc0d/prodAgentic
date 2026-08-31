@@ -4,7 +4,11 @@ from types import SimpleNamespace
 import pytest
 from pymongo.errors import DuplicateKeyError
 
-from core.linkedin import LinkedInPublishError
+from core.linkedin import (
+    LinkedInPublishError,
+    LinkedInPublishPhase,
+    PublicationRetrySafety,
+)
 from core.publication import (
     PublicationConflict,
     PublicationCoordinator,
@@ -66,10 +70,14 @@ class DuplicateClaimCollection(FakeCollection):
 class FakeDb:
     def __init__(self, doc, collection_cls=FakeCollection):
         self.collection = collection_cls(doc)
+        self.source_packets = FakeCollection({})
 
     def __getitem__(self, name):
-        assert name == 'content_runs'
-        return self.collection
+        if name == 'content_runs':
+            return self.collection
+        if name == 'source_packets':
+            return self.source_packets
+        raise AssertionError(f'unexpected collection: {name}')
 
 
 class FakeConfig:
@@ -94,7 +102,7 @@ def approved_doc():
 
 
 @pytest.mark.asyncio
-async def test_publication_dedupe_index_is_installed_before_publication_workers_run():
+async def test_mandatory_release_indexes_are_installed_before_publication_workers_run():
     db = FakeDb(approved_doc())
 
     await _ensure_indexes(db)
@@ -102,6 +110,10 @@ async def test_publication_dedupe_index_is_installed_before_publication_workers_
     assert db.collection.indexes == [(
         'publication.dedupe_key',
         {'unique': True, 'sparse': True, 'name': 'publication_dedupe_key_unique'},
+    )]
+    assert db.source_packets.indexes == [(
+        [('workspace_id', 1), ('packet_id', 1)],
+        {'unique': True, 'name': 'source_packet_workspace_packet_unique'},
     )]
 
 
@@ -126,6 +138,8 @@ async def test_publish_claims_approved_run_and_persists_external_evidence():
     assert updated['publication']['bundle_sha256'] == 'bundle-1'
     assert updated['publication']['content_sha256'] == approved_doc()['approval']['final_content_sha256']
     assert updated['publication']['dedupe_key']
+    assert updated['publication']['failure_retry_safety'] is None
+    assert updated['publication']['failure_phase'] is None
 
 
 @pytest.mark.asyncio
@@ -170,7 +184,7 @@ async def test_duplicate_content_fingerprint_is_blocked_before_linkedin_call():
 
 
 @pytest.mark.asyncio
-async def test_publish_failure_returns_run_to_approved_for_explicit_retry():
+async def test_explicit_safe_publish_failure_returns_run_to_approved_for_retry():
     db = FakeDb(approved_doc())
 
     class FailingPublisher:
@@ -178,15 +192,69 @@ async def test_publish_failure_returns_run_to_approved_for_explicit_retry():
             pass
 
         async def publish(self, approval):
-            raise LinkedInPublishError('provider rejected request')
+            raise LinkedInPublishError(
+                'provider rejected before final post creation',
+                retry_safety=PublicationRetrySafety.SAFE_TO_RETRY,
+                phase=LinkedInPublishPhase.LOCAL_VALIDATION,
+            )
 
     coordinator = PublicationCoordinator(db, publisher_factory=FailingPublisher, config_factory=lambda: FakeConfig())
-    with pytest.raises(PublicationFailed, match='provider rejected request'):
+    with pytest.raises(PublicationFailed, match='provider rejected before final post creation'):
         await coordinator.publish_run('run-1')
 
     assert db.collection.doc['status'] == ContentRunStatus.APPROVED.value
     assert db.collection.doc['publication']['status'] == 'FAILED'
-    assert db.collection.doc['publication']['error_message'] == 'provider rejected request'
+    assert db.collection.doc['publication']['error_message'] == 'provider rejected before final post creation'
+    assert db.collection.doc['publication']['failure_retry_safety'] == 'SAFE_TO_RETRY'
+    assert db.collection.doc['publication']['failure_phase'] == 'LOCAL_VALIDATION'
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_publish_error_stays_publishing_and_requires_reconciliation():
+    db = FakeDb(approved_doc())
+
+    class AmbiguousPublisher:
+        def __init__(self, config):
+            pass
+
+        async def publish(self, approval):
+            raise LinkedInPublishError(
+                'post outcome ambiguous',
+                phase=LinkedInPublishPhase.POST_CREATE,
+            )
+
+    coordinator = PublicationCoordinator(db, publisher_factory=AmbiguousPublisher, config_factory=lambda: FakeConfig())
+    with pytest.raises(PublicationReconciliationRequired, match='ambiguous'):
+        await coordinator.publish_run('run-1')
+
+    assert db.collection.doc['status'] == ContentRunStatus.PUBLISHING.value
+    assert db.collection.doc['publication']['status'] == 'RECONCILIATION_REQUIRED'
+    assert db.collection.doc['publication']['failure_retry_safety'] == 'RECONCILIATION_REQUIRED'
+    assert db.collection.doc['publication']['failure_phase'] == 'POST_CREATE'
+
+    with pytest.raises(PublicationReconciliationRequired, match='reconciliation'):
+        await coordinator.publish_run('run-1')
+
+
+@pytest.mark.asyncio
+async def test_unclassified_publisher_exception_defaults_to_reconciliation():
+    db = FakeDb(approved_doc())
+
+    class UnknownPublisher:
+        def __init__(self, config):
+            pass
+
+        async def publish(self, approval):
+            raise RuntimeError('unexpected adapter failure')
+
+    coordinator = PublicationCoordinator(db, publisher_factory=UnknownPublisher, config_factory=lambda: FakeConfig())
+    with pytest.raises(PublicationReconciliationRequired, match='Unexpected publisher outcome'):
+        await coordinator.publish_run('run-1')
+
+    assert db.collection.doc['status'] == ContentRunStatus.PUBLISHING.value
+    assert db.collection.doc['publication']['status'] == 'RECONCILIATION_REQUIRED'
+    assert db.collection.doc['publication']['failure_retry_safety'] == 'RECONCILIATION_REQUIRED'
+    assert db.collection.doc['publication']['failure_phase'] == 'UNKNOWN'
 
 
 @pytest.mark.asyncio

@@ -1,14 +1,22 @@
 import os
 from google import genai
+from agents.adapters.claim_extractor import StructuredClaimExtractorAdapter
 from agents.adapters.google_adapter import GoogleDirectAdapter
 from agents.adapters.n8n_adapter import N8nAdapter
+from agents.adapters.remediator import StructuredRemediatorAdapter
+from agents.adapters.semantic_matcher import StructuredSemanticMatcherAdapter
+from agents.adapters.value_engine import (
+    StructuredAngleEngineAdapter,
+    StructuredAttentionCriticAdapter,
+)
 from agents.router import ModelRouter
 from agents.orchestrator import PipelineOrchestrator
 from core.assets import get_render_storage_dir
-from core.settings import ApplicationSettings
+from core.settings import ApplicationSettings, LEGACY_WORKSPACE_ID
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 class ApplicationContainer:
     def __init__(self):
@@ -17,6 +25,11 @@ class ApplicationContainer:
         self.n8n_adapter = None
         self.router = None
         self.pipeline_service = None
+        self.claim_extractor = None
+        self.semantic_matcher = None
+        self.remediator = None
+        self.angle_engine = None
+        self.attention_critic = None
         self.visual_service = None
         self.settings = None
         self.preflight_task = None
@@ -37,9 +50,22 @@ class ApplicationContainer:
             logger.error("GEMINI_API_KEY not found in environment!")
             self.client = None
             self.google_adapter = None
+            self.claim_extractor = None
+            self.semantic_matcher = None
+            self.remediator = None
+            self.angle_engine = None
+            self.attention_critic = None
         else:
             self.client = genai.Client(api_key=api_key)
             self.google_adapter = GoogleDirectAdapter(self.client)
+            # Structured intelligence surfaces are intentionally narrow. The
+            # factual components remain downstream of deterministic/human trust
+            # boundaries; the editorial components are advisory only.
+            self.claim_extractor = StructuredClaimExtractorAdapter(self.google_adapter)
+            self.semantic_matcher = StructuredSemanticMatcherAdapter(self.google_adapter)
+            self.remediator = StructuredRemediatorAdapter(self.google_adapter)
+            self.angle_engine = StructuredAngleEngineAdapter(self.google_adapter)
+            self.attention_critic = StructuredAttentionCriticAdapter(self.google_adapter)
 
         from agents.router import ModelRouter, RoutingPolicy
 
@@ -53,8 +79,18 @@ class ApplicationContainer:
         routing_policy = RoutingPolicy()
         routing_policy.allow_direct_provider_fallback_after_n8n_failure = n8n_fallback in ("true", "1")
 
-        self.router = ModelRouter(google_adapter=self.google_adapter, n8n_adapter=self.n8n_adapter, routing_policy=routing_policy)
-        self.pipeline_service = PipelineOrchestrator(self.router)
+        self.router = ModelRouter(
+            google_adapter=self.google_adapter,
+            n8n_adapter=self.n8n_adapter,
+            routing_policy=routing_policy,
+        )
+        workspace_id = self.settings.app_workspace_id if self.settings else LEGACY_WORKSPACE_ID
+        self.pipeline_service = PipelineOrchestrator(
+            self.router,
+            workspace_id=workspace_id,
+            angle_engine=self.angle_engine,
+            attention_critic=self.attention_critic,
+        )
 
         from agents.adapters.image import PollinationsImageAdapter
         from core.visual import VisualRenderService
@@ -69,12 +105,12 @@ class ApplicationContainer:
 
     async def shutdown(self):
         if self.client:
-            if hasattr(self.client, 'aio') and hasattr(self.client.aio, 'aclose'):
+            if hasattr(self.client, "aio") and hasattr(self.client.aio, "aclose"):
                 try:
                     await self.client.aio.aclose()
                 except Exception:
                     pass
-            if hasattr(self.client, 'close'):
+            if hasattr(self.client, "close"):
                 try:
                     self.client.close()
                 except Exception:

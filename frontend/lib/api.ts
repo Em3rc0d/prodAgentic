@@ -1,6 +1,31 @@
 import { secureFetch } from "./auth";
+import { EditorialVisualFormat, rasterizeEditorialVisual } from "./editorial-visual";
 
 const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+export const ACTIVE_SOURCE_PACKET_STORAGE_KEY = "prodagentic.active_source_packet_id";
+
+type IdeaEvidenceBinding = {
+  topic: string;
+  style: string;
+  target_language: string;
+  source_packet_id: string | null;
+};
+
+let lastIdeaEvidenceBinding: IdeaEvidenceBinding | null = null;
+
+function ideaBindingMatches(
+  binding: IdeaEvidenceBinding | null,
+  topic: string,
+  style: string,
+  target_language: string,
+): binding is IdeaEvidenceBinding {
+  return Boolean(
+    binding
+    && binding.topic === topic
+    && binding.style === style
+    && binding.target_language === target_language,
+  );
+}
 
 export function resolveBackendAssetUrl(assetUrl?: string | null): string | null {
   if (!assetUrl) return null;
@@ -12,15 +37,40 @@ export async function fetchIdeas(
   topic: string,
   style: string,
   target_language: string = "es",
-  content_profile_id?: string
+  content_profile_id?: string,
+  source_packet_id?: string
 ): Promise<string[]> {
+  const sessionPacketId = !source_packet_id && typeof window !== "undefined"
+    ? window.sessionStorage.getItem(ACTIVE_SOURCE_PACKET_STORAGE_KEY) || undefined
+    : undefined;
+  const effectiveSourcePacketId = source_packet_id || sessionPacketId;
+
   const res = await secureFetch(`${API}/api/ideas`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topic, style, target_language, content_profile_id }),
+    body: JSON.stringify({
+      topic,
+      style,
+      target_language,
+      content_profile_id,
+      source_packet_id: effectiveSourcePacketId,
+    }),
   });
   if (!res.ok) throw new Error(`Ideas request failed: ${res.status}`);
   const data = await res.json();
+
+  // Bind the selectable ideas to the exact authoritative evidence packet the
+  // server says it used. A later Evidence Dock change must not silently swap
+  // provenance underneath an already-generated idea set.
+  lastIdeaEvidenceBinding = {
+    topic,
+    style,
+    target_language,
+    source_packet_id: typeof data?.source_packet_id === "string" && data.source_packet_id
+      ? data.source_packet_id
+      : null,
+  };
+
   return data.ideas as string[];
 }
 
@@ -30,10 +80,25 @@ export function createPipelineStream(
   style: string,
   target_language: string = "es",
   image_prompt_language: string = "en",
-  content_profile_id?: string
+  content_profile_id?: string,
+  source_packet_id?: string
 ): EventSource {
   const params = new URLSearchParams({ idea, topic, style, target_language, image_prompt_language });
   if (content_profile_id) params.set("content_profile_id", content_profile_id);
+
+  let effectiveSourcePacketId: string | undefined;
+  if (source_packet_id) {
+    effectiveSourcePacketId = source_packet_id;
+  } else if (ideaBindingMatches(lastIdeaEvidenceBinding, topic, style, target_language)) {
+    // `null` is meaningful here: ideas generated without evidence stay
+    // evidence-free even if the dock changes before the user selects one.
+    effectiveSourcePacketId = lastIdeaEvidenceBinding.source_packet_id || undefined;
+  } else if (typeof window !== "undefined") {
+    effectiveSourcePacketId = window.sessionStorage.getItem(ACTIVE_SOURCE_PACKET_STORAGE_KEY) || undefined;
+  }
+
+  if (effectiveSourcePacketId) params.set("source_packet_id", effectiveSourcePacketId);
+
   return new EventSource(`${API}/api/pipeline/stream?${params}`, { withCredentials: true });
 }
 
@@ -52,6 +117,59 @@ export async function updatePostStatus(postId: string, status: string) {
 export async function deletePost(postId: string) {
   const res = await secureFetch(`${API}/api/posts/${postId}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete post");
+  return res.json();
+}
+
+export interface SourcePacketSummary {
+  packet_id: string;
+  title: string;
+  summary?: string | null;
+  strict_mode: boolean;
+  evidence_count: number;
+  allowed_fact_count: number;
+  allowed_inference_count: number;
+  created_at: string;
+}
+
+export interface SourcePacketRecord {
+  packet_id: string;
+  workspace_id: string;
+  title: string;
+  summary?: string | null;
+  strict_mode: boolean;
+  evidence: unknown[];
+  allowed_facts: unknown[];
+  allowed_inferences: unknown[];
+  prohibited_claims: string[];
+  created_at: string;
+}
+
+export async function fetchSourcePackets(limit: number = 25): Promise<{ packets: SourcePacketSummary[]; count: number }> {
+  const res = await secureFetch(`${API}/api/source-packets?limit=${limit}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch source packets: ${res.status}`);
+  const data = await res.json();
+  const packets = Array.isArray(data?.packets) ? data.packets as SourcePacketSummary[] : [];
+  return {
+    packets,
+    count: typeof data?.count === "number" ? data.count : packets.length,
+  };
+}
+
+export async function createQuickSourcePacket(input: {
+  title: string;
+  facts: string[];
+  summary?: string;
+}): Promise<SourcePacketRecord> {
+  const res = await secureFetch(`${API}/api/source-packets/quick`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...input, strict_mode: true }),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const detail = payload?.detail ? `: ${typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail)}` : "";
+    throw new Error(`Failed to create source packet (${res.status})${detail}`);
+  }
   return res.json();
 }
 
@@ -131,19 +249,74 @@ export interface VisualRenderResponse {
   error_message?: string;
 }
 
+export interface VisualRenderPlan {
+  run_id: string;
+  policy_version: string;
+  visual_format: string;
+  renderer: "DETERMINISTIC" | "GENERATIVE";
+  final_content: string;
+  recommended_aspect_ratio: "16:9" | "1:1" | "4:5";
+  recommended_style: string;
+}
+
+const DETERMINISTIC_FORMATS = new Set<EditorialVisualFormat>([
+  "TECHNICAL_DIAGRAM",
+  "ARCHITECTURE_SCHEMATIC",
+  "PROCESS_FLOW",
+  "COMPARISON",
+  "ARTIFACT_BOARD",
+  "EDITORIAL_POSTER",
+]);
+
+export async function fetchVisualRenderPlan(runId: string): Promise<VisualRenderPlan> {
+  const res = await secureFetch(`${API}/api/visual-plans/${encodeURIComponent(runId)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Visual render plan failed: ${res.status}`);
+  return res.json();
+}
+
 export async function renderVisual(
   prompt: string,
-  aspect_ratio: string = "16:9",
-  style: string = "",
+  aspect_ratio: string = "4:5",
+  style: string = "technical_editorial",
   run_id?: string,
   idempotency_key?: string
 ): Promise<VisualRenderResponse> {
   const finalIdempotencyKey = idempotency_key || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const finalRunId = run_id || finalIdempotencyKey;
+  let deterministic_png_base64: string | undefined;
+  let deterministic_png_sha256: string | undefined;
+
+  // A real ContentRun always resolves its renderer from the server. The browser
+  // is only a deterministic rasterizer; it never decides whether a run should
+  // bypass or use the external image model.
+  if (run_id) {
+    const plan = await fetchVisualRenderPlan(finalRunId);
+    if (plan.renderer === "DETERMINISTIC") {
+      if (!DETERMINISTIC_FORMATS.has(plan.visual_format as EditorialVisualFormat)) {
+        throw new Error(`Unsupported deterministic visual format: ${plan.visual_format}`);
+      }
+      const raster = await rasterizeEditorialVisual(
+        plan.final_content,
+        plan.visual_format as EditorialVisualFormat,
+        aspect_ratio,
+      );
+      deterministic_png_base64 = raster.base64;
+      deterministic_png_sha256 = raster.sha256;
+    }
+  }
+
   const res = await secureFetch(`${API}/api/visual-renders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, aspect_ratio, style, run_id: finalRunId, idempotency_key: finalIdempotencyKey }),
+    body: JSON.stringify({
+      prompt,
+      aspect_ratio,
+      style,
+      run_id: finalRunId,
+      idempotency_key: finalIdempotencyKey,
+      deterministic_png_base64,
+      deterministic_png_sha256,
+    }),
   });
   if (!res.ok) throw new Error(`Render request failed: ${res.status}`);
   const result = await res.json() as VisualRenderResponse;

@@ -9,12 +9,17 @@ _db = None
 
 
 async def _ensure_indexes(db):
-    """Install persistence invariants before any publication worker can run."""
+    """Install persistence invariants before authoritative workers can run."""
     await db["content_runs"].create_index(
         "publication.dedupe_key",
         unique=True,
         sparse=True,
         name="publication_dedupe_key_unique",
+    )
+    await db["source_packets"].create_index(
+        [("workspace_id", 1), ("packet_id", 1)],
+        unique=True,
+        name="source_packet_workspace_packet_unique",
     )
 
 

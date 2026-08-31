@@ -44,6 +44,7 @@ class GenerationContext:
     requested_target_language: LanguageCode
     resolved_target_language: LanguageCode
     image_prompt_language: LanguageCode
+    workspace_id: str = "legacy-default"
     created_at: float = field(default_factory=time.time)
     audience: Optional[str] = None
     content_profile_id: Optional[str] = None
