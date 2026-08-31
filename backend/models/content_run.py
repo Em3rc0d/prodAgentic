@@ -5,6 +5,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from models.claim_extractor import ClaimExtractionOutput, ClaimExtractionReviewSnapshot
+from models.content_dyno import HumanEditorialReview
 from models.grounding import (
     FactualEnvelope,
     GroundingAssessment,
@@ -163,6 +164,7 @@ class ContentRun(BaseModel):
     grounding_assessment: Optional[GroundingAssessment] = None
     grounding_gate: Optional[GroundingGateResult] = None
     grounding_review: Optional[GroundingReviewSnapshot] = None
+    content_dyno_review: Optional[HumanEditorialReview] = None
     approval: Optional[ApprovalSnapshot] = None
     schedule: Optional[ScheduleSnapshot] = None
     publication: Optional[PublicationSnapshot] = None
