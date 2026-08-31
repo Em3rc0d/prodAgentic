@@ -1,0 +1,91 @@
+{
+  "dyno_version": "content-dyno-v1",
+  "purpose": "Five evidence-fed product cases for measuring final editorial wheel HP. These are run plans, not pre-scored outputs.",
+  "cases": [
+    {
+      "case_id": "hybrid_visual_architecture",
+      "topic": "Por qué prodAgentic dejó de pedirle a un generador de imágenes que dibuje diagramas técnicos",
+      "style": "educational",
+      "target_language": "es",
+      "source_assertions": [
+        "prodAgentic routes technical diagrams, architecture schematics, process flows, comparisons, artifact boards and editorial posters to a deterministic renderer.",
+        "Only illustration-class visuals are routed to the generative image provider.",
+        "The server owns the renderer decision; the browser may rasterize a deterministic SVG layout to PNG but cannot choose renderer authority.",
+        "The backend validates PNG signature, SHA-256, dimensions and aspect ratio before accepting the deterministic asset."
+      ],
+      "review_focus": [
+        "Does the post explain the architectural decision rather than merely list implementation details?",
+        "Does the visual communicate the same idea without generic AI imagery?",
+        "Would an engineer learn a reusable design principle from the piece?"
+      ]
+    },
+    {
+      "case_id": "evidence_provenance_lock",
+      "topic": "El bug de provenance que podía cambiar la evidencia entre Generate Ideas y Select Idea",
+      "style": "storytelling",
+      "target_language": "es",
+      "source_assertions": [
+        "Evidence-fed idea generation can use a selected immutable SourcePacket through a FactualEnvelope.",
+        "The SourcePacket used for idea generation is bound to the idea-selection cycle so a later Evidence Dock change does not silently replace the packet for the selected pipeline run.",
+        "If ideas were generated without evidence, attaching a packet later does not retroactively make those ideas evidence-fed.",
+        "Idea generation and the selected pipeline use the same FactualEnvelopeBuilder contract."
+      ],
+      "review_focus": [
+        "Does storytelling stay factual without inventing a personal incident?",
+        "Is the provenance failure mode understandable to a reader outside the codebase?",
+        "Does the conclusion expose a reusable engineering invariant?"
+      ]
+    },
+    {
+      "case_id": "grounding_authority_boundary",
+      "topic": "Un LLM no debería poder aprobar la verdad de su propia respuesta",
+      "style": "controversial",
+      "target_language": "es",
+      "source_assertions": [
+        "In prodAgentic, semantic model outputs are proposals and cannot assign authoritative GroundingStatus values.",
+        "GroundingAssessmentBuilder deterministically derives claim grounding state from validated claim and evidence relation proposals.",
+        "GroundingPolicy blocks contradicted or insufficiently supported factual claims.",
+        "Explicit human Grounding verification remains downstream authority before approval."
+      ],
+      "review_focus": [
+        "Is the strong position memorable without overstating what LLMs can or cannot do in general?",
+        "Does every factual implementation claim stay inside the supplied evidence?",
+        "Does the post produce profile curiosity rather than generic AI-safety commentary?"
+      ]
+    },
+    {
+      "case_id": "approval_bundle_human_authority",
+      "topic": "Por qué un botón de Publish no debería ser la autoridad de publicación",
+      "style": "educational",
+      "target_language": "es",
+      "source_assertions": [
+        "prodAgentic requires an immutable approval bundle before publication.",
+        "Approval binds the exact final content SHA-256 and, when applicable, the visual asset SHA-256.",
+        "Grounding provenance digests are frozen into approval so later content or evidence changes cannot reuse stale factual review.",
+        "AI agents do not receive publication authority; explicit human approval remains required."
+      ],
+      "review_focus": [
+        "Does the post turn approval immutability into an interesting product or architecture lesson?",
+        "Is the distinction between generation, verification and authority clear?",
+        "Does it avoid becoming documentation prose?"
+      ]
+    },
+    {
+      "case_id": "content_dyno_wheel_hp",
+      "topic": "CI verde son caballos al motor; publish-now quality son caballos a la rueda",
+      "style": "storytelling",
+      "target_language": "es",
+      "source_assertions": [
+        "prodAgentic keeps factual Trust and editorial Value as separate required properties rather than combining them into one compensating score.",
+        "The Value Engine persists angle selection and an advisory Attention Critic snapshot when those stages succeed.",
+        "The final product still requires human content review because internal model scores are not publication authority.",
+        "CONTENT-DYNO-01 treats missing evidence, missing profile, degraded value stages, required rewrites, incomplete Grounding and missing final visuals as observable drivetrain losses."
+      ],
+      "review_focus": [
+        "Does the automotive metaphor clarify the product-quality problem rather than dominate the post?",
+        "Can the reader distinguish internal quality sensors from final human publishability?",
+        "Would this piece be publishable without manual rewriting?"
+      ]
+    }
+  ]
+}
