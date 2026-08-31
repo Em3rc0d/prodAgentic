@@ -2,6 +2,7 @@ import { secureFetch } from "./auth";
 import { EditorialVisualFormat, rasterizeEditorialVisual } from "./editorial-visual";
 
 const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+export const ACTIVE_SOURCE_PACKET_STORAGE_KEY = "prodagentic.active_source_packet_id";
 
 export function resolveBackendAssetUrl(assetUrl?: string | null): string | null {
   if (!assetUrl) return null;
@@ -36,7 +37,13 @@ export function createPipelineStream(
 ): EventSource {
   const params = new URLSearchParams({ idea, topic, style, target_language, image_prompt_language });
   if (content_profile_id) params.set("content_profile_id", content_profile_id);
-  if (source_packet_id) params.set("source_packet_id", source_packet_id);
+
+  const sessionPacketId = !source_packet_id && typeof window !== "undefined"
+    ? window.sessionStorage.getItem(ACTIVE_SOURCE_PACKET_STORAGE_KEY) || undefined
+    : undefined;
+  const effectiveSourcePacketId = source_packet_id || sessionPacketId;
+  if (effectiveSourcePacketId) params.set("source_packet_id", effectiveSourcePacketId);
+
   return new EventSource(`${API}/api/pipeline/stream?${params}`, { withCredentials: true });
 }
 
