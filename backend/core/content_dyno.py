@@ -42,6 +42,12 @@ class ContentDynoAnalyzer:
         "publish_readiness": 0.85,
     }
 
+    HUMAN_REVIEW_BINDING_LOSSES = {
+        "HUMAN_EDITORIAL_REVIEW_RUN_MISMATCH",
+        "HUMAN_EDITORIAL_REVIEW_CONTENT_STALE",
+        "HUMAN_EDITORIAL_REVIEW_VISUAL_STALE",
+    }
+
     @staticmethod
     def _enum_value(value) -> str | None:
         if value is None:
@@ -394,6 +400,37 @@ class ContentDynoAnalyzer:
                 "The final publishability verdict must come from explicit human review.",
             )
         else:
+            current_content_sha256 = cls._sha256(run.final_content)
+            current_visual_sha256 = (
+                run.visual_render.asset_sha256 if run.visual_render is not None else None
+            )
+            if human_review.run_id != run.run_id:
+                add(
+                    "HUMAN_EDITORIAL_REVIEW_RUN_MISMATCH",
+                    "human_dyno",
+                    LossSeverity.HIGH,
+                    "Human editorial review belongs to a different ContentRun.",
+                )
+            if (
+                current_content_sha256 is None
+                or human_review.final_content_sha256 != current_content_sha256
+            ):
+                add(
+                    "HUMAN_EDITORIAL_REVIEW_CONTENT_STALE",
+                    "human_dyno",
+                    LossSeverity.HIGH,
+                    "Human editorial review is stale relative to the current final-content revision.",
+                )
+            if (
+                current_visual_sha256 is None
+                or human_review.visual_asset_sha256 != current_visual_sha256
+            ):
+                add(
+                    "HUMAN_EDITORIAL_REVIEW_VISUAL_STALE",
+                    "human_dyno",
+                    LossSeverity.HIGH,
+                    "Human editorial review is stale relative to the current final visual asset.",
+                )
             if human_review.verdict != EditorialVerdict.WOULD_PUBLISH_NOW:
                 add(
                     "NOT_WOULD_PUBLISH_NOW",
@@ -492,6 +529,10 @@ class ContentDynoAnalyzer:
         would_publish = sum(
             report.human_review is not None
             and report.human_review.verdict == EditorialVerdict.WOULD_PUBLISH_NOW
+            and not any(
+                loss.code in cls.HUMAN_REVIEW_BINDING_LOSSES
+                for loss in report.drivetrain_losses
+            )
             for report in reports
         )
         loss_frequency = Counter(
