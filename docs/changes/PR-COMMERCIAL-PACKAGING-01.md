@@ -6,20 +6,36 @@ Define the evidence boundary that turns the frozen **prodAgentic Developer Pack 
 
 This change closes the packaging contract only. It does **not** claim `PACKAGING_READY`, a completed Lemon Squeezy integration, a successful order, or customer delivery.
 
-## Known frozen delivery surface
+## Frozen customer-visible inventory
 
-The currently approved customer-visible inventory shape is frozen as:
+The approved Developer Pack v1.1 customer-visible inventory is frozen by identity as follows.
 
-- 4 systems;
-- 2 machine-readable contracts;
-- 2 transformations;
-- 1 playbook;
-- 1 checklist;
-- `QUICKSTART`;
-- `README`;
-- `LICENSE`.
+### Systems
 
-The exact approved source paths must be rebound from the frozen source inventory before builder implementation. They must not be guessed from the application repository.
+1. General Operating Contract
+2. Software Code Review System
+3. Technical Research / Decision System
+4. Bug Diagnosis System
+
+### Machine-readable contracts
+
+1. workflow JSON Schema
+2. Code Review Policy JSON
+
+### Transformations
+
+1. Code Review transformation
+2. Technical Decision transformation
+
+### Operator material
+
+- Adaptation Playbook
+- Workflow Static Review Checklist
+- `QUICKSTART`
+- `README`
+- `LICENSE`
+
+The exact approved filesystem paths and extensions must still be rebound from the frozen source inventory before builder implementation. They must not be guessed from the application repository or reconstructed from similarly named files.
 
 Internal commercial QA material such as `quality/COMMERCIAL_*` is evidence for the release process and is explicitly **not** part of the customer-deliverable archive.
 
@@ -175,11 +191,13 @@ A successful payment without an exact artifact binding is not a successful produ
 As of this contract:
 
 - repository product/release evidence remains separate from the commercial archive;
-- the Developer Pack v1.1 inventory **shape** is known and frozen;
+- the Developer Pack v1.1 customer-visible inventory is frozen by **count and canonical asset identity**;
 - customer-visible versus internal-QA boundary is known;
 - deterministic packaging and approval invariants are closed;
-- exact frozen source paths are **not recoverable from the current captured conversation snapshot** and therefore are not invented here;
-- builder implementation, two-build evidence, archive fingerprint, and `PACKAGING_READY` remain pending.
+- exact frozen filesystem paths/extensions are **not recoverable from the current captured conversation snapshot or available file context** and therefore are not invented here;
+- `SOURCE_INVENTORY_FROZEN` is closed;
+- `SOURCE_PATHS_BOUND` remains the next open gate;
+- builder implementation, two-build evidence, archive fingerprint, approval binding, and `PACKAGING_READY` remain pending.
 
 ## Next admissible change
 
