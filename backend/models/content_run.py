@@ -8,6 +8,7 @@ from models.claim_extractor import ClaimExtractionOutput, ClaimExtractionReviewS
 from models.grounding import (
     FactualEnvelope,
     GroundingAssessment,
+    GroundingEvaluationDraft,
     GroundingGateResult,
     GroundingReviewSnapshot,
     SourcePacket,
@@ -157,6 +158,7 @@ class ContentRun(BaseModel):
     memory_check: Optional[MemoryCheckSnapshot] = None
     claim_extraction: Optional[ClaimExtractionOutput] = None
     claim_extraction_review: Optional[ClaimExtractionReviewSnapshot] = None
+    grounding_match_draft: Optional[GroundingEvaluationDraft] = None
     source_packet: Optional[SourcePacket] = None
     grounding_assessment: Optional[GroundingAssessment] = None
     grounding_gate: Optional[GroundingGateResult] = None
