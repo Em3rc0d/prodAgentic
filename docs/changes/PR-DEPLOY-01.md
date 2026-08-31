@@ -72,10 +72,10 @@ PRODAGENTIC_COOKIE_SAMESITE=none
 
 ## Provider/version boundary
 
-At release preparation on 2026-08-22, LinkedIn's latest documented Marketing API version is `202607`. Set:
+At release preparation on 2026-08-31, LinkedIn's latest documented Marketing API version is `202608`. Set:
 
 ```text
-LINKEDIN_API_VERSION=202607
+LINKEDIN_API_VERSION=202608
 ```
 
 Re-check LinkedIn's supported version immediately before any later release if significant time has passed.

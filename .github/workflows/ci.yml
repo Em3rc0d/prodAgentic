@@ -153,7 +153,7 @@ jobs:
       LINKEDIN_CLIENT_ID: ui-cert-configured-client
       LINKEDIN_CLIENT_SECRET: ui-cert-configured-secret-no-external-call
       LINKEDIN_REDIRECT_URI: http://127.0.0.1:8000/api/integrations/linkedin/callback
-      LINKEDIN_API_VERSION: "202607"
+      LINKEDIN_API_VERSION: "202608"
       FRONTEND_URL: http://127.0.0.1:3000
       MONGO_URI: mongodb://127.0.0.1:27017/prodagentic_ui_cert
       MONGO_TEST_URI: mongodb://127.0.0.1:27017/prodagentic_ui_cert_test

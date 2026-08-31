@@ -14,7 +14,7 @@ def configure_required_oauth(monkeypatch, frontend_url: str | None):
         "PRODAGENTIC_LINKEDIN_TOKEN_KEY",
         "oauth-token-key-that-is-long-enough-for-production-tests",
     )
-    monkeypatch.setenv("LINKEDIN_API_VERSION", "202607")
+    monkeypatch.setenv("LINKEDIN_API_VERSION", "202608")
     if frontend_url is None:
         monkeypatch.delenv("FRONTEND_URL", raising=False)
     else:

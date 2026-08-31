@@ -65,7 +65,7 @@ def settings(token_key="oauth-token-key-that-is-long-enough-for-tests"):
         client_secret="client-secret",
         redirect_uri="http://localhost:8000/api/integrations/linkedin/callback",
         token_key=token_key,
-        api_version="202607",
+        api_version="202608",
         frontend_url="http://localhost:3000",
     )
 
@@ -128,7 +128,7 @@ async def test_oauth_state_is_session_bound_one_time_and_token_is_encrypted():
         config = await service.publisher_config()
         assert config.access_token == "linkedin-real-access-token"
         assert config.author_urn == "urn:li:person:member-123"
-        assert config.api_version == "202607"
+        assert config.api_version == "202608"
 
         with pytest.raises(LinkedInOAuthStateError, match="already used"):
             await service.complete_authorization("authorization-code", state, "session-1")
