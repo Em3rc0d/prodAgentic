@@ -54,6 +54,23 @@ def _authoritative_workspace_id(request: Request) -> str:
     return workspace_id
 
 
+async def _resolve_idea_source_packet(packet_id: str | None, request: Request):
+    if not packet_id:
+        return None
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="MongoDB required for evidence-aware idea generation")
+
+    packet = await SourcePacketRepository(db).get(
+        _authoritative_workspace_id(request),
+        packet_id,
+    )
+    if packet is None:
+        # Unknown and cross-workspace identifiers deliberately share one result.
+        raise HTTPException(status_code=404, detail="Source packet not found")
+    return packet
+
+
 async def _load_visual_direction(
     req: VisualRenderRequest,
     request: Request,
@@ -104,24 +121,49 @@ router = APIRouter(tags=["pipeline"])
 
 
 @router.post("/ideas")
-async def get_ideas(req: IdeasRequest, pipeline=Depends(get_ready_pipeline_service)):
+async def get_ideas(
+    req: IdeasRequest,
+    request: Request,
+    pipeline=Depends(get_ready_pipeline_service),
+):
     try:
+        source_packet = await _resolve_idea_source_packet(req.source_packet_id, request)
         profile_id, profile_snapshot = await _resolve_content_profile(req.content_profile_id)
+
         if profile_snapshot is None:
-            ideas = await pipeline.generate_ideas(req.topic, req.style, req.target_language.value)
+            if source_packet is None:
+                ideas = await pipeline.generate_ideas(req.topic, req.style, req.target_language.value)
+            else:
+                ideas = await pipeline.generate_ideas(
+                    req.topic,
+                    req.style,
+                    req.target_language.value,
+                    source_packet=source_packet,
+                )
         else:
-            ideas = await pipeline.generate_ideas(
-                req.topic,
-                req.style,
-                req.target_language.value,
-                profile_id,
-                profile_snapshot,
-            )
+            if source_packet is None:
+                ideas = await pipeline.generate_ideas(
+                    req.topic,
+                    req.style,
+                    req.target_language.value,
+                    profile_id,
+                    profile_snapshot,
+                )
+            else:
+                ideas = await pipeline.generate_ideas(
+                    req.topic,
+                    req.style,
+                    req.target_language.value,
+                    profile_id,
+                    profile_snapshot,
+                    source_packet=source_packet,
+                )
         return {
             "ideas": ideas,
             "topic": req.topic,
             "style": req.style,
             "content_profile_id": profile_id,
+            "source_packet_id": source_packet.packet_id if source_packet else None,
         }
     except GenerationIdeasFailed as e:
         print(f"[ERROR] GenerationIdeasFailed in /api/ideas: {e}")
