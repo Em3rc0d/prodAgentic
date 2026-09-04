@@ -1,0 +1,43 @@
+:root {
+  --pa-canvas: #0b0d10;
+  --pa-surface-1: #11151a;
+  --pa-surface-2: #171c22;
+  --pa-surface-3: #1d242c;
+  --pa-line: #29323d;
+  --pa-line-subtle: #1d252e;
+  --pa-text-1: #f4f7fa;
+  --pa-text-2: #a5afbc;
+  --pa-text-3: #727e8c;
+  --pa-signal: #d8ff45;
+  --pa-on-signal: #111407;
+  --pa-info: #6aaeff;
+  --pa-success: #66d19e;
+  --pa-warning: #ffb45c;
+  --pa-danger: #ff7070;
+
+  --pa-space-1: 4px;
+  --pa-space-2: 8px;
+  --pa-space-3: 12px;
+  --pa-space-4: 16px;
+  --pa-space-5: 20px;
+  --pa-space-6: 24px;
+  --pa-space-8: 32px;
+  --pa-space-10: 40px;
+  --pa-space-12: 48px;
+
+  --pa-radius-control: 8px;
+  --pa-radius-card: 12px;
+  --pa-radius-panel: 16px;
+  --pa-radius-pill: 999px;
+  --pa-motion-micro: 120ms;
+  --pa-motion-standard: 180ms;
+  --pa-motion-panel: 260ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --pa-motion-micro: 0ms;
+    --pa-motion-standard: 0ms;
+    --pa-motion-panel: 0ms;
+  }
+}

@@ -191,6 +191,14 @@ async def security_boundary(request: Request, call_next):
             if not supplied_csrf or not hmac.compare_digest(supplied_csrf, session["csrf"]):
                 return apply_security_headers(JSONResponse({"detail": "Invalid CSRF token"}, status_code=403), path)
 
+        from application.tenancy.context import tenant_context_for_actor
+        request.state.tenant_context = tenant_context_for_actor(session["sub"])
+    elif settings is not None and not settings.enabled and not is_public:
+        # Auth-disabled development/test mode still receives server-derived
+        # bootstrap authority. Request headers/query parameters are ignored.
+        from application.tenancy.context import tenant_context_for_actor
+        request.state.tenant_context = tenant_context_for_actor(settings.admin_user)
+
     return apply_security_headers(await call_next(request), path)
 
 

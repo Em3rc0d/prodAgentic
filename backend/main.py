@@ -14,6 +14,7 @@ from core.model_registry import validate_available_models, get_profile_readiness
 from core.scheduler import scheduler_loop
 from core.auth import AuthSettings, SessionManager, security_boundary, router as auth_router
 from core.production import validate_production_environment
+from core.feature_flags import FeatureFlagRegistry
 from db.mongo import connect_db, close_db, database_ready
 from routes.pipeline import router as pipeline_router
 from routes.posts import router as posts_router
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI):
     auth_settings = AuthSettings.from_env()
     app.state.auth_settings = auth_settings
     app.state.session_manager = SessionManager(auth_settings)
+    app.state.feature_flags = FeatureFlagRegistry.from_env()
     await connect_db()
     container = ApplicationContainer()
     container.startup()
