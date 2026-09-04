@@ -125,16 +125,27 @@ class ProfileService:
             raise ProfileConflict("Profile version changed; reload before accepting another update")
         proposal = self._verify(setup, expected_digest)
         next_version = expected_current_version + 1
-        updated = Profile(
-            **existing.model_dump(exclude={"current_version", "name", "updated_at"}),
-            current_version=next_version,
-            name=setup.name,
-            updated_at=utc_now(),
-        )
         version = self._version(
             profile_id=profile_id, tenant_id=tenant_id, version=next_version,
             setup=setup, proposal=proposal,
         )
+        updated = Profile(
+            **existing.model_dump(exclude={"current_version", "name", "updated_at"}),
+            current_version=next_version,
+            name=setup.name,
+            updated_at=version.accepted_at,
+        )
         if not await self.repository.append_version(updated, version, expected_current_version):
             raise ProfileConflict("Profile version changed; reload before accepting another update")
-        return AcceptedProfile(updated, version)
+
+        # A restart retry reconstructs timestamps locally, so return the immutable
+        # version that actually won the unique version key rather than the retry's
+        # transient candidate.
+        committed = await self.repository.get_version(profile_id, next_version)
+        if committed is None:
+            raise RuntimeError("Profile version commit succeeded without immutable evidence")
+        committed_profile = updated.model_copy(update={
+            "name": committed.identity.name,
+            "updated_at": committed.accepted_at,
+        })
+        return AcceptedProfile(committed_profile, committed)

@@ -15,6 +15,15 @@ def _clean(document: dict | None) -> dict | None:
     return value
 
 
+def _same_acceptance_intent(left: ProfileVersion, right: ProfileVersion) -> bool:
+    """Compare retry intent without server-generated acceptance timestamps."""
+    excluded = {"digest", "accepted_at", "created_at"}
+    return (
+        left.model_dump(mode="json", exclude=excluded)
+        == right.model_dump(mode="json", exclude=excluded)
+    )
+
+
 class MongoProfileRepository:
     def __init__(self, db: Any, context: TenantContext):
         self.profiles = TenantScopedMongoRepository(db, "profiles", context)
@@ -81,7 +90,7 @@ class MongoProfileRepository:
             if current is not None and current.current_version == expected_version:
                 await self._advance_pointer_from_version(persisted, expected_version)
 
-            if persisted.digest != version.digest:
+            if not _same_acceptance_intent(persisted, version):
                 return False
             current = await self.get_profile(profile.profile_id)
             return current is not None and current.current_version >= version.version
