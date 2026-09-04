@@ -6,7 +6,11 @@ Branch: `mk1/s1-profile-v2`
 
 Started from: `main@88a615c519b5918944256afd678b67139ed8f0bd`
 
-Implementation commit: `47b4d20e5e43f18516b7c25a604165542317d291`
+Original implementation commit: `47b4d20e5e43f18516b7c25a604165542317d291`
+
+Certification hardening includes interrupted version-pointer recovery and an
+explicit browser-readiness harness; the immutable certification receipt records
+the final reviewed SHA/check evidence.
 
 ## Objective
 
@@ -51,9 +55,30 @@ No accepted contract or ADR change is currently required.
 - updates require `expected_current_version`; stale updates fail with conflict.
 - inference is a proposal with evidence/confidence, never hidden authority.
 - acceptance recomputes and verifies the proposal digest server-side.
-- examples are represented in snapshots by type, digest and bounded metadata, not raw secrets.
-- recursive secret-field rejection covers setup, bridge and persisted snapshots.
+- examples are represented in snapshots by type, digest and bounded metadata, not raw example text.
+- ProfileSetup/ProfileVersion use explicit allowlisted schemas with unknown fields forbidden; the MK0 bridge is also allowlisted.
+- no generic recursive secret-name scanner is claimed by S1; OAuth/platform credential fields are structurally outside Profile snapshots.
 - connections/OAuth material remain separate tenant-owned resources.
+
+## Version-pointer commit and recovery
+
+A Profile update has two durable pieces: immutable `ProfileVersion(vN+1)` and the
+mutable `Profile.current_version` pointer. S1 deliberately inserts the immutable
+version first. If a process dies after that insert but before the compare-and-set
+pointer update, the inserted version is treated as durable accepted intent.
+
+On retry:
+
+1. duplicate `(tenant_id, profile_id, version)` is loaded, not deleted;
+2. if the Profile still points to `vN`, the pointer is advanced from the persisted
+   immutable version;
+3. an exact-digest retry succeeds idempotently;
+4. a competing/different retry receives conflict only after the already accepted
+   version is recovered;
+5. immutable version evidence is never deleted as race compensation.
+
+This makes restart recovery explicit without requiring Mongo transactions or
+pretending the two writes are physically atomic.
 
 ## Migration behavior
 
@@ -84,10 +109,11 @@ profiles and never imports token/credential/secret fields.
 ## Failure paths
 
 - disabled feature returns a bounded not-found response;
-- stale version update returns conflict and does not create/advance authority;
+- stale version update returns conflict and does not overwrite accepted authority;
 - proposal digest mismatch fails acceptance;
-- invalid/secret-shaped input fails before persistence;
-- partial version/pointer write is compensated before returning failure;
+- unknown/disallowed schema fields fail before persistence;
+- an interrupted `ProfileVersion -> current_version` update is recovered from immutable version evidence on retry;
+- a competing retry cannot delete or replace the already inserted next version;
 - malformed MK0 records are reported and skipped/fail verification rather than guessed.
 
 ## Observability
@@ -105,14 +131,14 @@ when independently justified.
 
 ## Required certification
 
-- domain/contract/hash and secret-rejection tests;
+- domain/contract/hash and schema-boundary secret-isolation tests;
 - proposal determinism and explicit-acceptance tests;
-- immutable history and stale-update tests;
+- immutable history, stale-update and interrupted-write recovery tests;
 - cross-tenant API/repository matrix;
 - bridge allowlist/idempotency/real-Mongo tests;
 - MK0 full regression;
 - frontend unit, lint and production build;
-- desktop/mobile quick-setup browser certification;
+- desktop/mobile quick-setup browser certification using explicit UI readiness;
 - build/certification records with immutable CI evidence.
 
 ## Known limitations
@@ -121,3 +147,4 @@ when independently justified.
 - imported examples are text/bio only; asset/link ingestion adapters remain later capabilities.
 - S1 does not rebase existing Batches because MK1 Batch authority begins in S2.
 - OAuth connection selection is editorial preference only; actual credentials remain outside Profile.
+- S1 does not claim semantic detection of secret-like prose inside an otherwise allowed natural-language field; its enforceable boundary is schema allowlisting, credential separation, and non-persistence of raw style examples.
