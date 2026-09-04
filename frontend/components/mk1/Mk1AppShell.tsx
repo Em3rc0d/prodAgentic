@@ -42,7 +42,7 @@ export function Mk1AppShell({ children }: { children: ReactNode }) {
         </nav>
         <div className={styles.health}><span aria-hidden="true" />System ready</div>
       </aside>
-      <main className={styles.content}>{children}</main>
+      <div className={styles.content}>{children}</div>
     </div>
   );
 }
