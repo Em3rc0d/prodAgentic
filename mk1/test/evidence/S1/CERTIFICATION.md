@@ -1,6 +1,6 @@
 # S1 Certification — Profile V2
 
-Certification state: **HARDENED CANDIDATE — AWAITING EXACT-SHA CI**
+Certification state: **CERTIFIED — MERGE APPROVED**
 
 Slice: `S1`
 
@@ -21,16 +21,44 @@ Original implementation commit: `47b4d20e5e43f18516b7c25a604165542317d291`
 
 | Criterion | Evidence | Candidate result |
 |---|---|---|
-| quick setup works without agent/model configuration | Jest wizard flow + production build + Playwright scenario | LOCAL PASS / EXACT-SHA CI REQUIRED |
+| quick setup works without agent/model configuration | Jest wizard flow + production build + Playwright scenario | PASS |
 | examples produce an evidenced inference proposal | deterministic analyzer fixtures; raw examples excluded from response/snapshot | PASS |
 | acceptance is explicit and digest-bound | separate propose/accept API calls + proposal/setup hash tests | PASS |
 | accepted Profile creates immutable ProfileVersion | frozen schema + canonical digest + repository tests | PASS |
-| update creates a new version without rewriting history | optimistic concurrency/history test + real-Mongo scenario | PASS ON PRIOR CI; HARDENED RETEST REQUIRED |
-| interrupted version-pointer update recovers after restart | real-Mongo simulated process death + same/different retry assertions | NEW GATE / EXACT-SHA CI REQUIRED |
-| MK0 bridge is allowlisted and idempotent | unit migration + real-Mongo two-pass test | PASS ON PRIOR CI; RETEST REQUIRED |
-| tenant isolation remains structural | S0 scoped repository + tenant A/B real-Mongo test | PASS ON PRIOR CI; RETEST REQUIRED |
+| update creates a new version without rewriting history | optimistic concurrency/history test + real-Mongo scenario | PASS |
+| interrupted version-pointer update recovers after restart | real-Mongo simulated process death + same/different retry assertions | PASS |
+| MK0 bridge is allowlisted and idempotent | unit migration + real-Mongo two-pass test | PASS |
+| tenant isolation remains structural | S0 scoped repository + tenant A/B real-Mongo test | PASS |
 | OAuth/secret material does not enter snapshots | extra-forbid allowlisted contracts, credential separation, allowlist bridge, raw-example non-persistence | PASS |
-| MK0 runtime remains green | full backend/frontend regression | PASS ON PRIOR CI; RETEST REQUIRED |
+| MK0 runtime remains green | full backend/frontend regression | PASS |
+
+## Final certification evidence
+
+Certified implementation candidate: `b7b821691da6fe8375109ab00e6eb08c4858e5b4`
+
+Canonical CI: #689 (run `33928753075`)
+
+```text
+backend-test: PASS
+  pytest: PASS, including real-Mongo restart/recovery
+  production backend image build/smoke: PASS
+frontend-test: PASS
+  lint, Jest, API-origin gate and production build: PASS
+UI-01-CERT browser: PASS
+  10 desktop/mobile product frames + S1 proposal/acceptance: PASS
+```
+
+Browser evidence artifact: `ui-01-cert-evidence`, artifact ID
+`9957848586`, SHA-256
+`8b135831adbd8f9d8d91a6b84f7116b409bfff33fd14084fc5a4df59da754695`.
+
+Final review found no ProfileVersion mutation, tenant-scope bypass, credential
+persistence path, provenance overwrite, or recovery path that can replace/delete
+the durable winning version. The accepted retry comparison excludes only
+server-generated acceptance timestamps; the persisted immutable version remains
+the response and evidence authority. The MK1 shell preserves the frozen primary
+information architecture, uses one main landmark per page, and does not prefetch
+unimplemented future routes.
 
 ## Prior CI evidence — not sufficient for certification
 
@@ -116,15 +144,7 @@ Persisted Profile V2 evidence may remain; deletion is not required for rollback.
 
 ## Certification decision
 
-Do **not** mark S1 certified or merge until a single immutable hardened head has:
-
-1. backend CI green, including real-Mongo bridge/history/isolation and the new
-   interrupted-write recovery scenario;
-2. frontend CI green;
-3. desktop/mobile browser certification green with S1 flags enabled;
-4. manual review finding no ProfileVersion mutation, tenant bypass, secret path,
-   provenance overwrite, or unsafe recovery behavior;
-5. this record updated with exact commit SHA and immutable CI/check evidence.
-
-Only after those conditions pass may S1 receive `CERTIFIED — MERGE APPROVED` and
-only then may execution advance to S2.
+S1 Profile V2 is **CERTIFIED — MERGE APPROVED** for the candidate and immutable
+evidence above. PR #36 may be merged after the certification-receipt commit itself
+passes the unchanged canonical CI. S2 remains unauthorized until that merge is
+complete.
