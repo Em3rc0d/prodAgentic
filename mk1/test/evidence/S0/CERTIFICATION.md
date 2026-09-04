@@ -1,87 +1,146 @@
 # S0 Certification — Foundation + Bootstrap Tenant
 
-Certification state: **CANDIDATE — AWAITING CI/REVIEW**
+Certification state: **CERTIFIED — MERGE APPROVED**
 
 Slice: `S0`
 
 Branch: `mk1/s0-foundation-bootstrap-tenant`
 
-Code commit: `69204e331816a6cdf6868946a6ced645b7098095`
+Reviewed code head: `74056ec8930aecd61ad771da94076046dc95a9c8`
+
+Canonical CI: run `33892749948` / CI `#677`
 
 ## Authority versions
 
 - Design Freeze merge: `2211ffe5123fbf2d23d6b88ba3cd0257f569b5d1`
-- Execution directive base: `f721c1d1925838b691a443af739d80f7faad7c99`
-- ADR-0001: accepted 2026-09-04
-- ADR-0003: accepted 2026-09-04
+- Build-entry / Work directive baseline: `f721c1d1925838b691a443af739d80f7faad7c99`
+- ADR-0001: modular monolith, accepted 2026-09-04
+- ADR-0003: tenant scope, accepted 2026-09-04
 - Migration: `mk1_s0_bootstrap_tenant_v1`
 
 ## Exit-criterion matrix
 
-| Criterion | Evidence | Candidate result |
+| Criterion | Evidence | Result |
 |---|---|---|
 | new MK1 business documents carry `tenant_id` | `Tenant` schema + scoped insert tests | PASS |
-| new repository access requires tenant scope | constructor requires `TenantContext`; query assertions | PASS |
-| client cannot choose tenant authority | middleware/header-negative test | PASS |
-| migration is idempotent | two-pass unit + real-Mongo CI test | LOCAL PASS / CI PENDING |
-| cross-tenant access fails | read/write/update negative matrix + real-Mongo isolation | LOCAL PASS / CI PENDING |
-| MK0 remains green | focused auth/index regression + full CI | FOCUSED PASS / FULL CI PENDING |
-| app-shell/token foundation exists | Jest IA/token contract + Next build | PASS |
+| new MK1 repository access requires tenant scope | repository constructor requires immutable `TenantContext`; query assertions | PASS |
+| client cannot choose tenant authority | auth middleware derives context from trusted actor; hostile tenant header ignored | PASS |
+| migration is additive/idempotent | two-pass unit fixture + real-Mongo CI integration test | PASS |
+| invalid legacy scope fails closed | null/empty-scope unit regression + real-Mongo null-scope regression | PASS |
+| cross-tenant reads/writes/updates fail | negative matrix + real-Mongo isolation fixture | PASS |
+| tenant authority cannot be renamed/mutated | `$unset`, replacement, cross-tenant and `$rename -> tenant_id.*` tests | PASS |
+| MK0 runtime remains green | complete backend/frontend/browser CI on reviewed head | PASS |
+| app-shell/token foundation exists without authority transfer | Jest/token contract + production build; shell flag off by default | PASS |
 
-## Local evidence
+## Canonical CI evidence
 
-Environment: Python 3.12 local sandbox for focused tests; Next.js 16.3.3 / Node
-runtime supplied by workspace. Canonical CI uses Python 3.11 and Mongo 7.
+CI run `33892749948` executed against exact head:
 
 ```text
-Python compile: PASS
-Full backend regression: 119 passed
-Mongo-only integration gates locally: 3 skipped (MONGO_TEST_URI unavailable)
-Frontend lint: PASS
-Frontend Jest: 8 suites, 26 tests passed
-Frontend production build: PASS
-git diff --check: PASS
+74056ec8930aecd61ad771da94076046dc95a9c8
 ```
 
-The full backend suite passed after removing the workspace-injected network proxy
-variables so provider-construction tests matched CI semantics. The sandbox has no
-Mongo process; the repository CI job supplies Mongo and the canonical Python
-version, so its result remains required before this record becomes `CERTIFIED`.
+Results:
+
+```text
+backend-test             PASS
+  dependency audit       PASS
+  smoke import           PASS
+  compile                PASS
+  full backend tests     PASS
+  real Mongo S0 gates    PASS (part of backend test suite)
+  production image build PASS
+  production image smoke PASS
+
+frontend-test            PASS
+  dependency audit       PASS
+  lint                   PASS
+  Jest                   PASS
+  API-origin gate        PASS
+  production build       PASS
+
+UI-01-CERT browser       PASS
+  production backend     PASS
+  production frontend    PASS
+  desktop/mobile browser PASS
+  evidence upload        PASS
+```
+
+The browser job completed successfully at `2026-09-04T16:05:52Z`.
+
+## Manual tenant-boundary review
+
+A dedicated multitenant review was performed after the first green candidate rather than treating CI as sufficient.
+
+Two edge cases were discovered and resolved before certification:
+
+1. **Invalid existing tenant scope could pass migration verification.** The original migration only counted missing `tenant_id`; documents with `tenant_id: null` or `tenant_id: ""` could survive while the report said verified. The report now carries `invalid_after_migration`, and verification requires both missing and invalid counts to be zero. Existing malformed explicit assignments are preserved for operator review rather than silently reassigned.
+2. **Mongo `$rename` destination subpaths could target tenant authority.** The scoped repository blocked `tenant_id` mutation and exact rename-to-`tenant_id`, but did not explicitly reject a destination such as `tenant_id.shadow`. It now rejects rename destinations equal to `tenant_id` or under `tenant_id.*`.
+
+Regression coverage was added for both findings. See `TENANT_BOUNDARY_REVIEW.md`.
 
 ## Security evidence
 
-- arbitrary `X-Tenant-ID` does not affect resolved context;
-- cross-tenant criteria and inserts fail before persistence;
-- tenant removal/replacement updates fail;
-- explicit existing tenant assignments are not overwritten by migration;
-- master feature gate forces child authority paths off;
-- no secrets are introduced into Tenant, context, UI tokens or logs.
+- `TenantContext` is server-derived from verified session identity or trusted auth-disabled development identity;
+- headers/query/body do not provide tenant authority;
+- repository queries are structurally AND-scoped to the context tenant;
+- cross-tenant criteria/documents fail before Mongo writes;
+- tenant removal, replacement and rename mutation fail;
+- malformed legacy scope causes migration verification failure;
+- existing non-empty tenant assignments are not overwritten;
+- master MK1 feature gate forces child authority paths off when disabled;
+- no connection secrets/tokens are introduced into tenant/domain snapshots or logs.
+
+## Persistence / migration evidence
+
+The migration:
+
+1. resolves one stable server-side bootstrap tenant;
+2. upserts the Tenant with `$setOnInsert`;
+3. adds `tenant_id` only where the field is absent on mapped MK0 collections;
+4. preserves existing assignments;
+5. verifies missing and invalid scope counts;
+6. is safe to re-run and produces zero modifications on an already-mapped valid dataset.
+
+Mongo CI proves the forward migration and tenant-isolation behavior against a real Mongo service.
 
 ## Observability evidence
 
-- migration report contains migration ID, tenant ID, per-collection matched,
-  modified and missing counts, completion time and verification verdict;
-- startup emits a bounded safe summary;
-- future MK1 layers receive tenant/actor correlation through `TenantContext`.
+The migration report exposes:
 
-## Recovery and rollback
+- migration ID;
+- tenant ID;
+- per-collection matched counts;
+- modified counts;
+- missing counts;
+- invalid counts;
+- verification verdict;
+- completion time.
 
-The migration is additive and idempotent. Disable `MK1_ENABLED` and the optional
-frontend shell flag for immediate authority rollback. Keep tenant metadata unless
-a verified database snapshot restore is explicitly required.
+Startup emits a bounded non-secret summary, and `TenantContext` carries tenant/actor correlation for subsequent MK1 application layers.
+
+## Recovery / rollback
+
+Immediate authority rollback:
+
+```text
+MK1_ENABLED=false
+NEXT_PUBLIC_MK1_SHELL unset/false
+```
+
+The migration is additive. Added valid tenant metadata and indexes should normally remain because removing isolation metadata increases risk and does not improve MK0 compatibility. Exact physical rollback requires an independently justified database snapshot restore.
 
 ## Known limitations
 
-- no local real-Mongo evidence in this workspace;
-- no visible MK1 screen is activated, so visual snapshots are deferred to the
-  first slice that activates the shell and routes;
-- reviewer acceptance and PR checks remain pending.
+- S0 establishes one bootstrap Tenant; team membership/RBAC is not S0 scope.
+- MK0 routes remain legacy authority until their owning MK1 slices transfer them.
+- the MK1 shell remains inactive by default; later user-facing slices must certify their visible routes/states.
+- production backup/restore and production cutover are separate release gates.
+
+These limitations do not violate S0 exit criteria.
 
 ## Certification decision
 
-Do not merge or mark S0 certified until:
+S0 satisfies its frozen exit criteria, the reviewed tenant boundary has no known blocking bypass, and CI #677 is green on the reviewed code head.
 
-1. GitHub backend, frontend and browser-required checks complete successfully;
-2. the real-Mongo S0 integration test passes in CI;
-3. PR review confirms no tenant bypass in the new MK1 repository boundary;
-4. this record is updated with immutable commit/check evidence.
+**Verdict: CERTIFIED — MERGE APPROVED.**

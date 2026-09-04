@@ -1,17 +1,20 @@
 # S0 Build Record — Foundation + Bootstrap Tenant
 
-Status: **IMPLEMENTED — CERTIFICATION IN PROGRESS**
+Status: **CERTIFIED — MERGE READY**
 
 Branch: `mk1/s0-foundation-bootstrap-tenant`
 
 Started from: `main@f721c1d1925838b691a443af739d80f7faad7c99`
 
-Implementation commit: `69204e331816a6cdf6868946a6ced645b7098095`
+Initial implementation commit: `69204e331816a6cdf6868946a6ced645b7098095`
+
+Reviewed/hardened code head: `74056ec8930aecd61ad771da94076046dc95a9c8`
+
+Canonical CI for reviewed code: `#677` / run `33892749948` — PASS
 
 ## Objective
 
-Install the first MK1 authority boundary without changing MK0 content-generation,
-approval, scheduling or publication semantics:
+Install the first MK1 authority boundary without changing MK0 content-generation, approval, scheduling or publication semantics:
 
 ```text
 authenticated server identity
@@ -39,31 +42,31 @@ No accepted contract or ADR was changed by this slice.
 
 | Area | Observed MK0 behavior | S0 treatment |
 |---|---|---|
-| `backend/core/auth.py` | signed single-admin session + CSRF boundary | preserve; attach server-derived `TenantContext` after authentication |
-| `backend/core/context.py` | generation context has no tenant authority | preserve; MK1 tenant context is a separate domain type |
+| `backend/core/auth.py` | signed single-admin session + CSRF | preserve; attach server-derived `TenantContext` after authentication |
+| `backend/core/context.py` | generation context has no tenant authority | preserve; MK1 tenant context remains separate |
 | `backend/core/container.py` | provider/pipeline composition root | preserve |
-| `backend/db/mongo.py` | Mongo connection + legacy publication index | add separate S0 indexes and bootstrap migration after legacy index setup |
-| `backend/db/content_runs.py` | direct MK0 `content_runs` persistence | preserve untouched; do not pretend it is an MK1 repository |
-| `backend/models/` | MK0 ContentProfile/ContentRun/Post models | preserve historical semantics |
-| `backend/routes/` | MK0 routes directly query Mongo | preserve until their authority moves in later slices |
-| `frontend/app/` | MK0 Create/Library/Profile/Publish/Schedule IA | preserve as default UI |
-| `frontend/lib/api.ts`, `auth.ts` | MK0 API/session clients | preserve untouched |
-| `.github/workflows/ci.yml` | Python 3.11 + Mongo service + frontend gates | reuse; real Mongo S0 gate added to existing integration suite |
+| `backend/db/mongo.py` | Mongo connection + legacy indexes | add S0 tenant indexes and bootstrap verification after legacy setup |
+| `backend/db/content_runs.py` | direct MK0 ContentRun persistence | preserve untouched; never label it an MK1 repository |
+| `backend/models/` | MK0 models | preserve historical semantics |
+| `backend/routes/` | legacy direct Mongo paths | preserve until their owning slices transfer authority |
+| `frontend/app/` | MK0 IA | preserve as default UI |
+| `frontend/lib/api.ts`, `auth.ts` | MK0 clients | preserve |
+| `.github/workflows/ci.yml` | Python/Mongo/frontend/browser gates | reuse for real persistence and compatibility evidence |
 
-## New modules
+## New S0 boundaries
 
 ```text
 backend/domain/tenants/
-  models.py                  Tenant, TenantStatus, TenantContext
-  ports.py                   TenantRepositoryPort
+  models.py
+  ports.py
 
 backend/application/tenancy/
-  context.py                 server-side bootstrap resolution/dependency
-  bootstrap.py               idempotent migration + verification report
+  context.py
+  bootstrap.py
 
 backend/infrastructure/mongo/
-  tenants.py                 MongoTenantRepository
-  scoped_repository.py       mandatory-scope base adapter for new MK1 repos
+  tenants.py
+  scoped_repository.py
 
 backend/core/feature_flags.py
 backend/scripts/migrate_mk1_bootstrap_tenant.py
@@ -74,20 +77,19 @@ frontend/components/mk1/mk1-app-shell.module.css
 frontend/lib/mk1-feature-flags.ts
 ```
 
-The new backend directories are the first incremental modular-monolith
-boundaries. No mechanical move of MK0 code was performed.
+This is incremental modular-monolith convergence; S0 did not mechanically reorganize MK0.
 
-## Contracts
+## Contracts implemented
 
 ### Tenant
 
-Every Tenant document has:
+Every Tenant carries:
 
 ```text
 tenant_id, name, status, created_at, updated_at
 ```
 
-The Pydantic model rejects extra fields at the domain boundary.
+The domain model rejects extra fields.
 
 ### TenantContext
 
@@ -97,112 +99,111 @@ actor_id
 actor_type = operator | worker | service
 ```
 
-It is immutable and cannot contain blank authority. HTTP middleware derives it
-from verified session subject or the trusted auth-disabled development actor.
-Headers, query parameters and bodies are not consulted.
+It is immutable and cannot contain blank authority. HTTP authority is derived from trusted server identity, never client tenant parameters.
 
 ### Tenant-scoped repository
 
-Construction requires a `TenantContext`. Reads always add the context tenant.
-Inserts add/verify `tenant_id`. Cross-tenant criteria or documents fail before
-Mongo is called. Update operators cannot unset, rename or replace tenant scope;
-replacement updates are prohibited.
+Construction requires a `TenantContext`.
 
-Explicit migration/admin tooling does not use this adapter and remains isolated
-under `application/tenancy/bootstrap.py`.
+- reads always add current tenant scope;
+- inserts add/verify current tenant;
+- conflicting tenant criteria/documents fail before persistence;
+- replacement updates are prohibited;
+- tenant root/nested paths cannot be changed/unset/renamed into.
+
+Migration/admin tooling is deliberately separate from normal business repositories.
 
 ## Migration behavior
 
 Migration ID: `mk1_s0_bootstrap_tenant_v1`.
 
-1. Resolve the tenant from server configuration.
-2. Upsert exactly one Tenant using `$setOnInsert`.
-3. Add `tenant_id` only to MK0 records where it is absent in:
-   `content_profiles`, `content_runs`, `posts`, `linkedin_connections`.
-4. Never overwrite a pre-existing tenant assignment.
-5. Verify that no document in the mapped collections remains without scope.
+1. Resolve stable tenant identity from server configuration.
+2. Upsert one Tenant through `$setOnInsert`.
+3. Add `tenant_id` only where absent in `content_profiles`, `content_runs`, `posts`, `linkedin_connections`.
+4. Preserve existing non-empty tenant assignments.
+5. Count both missing and explicit invalid (`null` / empty) scope.
+6. Verification fails closed unless both counts are zero.
+7. Re-running a valid migration produces zero modifications.
 
-Startup runs this operation after Mongo index creation. A standalone run is:
+Standalone verification:
 
 ```bash
 cd backend
 python -m scripts.migrate_mk1_bootstrap_tenant
 ```
 
-The command emits counts and a `verified` result. Re-running it is expected to
-report zero modifications.
+## Review hardening
+
+The required manual tenant-boundary review found and fixed two defects before certification:
+
+1. malformed existing null/empty tenant scope could previously escape the missing-field verification;
+2. `$rename` could target a nested `tenant_id.*` destination.
+
+Both were fixed at `74056ec8930aecd61ad771da94076046dc95a9c8` with regression coverage. See `mk1/test/evidence/S0/TENANT_BOUNDARY_REVIEW.md`.
 
 ## Feature flags
 
-Backend flags are centrally parsed by `FeatureFlagRegistry`. `MK1_ENABLED=false`
-forces all child flags off even if one is accidentally enabled. All defaults are
-off, so S0 does not transfer content authority.
+`FeatureFlagRegistry` parses all MK1 backend flags. `MK1_ENABLED=false` forces all child flags off. Defaults remain off, so S0 transfers no content-generation/publication authority.
 
-The frontend shell scaffold uses `NEXT_PUBLIC_MK1_SHELL=true` only for controlled
-preview/development. It remains off by default until dependent MK1 routes exist.
+`NEXT_PUBLIC_MK1_SHELL=true` is a controlled preview switch only; the shell remains inactive by default.
 
 ## Application-shell foundation
 
-The frozen Precision Telemetry colors, spacing, radii and motion tokens now exist
-under `--pa-*`, including reduced-motion overrides. `Mk1AppShell` encodes the
-frozen primary IA and responsive rail/bottom-navigation behavior. It is not the
-final screen implementation and is not activated in the normal MK0 build.
+Precision Telemetry tokens now exist under `--pa-*`, including reduced-motion handling. `Mk1AppShell` establishes the target navigation/responsive shell boundary without replacing active MK0 user workflows in S0.
 
 ## Observability
 
-Bootstrap migration returns per-collection matched/modified/missing counts and a
-verification verdict. Startup logs only the non-secret tenant ID and total
-modified count. Tenant/actor identifiers are available to later MK1 application
-and audit layers through `TenantContext`.
+Bootstrap reports migration ID, tenant ID, matched/modified/missing/invalid counts, completion time and verification verdict. Startup emits a safe bounded summary. Tenant/actor IDs are carried by `TenantContext` for future audit/correlation.
 
 ## Failure paths
 
-- invalid explicit bootstrap UUID: startup fails the Mongo-ready path;
-- blank deployment key: startup fails the Mongo-ready path;
-- Mongo/index/migration failure: database authority remains unavailable rather
-  than presenting a partially migrated ready database;
-- missing request tenant context: MK1 dependencies return `401`;
-- cross-tenant read/write/update: fails locally with `TenantScopeViolation`;
-- malformed feature flag: startup fails rather than guessing.
+- invalid explicit bootstrap UUID -> fail Mongo-ready startup path;
+- blank deployment key -> fail;
+- Mongo/index/migration verification failure -> no persistence readiness;
+- missing request tenant context -> `401` for MK1 dependencies;
+- cross-tenant query/write/update -> `TenantScopeViolation` before business persistence;
+- malformed feature flag -> startup failure rather than guessing.
 
 ## Risks reviewed
 
 | Risk | S0 response |
 |---|---|
-| R01 big-bang rewrite | only new boundaries plus small composition/auth hooks; MK0 modules remain |
-| R12 cross-tenant leak | structural repository scope, server derivation, negative tests, indexes |
-| R13 competing authority | flags default off; mapping metadata does not make MK0 records typed MK1 authority |
-| R14 schema-form UX | only tokens/shell foundation; no Profile form introduced |
+| R01 big-bang rewrite | incremental boundaries only; legacy modules remain |
+| R12 cross-tenant leak | structural repository scope + server derivation + adversarial/real-Mongo tests |
+| R13 competing authority | MK1 authority flags off; metadata mapping does not reinterpret legacy records |
+| R14 schema-form UX | shell/tokens only; no new Profile form |
+
+## Tests / certification
+
+Exact reviewed head `74056ec8930aecd61ad771da94076046dc95a9c8` passed CI `#677` / run `33892749948`:
+
+```text
+backend-test       PASS
+frontend-test      PASS
+UI-01-CERT browser PASS
+```
+
+Backend PASS includes full regression, real-Mongo S0 migration/isolation gates, production image build and image smoke. Frontend PASS includes audit/lint/Jest/API-origin gate/build. Browser PASS includes production frontend/backend and desktop/mobile certification.
+
+Canonical detail: `mk1/test/evidence/S0/CERTIFICATION.md`.
 
 ## Rollback
 
-1. Set `MK1_ENABLED=false` and leave `NEXT_PUBLIC_MK1_SHELL` unset/false.
-2. Revert the S0 application commit if code rollback is required.
-3. Keep added `tenant_id` fields and indexes: they are additive metadata and do
-   not alter MK0 interpretation. Removing them is unnecessary and increases risk.
-4. Restore the pre-migration Mongo snapshot only if an independently observed
-   data defect requires exact physical rollback.
-
-No destructive rollback script is supplied because the forward migration only
-adds isolation metadata and is safe for MK0 readers.
-
-## Tests and evidence
-
-- unit: deterministic tenant ID, fail-closed flags, scoped read/write/update;
-- HTTP/security: client tenant header ignored, existing auth/CSRF regression;
-- migration: fake-store idempotency plus real-Mongo integration gate;
-- MK0 persistence: legacy publication-index regression;
-- frontend: frozen IA/token contract, lint, Jest, production build;
-- compile: Python module compile.
-
-Canonical results and remaining environment limitations live in
-`mk1/test/evidence/S0/CERTIFICATION.md`.
+1. `MK1_ENABLED=false`.
+2. Leave `NEXT_PUBLIC_MK1_SHELL` unset/false.
+3. Revert S0 runtime code if required.
+4. Normally preserve additive tenant metadata/indexes; deleting isolation metadata increases risk.
+5. Restore a database snapshot only for an independently verified physical-data defect.
 
 ## Known limitations
 
-- S0 provides one bootstrap tenant, not team/RBAC UI.
-- MK0 routes remain unscoped legacy authority until their owning slices migrate.
-- The MK1 shell is a non-active foundation; later user-facing slices must add
-  real routes and desktop/mobile visual certification before activation.
-- A live database backup/restore exercise belongs to deployment cutover, not this
-  additive S0 development migration.
+- S0 is bootstrap tenancy, not final team/RBAC.
+- MK0 routes remain legacy authority until their owning slices migrate.
+- the MK1 shell remains inactive until later user-facing slices certify routes/states.
+- production backup/restore and production cutover remain separate release gates.
+
+## Slice verdict
+
+S0 implementation, tenant-boundary review and canonical CI satisfy the frozen S0 exit criteria.
+
+**S0: CERTIFIED — MERGE READY.**
