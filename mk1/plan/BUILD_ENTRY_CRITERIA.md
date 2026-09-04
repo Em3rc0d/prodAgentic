@@ -1,6 +1,10 @@
 # MK1 Build Entry Criteria — “Take the hummer” Gate
 
-Status: **SELF-REVIEW PASSED — CANONICAL MERGE PENDING**
+Status: **PASSED**
+
+Build authorization: **TAKE THE HUMMER**
+
+Canonical MK1 Design Freeze merge: `2211ffe5123fbf2d23d6b88ba3cd0257f569b5d1` via PR `#32`.
 
 The phrase **“Take the hummer”** means: begin MK1 implementation according to the frozen design and vertical-slice plan.
 
@@ -55,9 +59,9 @@ It is not a motivational phrase; it is a gate result.
 ### Security/operations
 
 - [x] Tenant isolation rule defined.
-- [x] secret boundary defined.
-- [x] untrusted research/asset boundaries defined.
-- [x] observability/correlation requirements defined.
+- [x] Secret boundary defined.
+- [x] Untrusted research/asset boundaries defined.
+- [x] Observability/correlation requirements defined.
 
 ### Delivery/testing
 
@@ -67,10 +71,10 @@ It is not a motivational phrase; it is a gate result.
 - [x] End-to-end acceptance scenarios defined.
 - [x] Certification evidence model defined.
 - [x] Final repository consistency review completed with no blocking contradiction (`REVIEW_REPORT.md`).
-- [ ] Design branch merged/accepted on `main` as canonical MK1 baseline.
+- [x] Design branch merged/accepted on `main` as canonical MK1 baseline.
 
-## Gate rule
+## Gate result
 
-Only canonical merge/acceptance remains. After merge, set `Status: PASSED`, record the canonical commit SHA in `mk1/STATUS.md`, and the build authorization phrase becomes valid.
+All critical build-entry conditions are closed. Non-blocking quarries remain research lanes only; they cannot silently mutate frozen contracts. Any discovery that requires changing an accepted MK1 contract must return through `brainstorming → design/arch → ADR/plan` and explicitly reopen the affected Design Graph node before implementation depends on it.
 
-Non-blocking quarries do not invalidate this gate because their interfaces and policy boundaries are already closed.
+**Result: PASSED — TAKE THE HUMMER.**
