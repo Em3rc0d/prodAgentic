@@ -8,7 +8,7 @@ Branch: `mk1/s1-profile-v2`
 
 Base: `main@88a615c519b5918944256afd678b67139ed8f0bd`
 
-Implementation commit: **PENDING**
+Implementation commit: `47b4d20e5e43f18516b7c25a604165542317d291`
 
 ## Authority versions
 
