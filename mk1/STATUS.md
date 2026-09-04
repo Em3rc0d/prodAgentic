@@ -1,8 +1,8 @@
 # prodAgentic MK1 Status
 
 **As of:** 2026-09-04  
-**Stage:** DESIGN FREEZE CANDIDATE  
-**Build authorization:** NOT YET RECORDED
+**Stage:** DESIGN FREEZE REVIEWED  
+**Build authorization:** PENDING CANONICAL MERGE
 
 ## Completed
 
@@ -23,12 +23,20 @@
 - accepted ADR set;
 - delivery slices/risk register;
 - test/golden/certification model;
-- non-blocking quarry registry.
+- non-blocking quarry registry;
+- consistency self-review and correction report.
+
+## Design graph
+
+```text
+Critical CLOSED: 70
+Critical OPEN: 0
+Critical REVISIT: 0
+Parked non-blocking quarry families: 4
+```
 
 ## Remaining before “Take the hummer”
 
-1. repository consistency self-review of the design branch;
-2. resolve any contradiction found;
-3. mark build-entry gate PASSED;
-4. merge/accept the design baseline on `main`;
-5. record the canonical design commit SHA.
+1. merge/accept the reviewed design baseline on `main`;
+2. record the canonical merge commit SHA;
+3. mark Build Entry `PASSED`.

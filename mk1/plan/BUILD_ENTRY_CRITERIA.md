@@ -1,6 +1,6 @@
 # MK1 Build Entry Criteria — “Take the hummer” Gate
 
-Status: **PENDING FINAL REPOSITORY REVIEW**
+Status: **SELF-REVIEW PASSED — CANONICAL MERGE PENDING**
 
 The phrase **“Take the hummer”** means: begin MK1 implementation according to the frozen design and vertical-slice plan.
 
@@ -19,6 +19,7 @@ It is not a motivational phrase; it is a gate result.
 ### Domain
 
 - [x] Tenant/Profile/Batch/ContentItem/GenerationRun/ContentRevision/Approval/Schedule/Publication responsibilities separated.
+- [x] Editorial lifecycle separated from destination-specific distribution lifecycle.
 - [x] State machines defined.
 - [x] Hard invariants defined.
 - [x] MK0 reuse/replacement map defined.
@@ -65,11 +66,11 @@ It is not a motivational phrase; it is a gate result.
 - [x] Test pyramid and golden datasets defined.
 - [x] End-to-end acceptance scenarios defined.
 - [x] Certification evidence model defined.
-- [ ] Final repository consistency review completed with no blocking contradiction.
-- [ ] Design branch merged to main / accepted as canonical MK1 baseline.
+- [x] Final repository consistency review completed with no blocking contradiction (`REVIEW_REPORT.md`).
+- [ ] Design branch merged/accepted on `main` as canonical MK1 baseline.
 
 ## Gate rule
 
-Only the last two unchecked conditions remain after documentation creation. Once the final self-review finds no blocking contradiction and the design baseline is accepted/merged, update this file to `Status: PASSED` and record the commit SHA in `mk1/STATUS.md`.
+Only canonical merge/acceptance remains. After merge, set `Status: PASSED`, record the canonical commit SHA in `mk1/STATUS.md`, and the build authorization phrase becomes valid.
 
 Non-blocking quarries do not invalidate this gate because their interfaces and policy boundaries are already closed.

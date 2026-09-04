@@ -21,7 +21,7 @@ FAILED
 
 A Batch may be `REVIEWABLE` while some items need attention. Item summary counts express mixed progress. `CLOSED` means the requested work cycle is no longer active; it does not imply every ContentItem was published.
 
-# ContentItem
+# ContentItem editorial lifecycle
 
 ```text
 CANDIDATE
@@ -29,9 +29,6 @@ CANDIDATE
   -> PRODUCING
   -> READY_FOR_REVIEW
   -> APPROVED
-  -> SCHEDULED
-  -> PUBLISHING
-  -> PUBLISHED
 ```
 
 Side states:
@@ -47,10 +44,12 @@ ARCHIVED
 Important semantics:
 
 - `CANDIDATE` is not yet committed to production or editorial memory as a future audience promise.
-- `READY_FOR_REVIEW` means current revision passed required QA gates.
-- `APPROVED` means an immutable Approval exists for the latest accepted revision.
-- `PUBLISHING` is an external side-effect uncertainty boundary and cannot be blindly replayed.
-- creating a new revision after approval moves active work to `REVISION_REQUIRED`/review flow while the prior Approval remains historical evidence.
+- `READY_FOR_REVIEW` means the current revision passed required QA gates.
+- `APPROVED` means at least the current accepted revision has an immutable Approval.
+- creating a replacement revision after approval moves active editorial work through `REVISION_REQUIRED`/review flow while the prior Approval remains immutable historical authority.
+- **Scheduled, Publishing and Published are not ContentItem editorial states.** They are target-specific Schedule/Publication states. One Approval may have several distribution targets with different outcomes.
+
+For UI convenience, a derived distribution summary may say “2 scheduled · 1 published · 1 needs reconciliation”; it is not authoritative state.
 
 # GenerationRun
 
@@ -83,7 +82,7 @@ DRAFT
  -> SUPERSEDED
 ```
 
-Approval is a separate aggregate, not a revision state. A reviewable revision can become the source of an Approval. When a newer revision is created, older non-approved revisions may be marked superseded.
+A revision's content/asset identity becomes immutable at `REVIEWABLE`. User edit/regeneration creates a new revision instead of rewriting a reviewable revision. Approval is a separate aggregate, not a revision state.
 
 # QAReport
 
@@ -112,7 +111,9 @@ CANCELLED
 FAILED
 ```
 
-`DISPATCHED` means an execution job has been created/published through the outbox/transport path; it does not mean a public post exists.
+`DISPATCHED` means an execution job has been durably requested/published through the outbox/transport path; it does not mean a public post exists.
+
+When its Publication becomes `PUBLISHED`, the Schedule may become `COMPLETED`. When Publication proves a known-safe failure, it may become `FAILED`. While Publication is `RECONCILIATION_REQUIRED`, Schedule remains dispatched/pending outcome rather than pretending failure or success.
 
 # Publication
 

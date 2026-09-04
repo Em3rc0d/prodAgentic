@@ -11,15 +11,16 @@ Tenant
 ├── EditorialMemoryEntry
 ├── Asset
 ├── QAReport
-├── Approval
-├── Schedule
-├── Publication
+├── Approval ──< Schedule
+│          └──< Publication
 ├── MetricSnapshot
 ├── Connection
 └── AuditEvent
 ```
 
 Not every persisted document is an aggregate root. Typed agent outputs such as ResearchPack and VisualSpec are immutable run/revision artifacts referenced by digest/id.
+
+**Distribution is intentionally not collapsed into `ContentItem` state.** One Approval may be exported, scheduled, or published to more than one destination over time. Schedule/Publication own those target-specific lifecycles.
 
 # Tenant
 
@@ -103,7 +104,7 @@ Batch
 
 # ContentItem
 
-Represents the conceptual publication within a Batch, independent of how many attempts/revisions it takes to produce it.
+Represents the conceptual publication within a Batch, independent of how many attempts/revisions it takes to produce it or how many destinations eventually distribute it.
 
 ```text
 ContentItem
@@ -120,12 +121,15 @@ ContentItem
 - format
 - hook_pattern
 - visual_pattern
-- state
+- editorial_state
 - current_revision_id
 - latest_approval_id
+- distribution_summary   # derived/cache only; not publication authority
 - created_at
 - updated_at
 ```
+
+`distribution_summary` may expose counts such as scheduled/published/needs-reconciliation for UX/query efficiency, but target truth lives in Schedule/Publication records and can be rebuilt.
 
 # GenerationRun
 
@@ -155,7 +159,7 @@ Regeneration creates a new run. It never overwrites previous run provenance.
 
 # ContentRevision
 
-Represents the exact mutable/reviewable content package produced by a run or human edit fork.
+Represents one exact content package produced by a run or human edit/regeneration fork.
 
 ```text
 ContentRevision
@@ -172,7 +176,7 @@ ContentRevision
 - created_at
 ```
 
-Approval refers to one exact revision. Editing an approved result creates a new revision; it does not mutate the approved one.
+A revision's content/asset identity is frozen once it becomes `REVIEWABLE`. New edits/regenerations create a child revision. Approval refers to one exact reviewable revision. Older approved revisions remain historical authority for any distributions that explicitly reference them.
 
 # EditorialMemoryEntry
 
@@ -203,6 +207,8 @@ EditorialMemoryEntry
 ```
 
 Memory can be derived/rebuilt from authoritative content data; it is a query/read model plus indexed semantics, not publication authority.
+
+When one approved revision is distributed to multiple platforms, memory normalization deduplicates the underlying editorial concept/revision rather than counting each platform publication as a separate idea. Platform-specific derivatives may become distinct memory entries only when their editorial dimensions materially differ.
 
 # Asset
 
@@ -267,6 +273,8 @@ Approval
 - bundle_sha256
 ```
 
+One Approval may be referenced by zero or more Schedules/Publications/exports. Approval does not store mutable target status.
+
 # Connection
 
 External account/credential relationship.
@@ -295,6 +303,7 @@ Schedule
 - approval_id
 - connection_id? / manual target
 - provider
+- destination
 - scheduled_for
 - timezone_context
 - state
@@ -304,7 +313,7 @@ Schedule
 - completed_at?
 ```
 
-Schedule never copies mutable content.
+Schedule never copies mutable content. Multiple schedules may reference one Approval when destination policy allows it; uniqueness/idempotency is enforced per target operation.
 
 # Publication
 
@@ -315,7 +324,8 @@ Publication
 - approval_id
 - schedule_id?
 - provider
-- connection_id
+- connection_id?
+- destination
 - state
 - idempotency_key
 - attempt_id
@@ -328,6 +338,8 @@ Publication
 - reconciliation_reason?
 - receipt_digest?
 ```
+
+An automatic provider publication normally has `connection_id`; manual export/readiness paths do not fabricate one.
 
 # MetricSnapshot
 

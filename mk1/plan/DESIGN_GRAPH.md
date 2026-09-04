@@ -1,6 +1,6 @@
 # MK1 Design Closure Graph
 
-Status: **CLOSED — DESIGN FREEZE CANDIDATE**  
+Status: **CLOSED — SELF-REVIEW PASSED**  
 Snapshot date: 2026-09-04
 
 ## State vocabulary
@@ -15,13 +15,13 @@ Snapshot date: 2026-09-04
 ## Critical-node summary
 
 ```text
-Critical CLOSED: 48
-Critical OPEN:   0
-Critical REVISIT:0
+Critical CLOSED: 70
+Critical OPEN:    0
+Critical REVISIT: 0
 Non-blocking PARKED quarry families: 4
 ```
 
-The graph is therefore structurally eligible for the build-entry review in `BUILD_ENTRY_CRITERIA.md`.
+The graph passed repository consistency self-review. Corrections are recorded in `REVIEW_REPORT.md`.
 
 # G0 — Product
 
