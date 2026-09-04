@@ -53,7 +53,10 @@ async function certifyRoute(
     }
   });
 
-  await page.goto(`${BASE_URL}${route.path}`, { waitUntil: "networkidle" });
+  // Next/React pages may keep background requests alive. Browser certification
+  // is bound to explicit product readiness below, not to an incidental period
+  // with zero network connections.
+  await page.goto(`${BASE_URL}${route.path}`, { waitUntil: "domcontentloaded" });
   await expect(page.locator("body")).toBeVisible();
   await expect(page.getByRole("main")).toBeVisible();
   await expect(page.getByRole("heading", { name: route.heading }).first()).toBeVisible();
@@ -117,7 +120,8 @@ test.describe("S1 Profile V2 acceptance", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
   test("quick setup requires proposal review before creating immutable v1", async ({ page }) => {
-    await page.goto(`${BASE_URL}/profiles`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE_URL}/profiles`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "Teach prodAgentic how to sound like you." })).toBeVisible();
     await page.getByLabel("Name").fill("UI Certification Profile");
     await page.getByRole("button", { name: "Education" }).click();
     await page.getByRole("button", { name: "Continue" }).click();
