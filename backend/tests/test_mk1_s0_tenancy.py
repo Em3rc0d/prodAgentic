@@ -59,8 +59,14 @@ class MemoryCollection:
         return Result(matched, modified)
 
     async def count_documents(self, criteria):
-        if criteria == {"tenant_id": {"$exists": False}}:
+        tenant_filter = criteria.get("tenant_id")
+        if tenant_filter == {"$exists": False}:
             return sum("tenant_id" not in document for document in self.documents)
+        if tenant_filter == {"$exists": True, "$in": [None, ""]}:
+            return sum(
+                "tenant_id" in document and document.get("tenant_id") in {None, ""}
+                for document in self.documents
+            )
         return 0
 
 
@@ -103,6 +109,11 @@ def test_scoped_repository_rejects_cross_tenant_reads_and_writes():
         with pytest.raises(TenantScopeViolation):
             await repository.update_one({"profile_id": "a"}, {"$unset": {"tenant_id": ""}})
         with pytest.raises(TenantScopeViolation):
+            await repository.update_one(
+                {"profile_id": "a"},
+                {"$rename": {"profile_id": "tenant_id.shadow"}},
+            )
+        with pytest.raises(TenantScopeViolation):
             await repository.update_one({"profile_id": "a"}, {"tenant_id": "tenant-b"})
 
     import asyncio
@@ -129,8 +140,33 @@ async def test_bootstrap_migration_is_idempotent_and_preserves_existing_scope(mo
         "posts": 0,
         "linkedin_connections": 0,
     }
+    assert second.invalid_after_migration == {
+        "content_profiles": 0,
+        "content_runs": 0,
+        "posts": 0,
+        "linkedin_connections": 0,
+    }
     assert db["content_runs"].documents[1]["tenant_id"] == "tenant-other"
     assert len(db["tenants"].documents) == 1
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_migration_fails_closed_for_invalid_existing_scope(monkeypatch):
+    monkeypatch.setenv("PRODAGENTIC_DEPLOYMENT_KEY", "invalid-migration-test")
+    db = MemoryDb({
+        "content_profiles": [
+            {"profile_id": "null-scope", "tenant_id": None},
+            {"profile_id": "blank-scope", "tenant_id": ""},
+        ],
+    })
+
+    report = await migrate_bootstrap_tenant(db)
+
+    assert not report.verified
+    assert report.modified_by_collection["content_profiles"] == 0
+    assert report.invalid_after_migration["content_profiles"] == 2
+    assert db["content_profiles"].documents[0]["tenant_id"] is None
+    assert db["content_profiles"].documents[1]["tenant_id"] == ""
 
 
 def test_http_tenant_context_ignores_client_tenant_header(monkeypatch):

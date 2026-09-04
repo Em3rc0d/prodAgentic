@@ -100,6 +100,7 @@ async def test_real_mongodb_bootstrap_migration_and_tenant_isolation(monkeypatch
         assert first.verified and second.verified
         assert first.modified_by_collection["content_profiles"] == 1
         assert second.modified_by_collection["content_profiles"] == 0
+        assert second.invalid_after_migration["content_profiles"] == 0
         assert await db["tenants"].count_documents({"tenant_id": expected_tenant}) == 1
         assert await db["content_runs"].count_documents({"tenant_id": expected_tenant}) == 1
 
@@ -117,6 +118,32 @@ async def test_real_mongodb_bootstrap_migration_and_tenant_isolation(monkeypatch
         await tenant_b.insert_one({"fixture_id": "same-visible-id", "value": "private-b"})
         assert (await tenant_a.find_one({"fixture_id": "same-visible-id"}))["value"] == "private-a"
         assert (await tenant_b.find_one({"fixture_id": "same-visible-id"}))["value"] == "private-b"
+    finally:
+        await client.drop_database(database_name)
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_real_mongodb_bootstrap_verification_rejects_invalid_existing_scope(monkeypatch):
+    uri = os.environ.get("MONGO_TEST_URI")
+    if not uri:
+        pytest.skip("MONGO_TEST_URI is required for the real S0 invalid-scope gate")
+
+    database_name = f"prodagentic_s0_invalid_{uuid4().hex}"
+    client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=5000)
+    db = client[database_name]
+    monkeypatch.setenv("PRODAGENTIC_DEPLOYMENT_KEY", database_name)
+    try:
+        await client.admin.command("ping")
+        await _ensure_mk1_foundation_indexes(db)
+        await db["content_profiles"].insert_one({"profile_id": "invalid-scope", "tenant_id": None})
+
+        report = await migrate_bootstrap_tenant(db)
+
+        assert not report.verified
+        assert report.invalid_after_migration["content_profiles"] == 1
+        preserved = await db["content_profiles"].find_one({"profile_id": "invalid-scope"})
+        assert "tenant_id" in preserved and preserved["tenant_id"] is None
     finally:
         await client.drop_database(database_name)
         client.close()

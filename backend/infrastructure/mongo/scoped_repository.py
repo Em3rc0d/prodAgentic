@@ -43,10 +43,16 @@ class TenantScopedMongoRepository:
         update_document = dict(update)
         if not update_document or any(not operator.startswith("$") for operator in update_document):
             raise TenantScopeViolation("Replacement updates are not allowed through a scoped repository")
-        for values in update_document.values():
+        for operator, values in update_document.items():
             if not isinstance(values, Mapping):
                 continue
             for field, value in values.items():
-                if field == "tenant_id" or field.startswith("tenant_id.") or value == "tenant_id":
+                if field == "tenant_id" or field.startswith("tenant_id."):
+                    raise TenantScopeViolation("tenant_id is immutable across tenant scope")
+                if (
+                    operator == "$rename"
+                    and isinstance(value, str)
+                    and (value == "tenant_id" or value.startswith("tenant_id."))
+                ):
                     raise TenantScopeViolation("tenant_id is immutable across tenant scope")
         return await self.collection.update_one(self._scope(criteria), update_document)

@@ -20,6 +20,7 @@ async def main() -> None:
             "matched_by_collection": report.matched_by_collection,
             "modified_by_collection": report.modified_by_collection,
             "missing_after_migration": report.missing_after_migration,
+            "invalid_after_migration": report.invalid_after_migration,
             "verified": report.verified,
             "completed_at": report.completed_at.isoformat(),
         }, sort_keys=True))
