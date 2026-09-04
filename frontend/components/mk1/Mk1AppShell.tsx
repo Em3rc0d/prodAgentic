@@ -7,12 +7,11 @@ import type { ReactNode } from "react";
 import styles from "./mk1-app-shell.module.css";
 
 const navigation = [
-  ["/home", "Home"],
+  ["/", "Create"],
+  ["/library", "Library"],
   ["/profiles", "Profiles"],
-  ["/create", "Create"],
-  ["/review", "Review"],
-  ["/calendar", "Calendar"],
-  ["/analytics", "Analytics"],
+  ["/publishing", "Publishing"],
+  ["/scheduling", "Scheduling"],
 ] as const;
 
 export function Mk1AppShell({ children }: { children: ReactNode }) {
@@ -21,7 +20,7 @@ export function Mk1AppShell({ children }: { children: ReactNode }) {
   return (
     <div className={styles.shell} data-generation="mk1">
       <aside className={styles.rail}>
-        <Link href="/home" className={styles.brand} aria-label="prodAgentic home">
+        <Link href="/" className={styles.brand} aria-label="prodAgentic home">
           <span className={styles.mark}>pA</span>
           <span><strong>prodAgentic</strong><small>Content OS</small></span>
         </Link>

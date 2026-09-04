@@ -8,7 +8,7 @@ const SCREENSHOT_DIR = process.env.UI_CERT_SCREENSHOT_DIR || "ui-cert-screenshot
 const ROUTES = [
   { path: "/", slug: "create", heading: /Create/i },
   { path: "/library", slug: "library", heading: /Library/i },
-  { path: "/profiles", slug: "profiles", heading: /Profiles/i },
+  { path: "/profiles", slug: "profiles", heading: /Teach prodAgentic how to sound like you\./i },
   { path: "/publishing", slug: "publishing", heading: /Publishing/i },
   { path: "/scheduling", slug: "scheduling", heading: /Scheduling/i },
 ] as const;
