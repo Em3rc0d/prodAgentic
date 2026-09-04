@@ -7,7 +7,7 @@ from pymongo.errors import DuplicateKeyError
 
 from application.tenancy.bootstrap import migrate_bootstrap_tenant
 from application.tenancy.context import bootstrap_tenant_id
-from application.profiles import DeterministicProfileAnalyzer, ProfileService
+from application.profiles import DeterministicProfileAnalyzer, ProfileConflict, ProfileService
 from application.profiles.legacy_bridge import migrate_legacy_profiles
 from db.mongo import _ensure_indexes, _ensure_mk1_foundation_indexes
 from domain.tenants.models import TenantContext
@@ -197,6 +197,98 @@ async def test_real_mongodb_profile_bridge_version_history_and_tenant_isolation(
         assert await MongoProfileRepository(
             db, TenantContext(tenant_id="tenant-b", actor_id="operator-b")
         ).get_profile(created.profile.profile_id) is None
+    finally:
+        await client.drop_database(database_name)
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_real_mongodb_profile_update_recovers_interrupted_version_pointer():
+    uri = os.environ.get("MONGO_TEST_URI")
+    if not uri:
+        pytest.skip("MONGO_TEST_URI is required for the real S1 crash-recovery gate")
+
+    database_name = f"prodagentic_s1_recovery_{uuid4().hex}"
+    client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=5000)
+    db = client[database_name]
+    try:
+        await client.admin.command("ping")
+        await _ensure_mk1_foundation_indexes(db)
+        context = TenantContext(tenant_id="tenant-a", actor_id="operator-a")
+        analyzer = DeterministicProfileAnalyzer()
+
+        setup = ProfileSetup(
+            name="Recovery Base", account_type="education", goals=("educate",),
+            audience="software engineers", voice=("technical",), batch_size=4,
+            channels=("manual_export",),
+        )
+        repository = MongoProfileRepository(db, context)
+        service = ProfileService(repository, analyzer)
+        created = await service.create("tenant-a", setup, service.propose(setup).proposal_digest)
+
+        changed = setup.model_copy(update={"name": "Recovered Profile", "voice": ("simple", "direct")})
+        changed_digest = service.propose(changed).proposal_digest
+
+        async def simulate_process_death(*args, **kwargs):
+            raise RuntimeError("simulated process death after immutable version insert")
+
+        repository.profiles.update_one = simulate_process_death
+        with pytest.raises(RuntimeError, match="simulated process death"):
+            await service.update("tenant-a", created.profile.profile_id, 1, changed, changed_digest)
+
+        stranded = await db["profile_versions"].find_one({
+            "tenant_id": "tenant-a", "profile_id": created.profile.profile_id, "version": 2,
+        })
+        pointer_before_restart = await db["profiles"].find_one({
+            "tenant_id": "tenant-a", "profile_id": created.profile.profile_id,
+        })
+        assert stranded is not None
+        assert pointer_before_restart["current_version"] == 1
+
+        restarted = ProfileService(MongoProfileRepository(db, context), analyzer)
+        recovered = await restarted.update(
+            "tenant-a", created.profile.profile_id, 1, changed, changed_digest,
+        )
+        pointer_after_restart = await MongoProfileRepository(db, context).get_profile(created.profile.profile_id)
+        assert recovered.version.version == 2
+        assert pointer_after_restart.current_version == 2
+        assert pointer_after_restart.name == "Recovered Profile"
+        assert await db["profile_versions"].count_documents({
+            "tenant_id": "tenant-a", "profile_id": created.profile.profile_id, "version": 2,
+        }) == 1
+
+        # A competing retry must recover the already accepted immutable version,
+        # never replace/delete it with a different v2 payload.
+        second_repository = MongoProfileRepository(db, context)
+        second_service = ProfileService(second_repository, analyzer)
+        second_created = await second_service.create("tenant-a", setup, second_service.propose(setup).proposal_digest)
+        accepted_first = setup.model_copy(update={"name": "Crash Winner", "voice": ("direct",)})
+        accepted_first_digest = second_service.propose(accepted_first).proposal_digest
+        second_repository.profiles.update_one = simulate_process_death
+        with pytest.raises(RuntimeError, match="simulated process death"):
+            await second_service.update(
+                "tenant-a", second_created.profile.profile_id, 1, accepted_first, accepted_first_digest,
+            )
+
+        competing = setup.model_copy(update={"name": "Competing Retry", "voice": ("simple",)})
+        restarted_competing = ProfileService(MongoProfileRepository(db, context), analyzer)
+        with pytest.raises(ProfileConflict):
+            await restarted_competing.update(
+                "tenant-a",
+                second_created.profile.profile_id,
+                1,
+                competing,
+                restarted_competing.propose(competing).proposal_digest,
+            )
+
+        recovered_pointer = await MongoProfileRepository(db, context).get_profile(second_created.profile.profile_id)
+        recovered_version = await MongoProfileRepository(db, context).get_version(second_created.profile.profile_id, 2)
+        assert recovered_pointer.current_version == 2
+        assert recovered_pointer.name == "Crash Winner"
+        assert recovered_version.identity.name == "Crash Winner"
+        assert await db["profile_versions"].count_documents({
+            "tenant_id": "tenant-a", "profile_id": second_created.profile.profile_id, "version": 2,
+        }) == 1
     finally:
         await client.drop_database(database_name)
         client.close()
