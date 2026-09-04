@@ -25,6 +25,9 @@ jobs:
       LANGUAGE_MIN_MARGIN: "0.2"
       IMAGE_RENDER_ENABLED: "true"
       PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEPLOYMENT_KEY: ui-cert-installation
+      MK1_ENABLED: "true"
+      MK1_PROFILE_V2: "true"
       MONGO_URI: mongodb://127.0.0.1:27018
       MONGO_TEST_URI: mongodb://127.0.0.1:27017
     steps:
@@ -124,6 +127,8 @@ jobs:
         working-directory: frontend
         env:
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+          NEXT_PUBLIC_MK1_SHELL: "true"
+          NEXT_PUBLIC_MK1_PROFILE_V2: "true"
         run: npm run build
 
   ui-browser-cert:
@@ -147,6 +152,9 @@ jobs:
       IMAGE_RENDER_ENABLED: "false"
       SCHEDULER_ENABLED: "false"
       PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEPLOYMENT_KEY: ui-cert-installation
+      MK1_ENABLED: "true"
+      MK1_PROFILE_V2: "true"
       PRODAGENTIC_COOKIE_SECURE: "false"
       PRODAGENTIC_COOKIE_SAMESITE: lax
       PRODAGENTIC_LINKEDIN_TOKEN_KEY: ui-cert-linkedin-token-key-that-is-long-enough
@@ -160,6 +168,8 @@ jobs:
       CORS_ALLOWED_ORIGINS: http://127.0.0.1:3000,http://localhost:3000
       PRODAGENTIC_ASSET_ROOT: /tmp/prodagentic-ui-cert/assets
       NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+      NEXT_PUBLIC_MK1_SHELL: "true"
+      NEXT_PUBLIC_MK1_PROFILE_V2: "true"
       UI_CERT_BASE_URL: http://127.0.0.1:3000
       UI_CERT_API_URL: http://127.0.0.1:8000
     steps:

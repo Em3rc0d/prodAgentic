@@ -31,6 +31,17 @@ class TenantScopedMongoRepository:
     async def find_one(self, criteria: Mapping[str, Any]) -> dict[str, Any] | None:
         return await self.collection.find_one(self._scope(criteria))
 
+    async def find_many(
+        self,
+        criteria: Mapping[str, Any] | None = None,
+        *,
+        sort: list[tuple[str, int]] | None = None,
+    ) -> list[dict[str, Any]]:
+        cursor = self.collection.find(self._scope(criteria))
+        if sort:
+            cursor = cursor.sort(sort)
+        return [document async for document in cursor]
+
     async def insert_one(self, document: Mapping[str, Any]):
         payload = dict(document)
         requested_tenant = payload.pop("tenant_id", self.context.tenant_id)
@@ -56,3 +67,6 @@ class TenantScopedMongoRepository:
                 ):
                     raise TenantScopeViolation("tenant_id is immutable across tenant scope")
         return await self.collection.update_one(self._scope(criteria), update_document)
+
+    async def delete_one(self, criteria: Mapping[str, Any]):
+        return await self.collection.delete_one(self._scope(criteria))

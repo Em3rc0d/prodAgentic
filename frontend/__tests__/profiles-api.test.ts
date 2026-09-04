@@ -1,4 +1,4 @@
-import { createContentProfile, fetchContentProfiles, setDefaultContentProfile } from '../lib/api'
+import { acceptProfileV2, createContentProfile, fetchContentProfiles, proposeProfileV2, setDefaultContentProfile } from '../lib/api'
 
 const profile = {
   name: 'Architect Voice',
@@ -45,6 +45,24 @@ describe('content profile API', () => {
     expect(global.fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/content-profiles/profile-1/default',
       expect.objectContaining({ method: 'POST', credentials: 'include' })
+    )
+  })
+
+  it('keeps Profile V2 proposal and acceptance as separate explicit calls', async () => {
+    const setup = {
+      name: 'Systems Field Notes', account_type: 'education' as const,
+      goals: ['educate' as const], audience: 'software engineers', voice: ['direct'],
+      batch_size: 4, channels: ['linkedin' as const], examples: [],
+    }
+    await proposeProfileV2(setup)
+    expect(global.fetch).toHaveBeenLastCalledWith(
+      'http://localhost:8000/api/profiles/inference-proposals',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(setup), credentials: 'include' })
+    )
+    await acceptProfileV2(setup, 'a'.repeat(64))
+    expect(global.fetch).toHaveBeenLastCalledWith(
+      'http://localhost:8000/api/profiles',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ setup, proposal_digest: 'a'.repeat(64) }), credentials: 'include' })
     )
   })
 })

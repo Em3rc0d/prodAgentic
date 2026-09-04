@@ -112,3 +112,35 @@ test.describe("UI-01-CERT mobile product frames", () => {
     });
   }
 });
+
+test.describe("S1 Profile V2 acceptance", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("quick setup requires proposal review before creating immutable v1", async ({ page }) => {
+    await page.goto(`${BASE_URL}/profiles`, { waitUntil: "networkidle" });
+    await page.getByLabel("Name").fill("UI Certification Profile");
+    await page.getByRole("button", { name: "Education" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByLabel("Audience").fill("software engineers learning reliable systems");
+    await page.getByRole("button", { name: "Build authority" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("button", { name: "technical" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByLabel("Example").fill("3 ways to test a queue safely. What would you verify first? #reliability");
+    await page.getByRole("button", { name: "Analyze" }).click();
+
+    await expect(page.getByRole("heading", { name: "This is what I understood." })).toBeVisible();
+    await expect(page.getByText("1 hashed example · low")).toBeVisible();
+    await page.screenshot({ path: `${SCREENSHOT_DIR}/desktop-s1-profile-proposal.png`, fullPage: true });
+    await page.getByRole("button", { name: "Looks good" }).click();
+
+    await expect(page.getByRole("heading", { name: "Profile ready" })).toBeVisible();
+    await expect(page.getByText("UI Certification Profile · Profile v1")).toBeVisible();
+    const response = await page.request.get(`${API_URL}/api/profiles`);
+    expect(response.ok()).toBeTruthy();
+    const payload = await response.json();
+    expect(payload.profiles.some((profile: { name: string; current_version: number }) =>
+      profile.name === "UI Certification Profile" && profile.current_version === 1
+    )).toBeTruthy();
+  });
+});

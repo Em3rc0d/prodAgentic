@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 
 import { PremiumScene } from "@/components/PremiumScene";
 import {
@@ -12,6 +13,11 @@ import {
   updateContentProfile,
 } from "@/lib/api";
 import styles from "./profiles.module.css";
+import { mk1ProfileV2Enabled } from "@/lib/mk1-feature-flags";
+
+const Mk1ProfileSetup = dynamic(() =>
+  import("@/components/mk1/Mk1ProfileSetup").then((module) => module.Mk1ProfileSetup)
+);
 
 const EMPTY: ContentProfileInput = {
   name: "", display_name: "", positioning: "", audience: [], voice: [], core_topics: [], excluded_topics: [],
@@ -51,7 +57,7 @@ function freshProfile(): ContentProfileInput {
   return { ...EMPTY, audience: [], voice: [], core_topics: [], excluded_topics: [], forbidden_claims: [], banned_phrases: [], brand_constraints: [] };
 }
 
-export default function ProfilesPage() {
+function LegacyProfilesPage() {
   const [profiles, setProfiles] = useState<ContentProfile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState<ContentProfileInput>(freshProfile());
@@ -214,4 +220,8 @@ export default function ProfilesPage() {
       </div>
     </main>
   );
+}
+
+export default function ProfilesPage() {
+  return mk1ProfileV2Enabled ? <Mk1ProfileSetup /> : <LegacyProfilesPage />;
 }

@@ -7,9 +7,13 @@ from pymongo.errors import DuplicateKeyError
 
 from application.tenancy.bootstrap import migrate_bootstrap_tenant
 from application.tenancy.context import bootstrap_tenant_id
+from application.profiles import DeterministicProfileAnalyzer, ProfileService
+from application.profiles.legacy_bridge import migrate_legacy_profiles
 from db.mongo import _ensure_indexes, _ensure_mk1_foundation_indexes
 from domain.tenants.models import TenantContext
 from infrastructure.mongo.scoped_repository import TenantScopedMongoRepository
+from infrastructure.mongo.profiles import MongoProfileRepository
+from domain.profiles.models import ProfileSetup
 
 
 @pytest.mark.asyncio
@@ -144,6 +148,55 @@ async def test_real_mongodb_bootstrap_verification_rejects_invalid_existing_scop
         assert report.invalid_after_migration["content_profiles"] == 1
         preserved = await db["content_profiles"].find_one({"profile_id": "invalid-scope"})
         assert "tenant_id" in preserved and preserved["tenant_id"] is None
+    finally:
+        await client.drop_database(database_name)
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_real_mongodb_profile_bridge_version_history_and_tenant_isolation():
+    uri = os.environ.get("MONGO_TEST_URI")
+    if not uri:
+        pytest.skip("MONGO_TEST_URI is required for the real S1 Profile gate")
+
+    database_name = f"prodagentic_s1_{uuid4().hex}"
+    client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=5000)
+    db = client[database_name]
+    try:
+        await client.admin.command("ping")
+        await _ensure_mk1_foundation_indexes(db)
+        await db["content_profiles"].insert_one({
+            "tenant_id": "tenant-a", "profile_id": "legacy-profile", "version": 3,
+            "name": "Legacy Profile", "audience": ["builders"], "voice": ["direct"],
+            "oauth_token": "must-not-cross",
+        })
+        first = await migrate_legacy_profiles(db, "tenant-a")
+        second = await migrate_legacy_profiles(db, "tenant-a")
+        assert first.verified and first.migrated == 1
+        assert second.verified and second.existing == 1
+        bridged = await db["profile_versions"].find_one({"tenant_id": "tenant-a", "profile_id": "legacy-profile", "version": 3})
+        assert bridged["provenance"]["source"] == "MK0_CONTENT_PROFILE"
+        assert "oauth_token" not in bridged
+        assert "must-not-cross" not in str(bridged)
+
+        context_a = TenantContext(tenant_id="tenant-a", actor_id="operator-a")
+        service = ProfileService(MongoProfileRepository(db, context_a), DeterministicProfileAnalyzer())
+        setup = ProfileSetup(
+            name="New Profile", account_type="education", goals=("educate",),
+            audience="software engineers", voice=("technical",), batch_size=4,
+            channels=("manual_export",),
+        )
+        proposal = service.propose(setup)
+        created = await service.create("tenant-a", setup, proposal.proposal_digest)
+        changed = setup.model_copy(update={"voice": ("simple", "direct")})
+        changed_proposal = service.propose(changed)
+        await service.update("tenant-a", created.profile.profile_id, 1, changed, changed_proposal.proposal_digest)
+
+        old_version = await MongoProfileRepository(db, context_a).get_version(created.profile.profile_id, 1)
+        assert old_version.copy_policy.voice_traits == ("technical",)
+        assert await MongoProfileRepository(
+            db, TenantContext(tenant_id="tenant-b", actor_id="operator-b")
+        ).get_profile(created.profile.profile_id) is None
     finally:
         await client.drop_database(database_name)
         client.close()

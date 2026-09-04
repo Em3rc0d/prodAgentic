@@ -10,6 +10,7 @@ const config: Config = {
   testEnvironment: 'jsdom',
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
   testPathIgnorePatterns: ['<rootDir>/e2e/'],
+  moduleNameMapper: { '^@/(.*)$': '<rootDir>/$1' },
 }
 
 export default createJestConfig(config)
