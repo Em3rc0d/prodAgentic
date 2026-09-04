@@ -7,11 +7,12 @@ import type { ReactNode } from "react";
 import styles from "./mk1-app-shell.module.css";
 
 const navigation = [
-  ["/", "Create"],
-  ["/library", "Library"],
+  ["/home", "Home"],
   ["/profiles", "Profiles"],
-  ["/publishing", "Publishing"],
-  ["/scheduling", "Scheduling"],
+  ["/create", "Create"],
+  ["/review", "Review"],
+  ["/calendar", "Calendar"],
+  ["/analytics", "Analytics"],
 ] as const;
 
 export function Mk1AppShell({ children }: { children: ReactNode }) {
@@ -20,7 +21,7 @@ export function Mk1AppShell({ children }: { children: ReactNode }) {
   return (
     <div className={styles.shell} data-generation="mk1">
       <aside className={styles.rail}>
-        <Link href="/" className={styles.brand} aria-label="prodAgentic home">
+        <Link href="/home" prefetch={false} className={styles.brand} aria-label="prodAgentic home">
           <span className={styles.mark}>pA</span>
           <span><strong>prodAgentic</strong><small>Content OS</small></span>
         </Link>
@@ -32,7 +33,7 @@ export function Mk1AppShell({ children }: { children: ReactNode }) {
           {navigation.map(([href, label]) => {
             const active = pathname === href || pathname.startsWith(`${href}/`);
             return (
-              <Link key={href} href={href} aria-current={active ? "page" : undefined} className={active ? styles.active : undefined}>
+              <Link key={href} href={href} prefetch={false} aria-current={active ? "page" : undefined} className={active ? styles.active : undefined}>
                 <span className={styles.statusMarker} aria-hidden="true" />
                 {label}
               </Link>
