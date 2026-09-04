@@ -6,7 +6,7 @@ Slice: `S0`
 
 Branch: `mk1/s0-foundation-bootstrap-tenant`
 
-Code commit: recorded after implementation commit
+Code commit: `b50b9ecb72004207bd50d0925b1ad98862e495ce`
 
 ## Authority versions
 

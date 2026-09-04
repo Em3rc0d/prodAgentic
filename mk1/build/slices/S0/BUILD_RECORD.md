@@ -6,6 +6,8 @@ Branch: `mk1/s0-foundation-bootstrap-tenant`
 
 Started from: `main@f721c1d1925838b691a443af739d80f7faad7c99`
 
+Implementation commit: `b50b9ecb72004207bd50d0925b1ad98862e495ce`
+
 ## Objective
 
 Install the first MK1 authority boundary without changing MK0 content-generation,
