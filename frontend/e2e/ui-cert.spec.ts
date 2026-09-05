@@ -9,6 +9,7 @@ const ROUTES = [
   { path: "/", slug: "create", heading: /Create/i },
   { path: "/library", slug: "library", heading: /Library/i },
   { path: "/profiles", slug: "profiles", heading: /Teach prodAgentic how to sound like you\./i },
+  { path: "/create", slug: "s2-create", heading: /Create for/i },
   { path: "/publishing", slug: "publishing", heading: /Publishing/i },
   { path: "/scheduling", slug: "scheduling", heading: /Scheduling/i },
 ] as const;
@@ -53,9 +54,6 @@ async function certifyRoute(
     }
   });
 
-  // Next/React pages may keep background requests alive. Browser certification
-  // is bound to explicit product readiness below, not to an incidental period
-  // with zero network connections.
   await page.goto(`${BASE_URL}${route.path}`, { waitUntil: "domcontentloaded" });
   await expect(page.locator("body")).toBeVisible();
   await expect(page.getByRole("main")).toBeVisible();
@@ -146,5 +144,63 @@ test.describe("S1 Profile V2 acceptance", () => {
     expect(payload.profiles.some((profile: { name: string; current_version: number }) =>
       profile.name === "UI Certification Profile" && profile.current_version === 1
     )).toBeTruthy();
+  });
+});
+
+test.describe("S2 memory-aware Batch planning", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("Create freezes ProfileVersion and commits a novelty-screened oversized pool", async ({ page }) => {
+    const setup = {
+      name: "S2 UI Profile",
+      account_type: "education",
+      goals: ["educate", "build_authority"],
+      audience: "software engineers learning reliable systems",
+      voice: ["technical", "direct"],
+      batch_size: 4,
+      channels: ["manual_export"],
+      examples: [{
+        kind: "caption",
+        label: "S2 planning topics",
+        text: "Reliable systems across #queues #caching #apis #databases need different tradeoffs.",
+      }],
+    };
+    const proposalResponse = await page.request.post(`${API_URL}/api/profiles/inference-proposals`, { data: setup });
+    expect(proposalResponse.ok()).toBeTruthy();
+    const proposal = await proposalResponse.json();
+    const acceptanceResponse = await page.request.post(`${API_URL}/api/profiles`, {
+      data: { setup, proposal_digest: proposal.proposal_digest },
+    });
+    expect(acceptanceResponse.ok()).toBeTruthy();
+    const accepted = await acceptanceResponse.json();
+    expect(accepted.profile.current_version).toBe(1);
+
+    await page.goto(`${BASE_URL}/create`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "Create for S2 UI Profile" })).toBeVisible();
+    await expect(page.getByText("Profile v1")).toBeVisible();
+    await expect(page.getByRole("button", { name: "4" })).toHaveAttribute("aria-pressed", "true");
+
+    const responsePromise = page.waitForResponse((response) =>
+      response.request().method() === "POST" &&
+      response.url().includes(`/api/profiles/${accepted.profile.profile_id}/batches`)
+    );
+    await page.getByRole("button", { name: "Generate next batch" }).click();
+    const batchResponse = await responsePromise;
+    expect(batchResponse.ok()).toBeTruthy();
+    const batchPayload = await batchResponse.json();
+
+    expect(batchPayload.batch.profile_version).toBe(1);
+    expect(batchPayload.batch.profile_snapshot_digest).toBe(accepted.version.digest);
+    expect(batchPayload.batch.requested_size).toBe(4);
+    expect(batchPayload.batch.selected_size).toBe(4);
+    expect(batchPayload.batch.summary_counts.candidates_generated).toBeGreaterThanOrEqual(8);
+    expect(batchPayload.batch.strategy_snapshot.performance_summary_version).toBeNull();
+    expect(batchPayload.content_items).toHaveLength(4);
+    expect(batchPayload.plans).toHaveLength(4);
+    expect(batchPayload.planning_trace.evaluations.length).toBeGreaterThanOrEqual(8);
+
+    await expect(page.getByRole("heading", { name: "4 of 4 ideas committed" })).toBeVisible();
+    await expect(page.getByText(/candidates evaluated/i)).toBeVisible();
+    await page.screenshot({ path: `${SCREENSHOT_DIR}/desktop-s2-batch-planned.png`, fullPage: true });
   });
 });
