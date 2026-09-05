@@ -1,6 +1,6 @@
 # S2 Build Record — Batch + Editorial Memory + Novelty
 
-Status: **IMPLEMENTED — CERTIFICATION IN PROGRESS**
+Status: **IMPLEMENTED — CODE CANDIDATE PASSED; RECEIPT-HEAD CI REQUIRED**
 
 Branch: `mk1/s2-batch-memory-novelty`
 
@@ -59,6 +59,8 @@ S2 refreshes memory from two sources:
 
 Legacy projection is conservative and does not pretend MK0 had the richer structured planning contract. It preserves topic/idea/status identity and normalizes only evidence that exists. Refresh replaces stable `native-` and `mk0-` projections rather than append-drifting the read model.
 
+MongoDB BSON timestamps are UTC but Motor/PyMongo returns them as naive datetimes unless the client is configured `tz_aware`. The S2 Mongo planning adapter therefore rehydrates all nested Mongo datetimes as timezone-aware UTC when crossing back into domain models. This keeps cooldown arithmetic and reloaded `TargetWindow` evidence deterministic without leaking adapter ambiguity into the domain.
+
 ## Feature flags
 
 - backend: `MK1_ENABLED=true` + `MK1_BATCH_PLANNING=true`;
@@ -111,14 +113,57 @@ Indexes follow `DATA_ARCHITECTURE.md` and include tenant identity first.
 - `Generate next batch` as the primary action;
 - selected/requested count, memory/pool/blocked telemetry and concise planning evidence after completion.
 
-The UI does not expose models, agents, thresholds or backend schema controls.
+The UI does not expose models, agents, thresholds or backend schema controls. Planning evidence remains progressively disclosed; tests and browser certification open the native `<details>` control before asserting its contents rather than forcing the product UI permanently open for test convenience.
 
 ## Test implementation
 
 - `backend/tests/test_mk1_s2_planning.py` covers deterministic contracts, cooldowns, soft review memory, current-batch collision, partial completion and GD-01/02/03 planning fixtures.
-- `backend/tests/test_mk1_s2_mongo.py` covers real-Mongo legacy memory rebuild, idempotent projection, frozen ProfileVersion evidence, tenant isolation and the Batch-last commit boundary.
-- `frontend/__tests__/mk1-batch-create.test.tsx` covers the default 4-piece request, partial truthfulness and optional constraints.
-- `frontend/e2e/ui-cert.spec.ts` includes `/create` desktop/mobile frames and an S2 API+browser acceptance scenario.
+- `backend/tests/test_mk1_s2_mongo.py` covers real-Mongo legacy memory rebuild, idempotent projection, frozen ProfileVersion evidence, tenant isolation, Mongo UTC hydration and the Batch-last commit boundary.
+- `frontend/__tests__/mk1-batch-create.test.tsx` covers the default 4-piece request, partial truthfulness, optional constraints and explicit opening of planning evidence.
+- `frontend/e2e/ui-cert.spec.ts` includes `/create` desktop/mobile frames and an S2 API+browser acceptance scenario that exercises the planning-evidence disclosure.
+
+## Hardened implementation candidate
+
+Exact code candidate:
+
+```text
+3aa962e0d1bd378a3fa0eaa1b252dcd0a69affa2
+```
+
+Canonical CI:
+
+```text
+workflow: CI #698
+run:      33981477379
+backend:  101347356016  PASS
+frontend: 101347356155  PASS
+browser:  101347635464  PASS
+```
+
+Browser evidence artifact:
+
+```text
+id:      9973926294
+name:    ui-01-cert-evidence
+sha256:  1591618c8759a7a57bf8e2523fd3979be4c2374fb4b3c7bc3f03f28dc48791bc
+```
+
+The candidate was hardened after CI exposed two concrete issues:
+
+1. real Mongo memory hydration returned BSON UTC timestamps without tzinfo, causing aware/naive cooldown arithmetic to fail; the planning repository now restores UTC awareness recursively at the Mongo/domain boundary and regression coverage reloads both memory and nested Batch target-window timestamps;
+2. frontend/browser tests asserted content inside a closed native `<details>` as visible; tests now perform the real disclosure interaction instead of weakening progressive disclosure in the product.
+
+## Manual final review of the code candidate
+
+Accepted on `3aa962e0d1bd378a3fa0eaa1b252dcd0a69affa2`:
+
+- `EditorialMemoryEntry` remains a rebuildable read model and is not publication authority.
+- tenant scope is structurally injected by `TenantScopedMongoRepository`; S2 indexes begin with `tenant_id`.
+- Batch, selected ContentItems and persisted ContentPlans freeze the ProfileVersion used for planning.
+- `PerformanceSummary` is absent from the S2 strategy snapshot/runtime input.
+- S2 routes instantiate planning/profile/memory adapters only; no Research/Writer/Editor/Visual production cell and no external publishing path is invoked.
+- the Batch-last commit marker continues to prevent incomplete precommit evidence from masquerading as a visible committed Batch under ordinary failures.
+- progressive disclosure remains product behavior; certification exercises it rather than bypassing it.
 
 ## Required certification
 
@@ -135,6 +180,8 @@ The UI does not expose models, agents, thresholds or backend schema controls.
 - frontend lint/Jest/build;
 - desktop/mobile Create flow browser certification;
 - exact-SHA evidence receipt before merge.
+
+The code candidate satisfies these gates. The documentation receipt head created after binding this evidence must itself pass unchanged canonical CI before merge.
 
 ## Rollback
 
