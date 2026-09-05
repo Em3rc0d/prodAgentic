@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from domain.planning.models import Batch, ContentItem, EditorialMemoryEntry, PersistedContentPlan
@@ -10,12 +10,33 @@ from domain.tenants.models import TenantContext
 from infrastructure.mongo.scoped_repository import TenantScopedMongoRepository
 
 
+def _hydrate_mongo_utc(value: Any) -> Any:
+    """Restore timezone awareness lost by PyMongo's default BSON hydration.
+
+    BSON datetimes are stored as UTC milliseconds. Motor/PyMongo returns them as
+    naive ``datetime`` objects unless the client is configured with ``tz_aware``.
+    Repositories are a domain boundary, so planning models must not inherit that
+    adapter-specific ambiguity. Nested planning payloads are normalized as well.
+    """
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    if isinstance(value, dict):
+        return {key: _hydrate_mongo_utc(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_hydrate_mongo_utc(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_hydrate_mongo_utc(item) for item in value)
+    return value
+
+
 def _clean(document: dict | None) -> dict | None:
     if document is None:
         return None
     value = dict(document)
     value.pop("_id", None)
-    return value
+    return _hydrate_mongo_utc(value)
 
 
 class MongoPlanningRepository:
