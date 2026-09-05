@@ -74,10 +74,22 @@ export interface CandidateEvaluationV1 {
   selection_reason: string;
 }
 
+export interface PersistedPlanV1 {
+  artifact_id: string;
+  digest: string;
+  content_id: string;
+  plan: {
+    candidate_id: string;
+    novelty_result_ref: string;
+    profile_id: string;
+    profile_version: number;
+  };
+}
+
 export interface BatchPlanningResponseV1 {
   batch: BatchV1;
   content_items: ContentItemPlanV1[];
-  plans: Array<{ artifact_id: string; digest: string; content_id: string }>;
+  plans: PersistedPlanV1[];
   planning_trace: {
     trace_id: string;
     digest: string;
