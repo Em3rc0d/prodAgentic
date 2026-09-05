@@ -147,11 +147,23 @@ async def test_real_mongodb_s2_rebuilds_legacy_memory_blocks_repeat_and_persists
         assert repeated.novelty.verdict.value == "BLOCKED"
         assert repeated.novelty.matched_content_ids == ("legacy-published-tires",)
 
+        hydrated_memory = await planning_repository.list_recent_memory(
+            created.profile.profile_id,
+            NOW - timedelta(days=30),
+        )
+        assert len(hydrated_memory) == 1
+        assert hydrated_memory[0].effective_at.utcoffset() == timedelta(0)
+
         assert await db["batches"].count_documents({"tenant_id": "tenant-a", "batch_id": result.batch.batch_id}) == 1
         assert await db["content_items"].count_documents({"tenant_id": "tenant-a", "batch_id": result.batch.batch_id}) == 4
         assert await db["content_plans"].count_documents({"tenant_id": "tenant-a", "batch_id": result.batch.batch_id}) == 4
         assert await db["planning_traces"].count_documents({"tenant_id": "tenant-a", "batch_id": result.batch.batch_id}) == 1
         assert await db["editorial_memory"].count_documents({"tenant_id": "tenant-a", "profile_id": created.profile.profile_id}) == 1
+
+        reloaded_batch = await planning_repository.get_batch(result.batch.batch_id)
+        assert reloaded_batch is not None
+        assert reloaded_batch.target_window.start_at.utcoffset() == timedelta(0)
+        assert reloaded_batch.target_window.end_at.utcoffset() == timedelta(0)
 
         # Rebuild is an idempotent read-model operation, not append-only drift.
         await projector.refresh(created.profile.profile_id, NOW + timedelta(minutes=5))
