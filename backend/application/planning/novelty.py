@@ -168,9 +168,11 @@ class NoveltyEngine:
             elif cooldown_band == CooldownBand.STRONG_COOLDOWN and strongest_band != CooldownBand.HARD_COOLDOWN:
                 strongest_band = CooldownBand.STRONG_COOLDOWN
 
-        # L7: current-batch candidates are a first-class hard planning input and
-        # never need to be persisted into audience memory merely to prevent an
-        # intra-batch duplicate.
+        # L7: current-batch candidates are a first-class planning input. Topic
+        # sameness alone is not a collision: broad Profiles can cover one topic
+        # through genuinely different angles. Repeated semantic/angle treatment
+        # still blocks, while same-topic fresh treatment remains visible as a
+        # warning used by the diversity selector.
         current_batch_collision = False
         for prior in selected:
             prior_topic = canonicalize_topic(prior.topic)
@@ -203,11 +205,9 @@ class NoveltyEngine:
             local = NoveltyVerdict.PASS
             if semantic_overlap >= 0.78 or (topic_same and "angle" in categories):
                 local = NoveltyVerdict.BLOCKED
-            elif topic_same:
-                local = NoveltyVerdict.REWRITE_ANGLE
             elif hook_same and role_same and format_same:
                 local = NoveltyVerdict.REWRITE_ANGLE
-            elif hook_same and format_same:
+            elif topic_same or (hook_same and format_same):
                 local = NoveltyVerdict.PASS_WITH_WARNING
 
             if local != NoveltyVerdict.PASS:
