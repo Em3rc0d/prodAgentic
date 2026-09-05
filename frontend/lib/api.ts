@@ -116,6 +116,86 @@ export async function setDefaultContentProfile(profileId: string): Promise<Conte
   return res.json();
 }
 
+export type ProfileAccountType = "personal_brand" | "business" | "education" | "niche" | "other";
+export type ProfileGoal = "grow" | "educate" | "build_authority" | "sell" | "build_community" | "entertain";
+export type ProfileChannel = "linkedin" | "instagram" | "tiktok" | "manual_export";
+
+export interface ProfileSetupV2 {
+  name: string;
+  account_type: ProfileAccountType;
+  goals: ProfileGoal[];
+  audience: string;
+  voice: string[];
+  voice_nuance?: string | null;
+  batch_size: number;
+  channels: ProfileChannel[];
+  examples: Array<{ kind: "caption" | "bio"; text: string; label?: string | null }>;
+}
+
+export interface ProfileInferenceProposalV1 {
+  schema_version: 1;
+  setup_digest: string;
+  identity_summary: string;
+  audience_segments: string[];
+  topic_families: string[];
+  hook_tendencies: string[];
+  caption_length_tendency: "short" | "medium" | "long" | "unknown";
+  cta_style?: string | null;
+  evidence: Array<{ kind: "caption" | "bio"; sha256: string; label?: string | null; word_count: number }>;
+  confidence: "explicit_only" | "low" | "medium";
+  proposal_digest: string;
+}
+
+export interface ProfileV2 {
+  profile_id: string;
+  tenant_id: string;
+  current_version: number;
+  name: string;
+  status: "ACTIVE" | "ARCHIVED";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProfileVersionV2 {
+  schema_version: 2;
+  profile_id: string;
+  tenant_id: string;
+  version: number;
+  digest: string;
+  identity: { name: string; account_type: ProfileAccountType; summary: string };
+  audience: string[];
+  goals: ProfileGoal[];
+  copy_policy: { voice_traits: string[]; nuance?: string | null };
+  publishing_preferences: { channels: ProfileChannel[]; default_batch_size: number };
+}
+
+export async function fetchProfilesV2(): Promise<{ profiles: ProfileV2[]; count: number }> {
+  const res = await secureFetch(`${API}/api/profiles`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch Profiles: ${res.status}`);
+  return res.json();
+}
+
+export async function proposeProfileV2(setup: ProfileSetupV2): Promise<ProfileInferenceProposalV1> {
+  const res = await secureFetch(`${API}/api/profiles/inference-proposals`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(setup),
+  });
+  if (!res.ok) throw new Error(`Profile inference failed: ${res.status}`);
+  return res.json();
+}
+
+export async function acceptProfileV2(
+  setup: ProfileSetupV2,
+  proposalDigest: string,
+): Promise<{ profile: ProfileV2; version: ProfileVersionV2 }> {
+  const res = await secureFetch(`${API}/api/profiles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ setup, proposal_digest: proposalDigest }),
+  });
+  if (!res.ok) throw new Error(`Profile acceptance failed: ${res.status}`);
+  return res.json();
+}
+
 export type RenderStatus = "QUEUED" | "RENDERING" | "READY" | "FAILED" | "CANCELLED";
 
 export interface VisualRenderResponse {
