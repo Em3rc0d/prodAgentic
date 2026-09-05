@@ -70,3 +70,6 @@ class TenantScopedMongoRepository:
 
     async def delete_one(self, criteria: Mapping[str, Any]):
         return await self.collection.delete_one(self._scope(criteria))
+
+    async def delete_many(self, criteria: Mapping[str, Any]):
+        return await self.collection.delete_many(self._scope(criteria))

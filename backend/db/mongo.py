@@ -20,7 +20,7 @@ async def _ensure_indexes(db):
 
 
 async def _ensure_mk1_foundation_indexes(db):
-    """Install S0 indexes without changing the legacy index-test contract."""
+    """Install S0/S1 indexes without changing the legacy index-test contract."""
     await db["tenants"].create_index(
         "tenant_id",
         unique=True,
@@ -43,6 +43,59 @@ async def _ensure_mk1_foundation_indexes(db):
     )
 
 
+async def _ensure_mk1_planning_indexes(db):
+    """Install S2 Batch/ContentItem/Memory persistence invariants."""
+    await db["batches"].create_index(
+        [("tenant_id", 1), ("batch_id", 1)],
+        unique=True,
+        name="tenant_batch_id_unique",
+    )
+    await db["batches"].create_index(
+        [("tenant_id", 1), ("profile_id", 1), ("created_at", -1)],
+        name="tenant_profile_batches_recent",
+    )
+    await db["content_items"].create_index(
+        [("tenant_id", 1), ("content_id", 1)],
+        unique=True,
+        name="tenant_content_id_unique",
+    )
+    await db["content_items"].create_index(
+        [("tenant_id", 1), ("batch_id", 1)],
+        name="tenant_batch_content_items",
+    )
+    await db["content_items"].create_index(
+        [("tenant_id", 1), ("profile_id", 1), ("editorial_state", 1)],
+        name="tenant_profile_editorial_state",
+    )
+    await db["content_plans"].create_index(
+        [("tenant_id", 1), ("artifact_id", 1)],
+        unique=True,
+        name="tenant_content_plan_unique",
+    )
+    await db["content_plans"].create_index(
+        [("tenant_id", 1), ("batch_id", 1)],
+        name="tenant_batch_content_plans",
+    )
+    await db["editorial_memory"].create_index(
+        [("tenant_id", 1), ("memory_id", 1)],
+        unique=True,
+        name="tenant_memory_id_unique",
+    )
+    await db["editorial_memory"].create_index(
+        [("tenant_id", 1), ("profile_id", 1), ("effective_at", -1)],
+        name="tenant_profile_memory_recent",
+    )
+    await db["editorial_memory"].create_index(
+        [("tenant_id", 1), ("profile_id", 1), ("canonical_topic", 1)],
+        name="tenant_profile_memory_topic",
+    )
+    await db["planning_traces"].create_index(
+        [("tenant_id", 1), ("batch_id", 1)],
+        unique=True,
+        name="tenant_batch_planning_trace_unique",
+    )
+
+
 async def connect_db(*, run_bootstrap_migration: bool = True, run_profile_bridge: bool | None = None):
     global _client, _db, _bootstrap_migration_report
     mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
@@ -52,6 +105,7 @@ async def connect_db(*, run_bootstrap_migration: bool = True, run_profile_bridge
         _db = _client[os.getenv("MONGO_DB", "content_engine")]
         await _ensure_indexes(_db)
         await _ensure_mk1_foundation_indexes(_db)
+        await _ensure_mk1_planning_indexes(_db)
         if run_bootstrap_migration:
             from application.tenancy.bootstrap import migrate_bootstrap_tenant
             report = await migrate_bootstrap_tenant(_db)
