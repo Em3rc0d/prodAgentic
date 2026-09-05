@@ -1,6 +1,6 @@
 # S1 Build Record — Profile V2
 
-Status: **IMPLEMENTED — CERTIFICATION IN PROGRESS**
+Status: **CERTIFIED — MERGE APPROVED**
 
 Branch: `mk1/s1-profile-v2`
 
