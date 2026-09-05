@@ -1,6 +1,6 @@
 # S2 Build Record — Batch + Editorial Memory + Novelty
 
-Status: **IMPLEMENTATION IN PROGRESS**
+Status: **IMPLEMENTED — CERTIFICATION IN PROGRESS**
 
 Branch: `mk1/s2-batch-memory-novelty`
 
@@ -33,18 +33,20 @@ Generate next batch
 - `mk1/test/GOLDEN_DATASETS.md` — GD-01/02/03
 - `mk1/test/ACCEPTANCE_SCENARIOS.md` — AS-02/03/11/14
 
-No accepted contract or ADR change is required before implementation.
+No accepted contract or ADR change was required before implementation.
 
 ## Frozen implementation decisions
 
-- Batch always freezes the exact `ProfileVersion` number and digest used for planning.
+- Batch freezes the exact `ProfileVersion` number and digest used for planning.
 - Runtime candidate target is `max(8, requested_size * 3)` with a hard V1 cap of 24.
 - Novelty evaluates canonical topic, lexical/semantic overlap, angle, hook/creative pattern, visual/format pattern and current-batch collisions.
 - Default cooldown policy remains `0–2 HARD`, `3–6 STRONG`, `7+ eligible only with genuinely fresh treatment`.
 - `BLOCKED`, `REPLACE_TOPIC` and `REWRITE_ANGLE` candidates do not enter ContentItems.
+- Same canonical topic alone is not an intra-batch veto; a genuinely different angle may pass with a warning while semantic/same-angle repetition remains blocked.
 - S2 contains no PerformanceSummary input. Performance cannot override novelty because it is not consulted in this slice.
 - If hard gates leave fewer ideas than requested, `selected_size < requested_size` is recorded explicitly; standards are not silently relaxed.
 - ContentPlanV1 is persisted as immutable planning evidence before any later S3 GenerationRun may consume it.
+- A `BatchPlanningTraceV1` persists the complete candidate/novelty/selection decision so `novelty_result_ref` is never an orphan explanation.
 
 ## Memory authority and bridge
 
@@ -55,13 +57,14 @@ S2 refreshes memory from two sources:
 1. native MK1 lifecycle documents when present (`content_items` + approvals/schedules/publications);
 2. the still-authoritative MK0 `content_runs` during migration, limited to `READY_FOR_REVIEW`, `APPROVED`, `SCHEDULED`, `PUBLISHING`, and `PUBLISHED`.
 
-Legacy projection is conservative and does not pretend MK0 had the richer structured planning contract. It preserves topic/idea/status identity and normalizes only evidence that exists.
+Legacy projection is conservative and does not pretend MK0 had the richer structured planning contract. It preserves topic/idea/status identity and normalizes only evidence that exists. Refresh replaces stable `native-` and `mk0-` projections rather than append-drifting the read model.
 
 ## Feature flags
 
 - backend: `MK1_ENABLED=true` + `MK1_BATCH_PLANNING=true`;
 - frontend: `NEXT_PUBLIC_MK1_SHELL=true` + `NEXT_PUBLIC_MK1_BATCH_PLANNING=true`;
-- defaults remain off.
+- defaults remain off in runtime examples;
+- CI explicitly enables S1+S2 only for certification.
 
 ## Failure paths
 
@@ -71,9 +74,10 @@ Legacy projection is conservative and does not pretend MK0 had the richer struct
 - candidate source returns too few candidates -> honest partial Batch;
 - all candidates collide -> Batch may select zero and records the reason;
 - memory refresh failure is not converted into false freshness; request fails rather than planning statelessly;
-- S3 production is not called in S2.
+- S3 production is not called in S2;
+- ordinary persistence failure before the Batch commit marker compensates trace/plans/items and returns failure.
 
-## Persistence
+## Persistence and commit boundary
 
 New tenant-scoped collections:
 
@@ -81,10 +85,42 @@ New tenant-scoped collections:
 - `content_items`
 - `content_plans`
 - `editorial_memory`
+- `planning_traces`
+
+The write order is intentionally:
+
+```text
+planning trace
+-> selected ContentPlans
+-> selected ContentItems
+-> Batch LAST
+```
+
+`Batch` is therefore the commit/visibility marker. An ordinary precommit error is compensated. A hard process death may leave orphan precommit evidence, but cannot leave a visible Batch pointing at missing selected evidence. Orphans remain identifiable by `tenant_id + batch_id` and can be reconciled without changing publication authority.
 
 Indexes follow `DATA_ARCHITECTURE.md` and include tenant identity first.
 
-## Required tests/certification
+## Product surface
+
+`/create` is an S2-gated low-friction cockpit:
+
+- Profile selector;
+- Tomorrow / This week;
+- 1 / 4 / 7 pieces;
+- optional constraints hidden behind one disclosure;
+- `Generate next batch` as the primary action;
+- selected/requested count, memory/pool/blocked telemetry and concise planning evidence after completion.
+
+The UI does not expose models, agents, thresholds or backend schema controls.
+
+## Test implementation
+
+- `backend/tests/test_mk1_s2_planning.py` covers deterministic contracts, cooldowns, soft review memory, current-batch collision, partial completion and GD-01/02/03 planning fixtures.
+- `backend/tests/test_mk1_s2_mongo.py` covers real-Mongo legacy memory rebuild, idempotent projection, frozen ProfileVersion evidence, tenant isolation and the Batch-last commit boundary.
+- `frontend/__tests__/mk1-batch-create.test.tsx` covers the default 4-piece request, partial truthfulness and optional constraints.
+- `frontend/e2e/ui-cert.spec.ts` includes `/create` desktop/mobile frames and an S2 API+browser acceptance scenario.
+
+## Required certification
 
 - contract validation and canonical normalization;
 - candidate pool strictly larger than requested when source capacity permits;
@@ -104,8 +140,9 @@ Indexes follow `DATA_ARCHITECTURE.md` and include tenant identity first.
 
 Disable S2 backend/frontend feature flags. S1 Profile V2 remains authoritative and operational. S2 collections are additive read/planning evidence and do not need destructive deletion for rollback.
 
-## Known limitations at slice start
+## Known limitations
 
 - S2 intentionally does not call Research/Writer/Editor/Visual; production begins in S3.
 - semantic comparison is deterministic/provider-free in S2; embedding adapters remain calibratable future implementation behind the same novelty contract.
 - native Approval/Schedule/Publication authority is introduced by later slices; until then the MK0 lifecycle bridge supplies migration-era memory where applicable.
+- hard process death before the Batch commit marker can leave orphan planning evidence; it cannot expose a committed Batch. Reconciliation of such orphan evidence is a bounded operational cleanup concern, not editorial/publication authority.
