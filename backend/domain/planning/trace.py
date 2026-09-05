@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field
@@ -23,5 +24,5 @@ class BatchPlanningTraceV1(FrozenModel):
     profile_version: int = Field(ge=1)
     memory_ids: tuple[str, ...] = ()
     evaluations: tuple[CandidateEvaluationV1, ...]
-    created_at: str
+    created_at: datetime
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
