@@ -172,7 +172,8 @@ export function Mk1BatchCreate() {
 
           <div className={styles.cards}>
             {result.content_items.map((item) => {
-              const evaluation = selectedEvaluations.find((entry) => entry.candidate.candidate_id === result.plans.find((plan) => plan.content_id === item.content_id)?.artifact_id);
+              const plan = result.plans.find((entry) => entry.content_id === item.content_id);
+              const evaluation = selectedEvaluations.find((entry) => entry.candidate.candidate_id === plan?.plan.candidate_id);
               return (
                 <article key={item.content_id} className={styles.card}>
                   <div className={styles.cardMeta}><span>{item.role}</span><span>{item.format.replace("_", " ")}</span></div>
