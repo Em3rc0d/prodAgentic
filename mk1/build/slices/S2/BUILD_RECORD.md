@@ -1,0 +1,111 @@
+# S2 Build Record — Batch + Editorial Memory + Novelty
+
+Status: **IMPLEMENTATION IN PROGRESS**
+
+Branch: `mk1/s2-batch-memory-novelty`
+
+Started from: `main@bfa64cb7e03e2344be80a789f0871bbac2bbbcea`
+
+## Objective
+
+Implement the first MK1 editorial-intelligence slice without invoking the S3 production cell:
+
+```text
+Generate next batch
+  -> immutable ProfileVersion
+  -> Editorial Memory refresh/read
+  -> oversized IdeaCandidateV1 pool
+  -> explainable NoveltyEngine
+  -> diversity-aware selection
+  -> ContentPlanV1 artifacts
+  -> first-class Batch + ContentItems
+```
+
+## Accepted authority
+
+- `mk1/design/CREATE_FLOW.md`
+- `mk1/arch/DOMAIN_MODEL.md` — Batch, ContentItem, EditorialMemoryEntry
+- `mk1/arch/INVARIANTS.md` — planning/memory invariants 5–8
+- `mk1/arch/EDITORIAL_ENGINE.md`
+- `mk1/arch/CONTRACTS.md` — IdeaCandidateV1 + ContentPlanV1
+- `mk1/arch/DATA_ARCHITECTURE.md`
+- `mk1/plan/VERTICAL_SLICES.md` — S2
+- `mk1/test/GOLDEN_DATASETS.md` — GD-01/02/03
+- `mk1/test/ACCEPTANCE_SCENARIOS.md` — AS-02/03/11/14
+
+No accepted contract or ADR change is required before implementation.
+
+## Frozen implementation decisions
+
+- Batch always freezes the exact `ProfileVersion` number and digest used for planning.
+- Runtime candidate target is `max(8, requested_size * 3)` with a hard V1 cap of 24.
+- Novelty evaluates canonical topic, lexical/semantic overlap, angle, hook/creative pattern, visual/format pattern and current-batch collisions.
+- Default cooldown policy remains `0–2 HARD`, `3–6 STRONG`, `7+ eligible only with genuinely fresh treatment`.
+- `BLOCKED`, `REPLACE_TOPIC` and `REWRITE_ANGLE` candidates do not enter ContentItems.
+- S2 contains no PerformanceSummary input. Performance cannot override novelty because it is not consulted in this slice.
+- If hard gates leave fewer ideas than requested, `selected_size < requested_size` is recorded explicitly; standards are not silently relaxed.
+- ContentPlanV1 is persisted as immutable planning evidence before any later S3 GenerationRun may consume it.
+
+## Memory authority and bridge
+
+`editorial_memory` remains a rebuildable read model, never publication authority.
+
+S2 refreshes memory from two sources:
+
+1. native MK1 lifecycle documents when present (`content_items` + approvals/schedules/publications);
+2. the still-authoritative MK0 `content_runs` during migration, limited to `READY_FOR_REVIEW`, `APPROVED`, `SCHEDULED`, `PUBLISHING`, and `PUBLISHED`.
+
+Legacy projection is conservative and does not pretend MK0 had the richer structured planning contract. It preserves topic/idea/status identity and normalizes only evidence that exists.
+
+## Feature flags
+
+- backend: `MK1_ENABLED=true` + `MK1_BATCH_PLANNING=true`;
+- frontend: `NEXT_PUBLIC_MK1_SHELL=true` + `NEXT_PUBLIC_MK1_BATCH_PLANNING=true`;
+- defaults remain off.
+
+## Failure paths
+
+- feature disabled -> bounded 404;
+- Profile missing/current version missing -> bounded 404/409;
+- cross-tenant access -> structural rejection through scoped repositories;
+- candidate source returns too few candidates -> honest partial Batch;
+- all candidates collide -> Batch may select zero and records the reason;
+- memory refresh failure is not converted into false freshness; request fails rather than planning statelessly;
+- S3 production is not called in S2.
+
+## Persistence
+
+New tenant-scoped collections:
+
+- `batches`
+- `content_items`
+- `content_plans`
+- `editorial_memory`
+
+Indexes follow `DATA_ARCHITECTURE.md` and include tenant identity first.
+
+## Required tests/certification
+
+- contract validation and canonical normalization;
+- candidate pool strictly larger than requested when source capacity permits;
+- hard and strong cooldown behavior;
+- same-angle/topic, creative-hook and current-batch collision cases;
+- insufficient novelty returns fewer honestly;
+- ProfileVersion is frozen into Batch/ContentItem/plan evidence;
+- legacy/native memory projection is rebuildable/idempotent;
+- tenant isolation negative matrix;
+- Content Seller / Logan / Tech golden planning fixtures;
+- real-Mongo persistence + memory rebuild;
+- frontend lint/Jest/build;
+- desktop/mobile Create flow browser certification;
+- exact-SHA evidence receipt before merge.
+
+## Rollback
+
+Disable S2 backend/frontend feature flags. S1 Profile V2 remains authoritative and operational. S2 collections are additive read/planning evidence and do not need destructive deletion for rollback.
+
+## Known limitations at slice start
+
+- S2 intentionally does not call Research/Writer/Editor/Visual; production begins in S3.
+- semantic comparison is deterministic/provider-free in S2; embedding adapters remain calibratable future implementation behind the same novelty contract.
+- native Approval/Schedule/Publication authority is introduced by later slices; until then the MK0 lifecycle bridge supplies migration-era memory where applicable.
