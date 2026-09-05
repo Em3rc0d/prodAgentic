@@ -28,6 +28,7 @@ jobs:
       PRODAGENTIC_DEPLOYMENT_KEY: ui-cert-installation
       MK1_ENABLED: "true"
       MK1_PROFILE_V2: "true"
+      MK1_BATCH_PLANNING: "true"
       MONGO_URI: mongodb://127.0.0.1:27018
       MONGO_TEST_URI: mongodb://127.0.0.1:27017
     steps:
@@ -129,6 +130,7 @@ jobs:
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
           NEXT_PUBLIC_MK1_SHELL: "true"
           NEXT_PUBLIC_MK1_PROFILE_V2: "true"
+          NEXT_PUBLIC_MK1_BATCH_PLANNING: "true"
         run: npm run build
 
   ui-browser-cert:
@@ -155,6 +157,7 @@ jobs:
       PRODAGENTIC_DEPLOYMENT_KEY: ui-cert-installation
       MK1_ENABLED: "true"
       MK1_PROFILE_V2: "true"
+      MK1_BATCH_PLANNING: "true"
       PRODAGENTIC_COOKIE_SECURE: "false"
       PRODAGENTIC_COOKIE_SAMESITE: lax
       PRODAGENTIC_LINKEDIN_TOKEN_KEY: ui-cert-linkedin-token-key-that-is-long-enough
@@ -170,6 +173,7 @@ jobs:
       NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
       NEXT_PUBLIC_MK1_SHELL: "true"
       NEXT_PUBLIC_MK1_PROFILE_V2: "true"
+      NEXT_PUBLIC_MK1_BATCH_PLANNING: "true"
       UI_CERT_BASE_URL: http://127.0.0.1:3000
       UI_CERT_API_URL: http://127.0.0.1:8000
     steps:
