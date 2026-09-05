@@ -200,6 +200,7 @@ test.describe("S2 memory-aware Batch planning", () => {
     expect(batchPayload.planning_trace.evaluations.length).toBeGreaterThanOrEqual(8);
 
     await expect(page.getByRole("heading", { name: "4 of 4 ideas committed" })).toBeVisible();
+    await page.getByText("Planning evidence").click();
     await expect(page.getByText(/candidates evaluated/i)).toBeVisible();
     await page.screenshot({ path: `${SCREENSHOT_DIR}/desktop-s2-batch-planned.png`, fullPage: true });
   });
