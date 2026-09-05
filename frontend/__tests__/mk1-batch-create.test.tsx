@@ -100,6 +100,8 @@ describe("MK1 S2 Create", () => {
     expect(mockedBatches.createBatchV1.mock.calls[0][1].target_window.timezone).toBeTruthy();
     expect(await screen.findByRole("heading", { name: "4 of 4 ideas committed" })).toBeVisible();
     expect(screen.getByText("Fresh · review note")).toBeVisible();
+
+    fireEvent.click(screen.getByText("Planning evidence"));
     expect(screen.getByText(/4 candidates evaluated/i)).toBeVisible();
   });
 
