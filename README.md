@@ -6,10 +6,9 @@ prodAgentic is a governed agentic content-production system. It plans, produces,
 
 The active product generation is **MK1**.
 
-Current certified implementation baseline:
+Certified implementation/product-code baseline through S2:
 
 ```text
-main
 002177e90431d6009498a88cc6eb20efc46e14b3
 ```
 
@@ -21,7 +20,7 @@ S1 — Profile V2                         ✅
 S2 — Batch + Editorial Memory + Novelty ✅
 ```
 
-Post-merge canonical CI on that exact `main` SHA:
+Post-merge canonical CI on that exact product SHA:
 
 ```text
 backend-test        PASS
@@ -30,11 +29,13 @@ UI-01-CERT browser PASS
 run                 33982022917
 ```
 
+`main` may contain later documentation-only descendants. Those do not replace the product-code certification boundary above; `mk1/STATUS.md` is the canonical ledger.
+
 The next operator gate is **local S0→S2 acceptance** before expanding the product further.
 
 Start here:
 
-- [`docs/LOCAL_DEVELOPMENT.md`](docs/LOCAL_DEVELOPMENT.md) — exact local toolchain, environment, Mongo, backend and frontend startup.
+- [`docs/LOCAL_DEVELOPMENT.md`](docs/LOCAL_DEVELOPMENT.md) — local toolchain, environment, Mongo, backend and frontend startup.
 - [`mk1/test/LOCAL_ACCEPTANCE.md`](mk1/test/LOCAL_ACCEPTANCE.md) — fail-closed operator acceptance checklist.
 - [`mk1/STATUS.md`](mk1/STATUS.md) — canonical certification/status ledger.
 
