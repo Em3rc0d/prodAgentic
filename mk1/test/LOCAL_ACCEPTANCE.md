@@ -2,19 +2,17 @@
 
 Status: **READY FOR OPERATOR EXECUTION**
 
-This protocol validates the current certified product baseline on the operator's own machine. It is deliberately product-facing: CI already proved the code-level gates; this pass proves that the current experience starts, persists, survives ordinary restarts and behaves coherently in the environment where the operator will actually use it.
+This protocol validates the current certified product baseline on the operator's own machine. CI already proves the code-level gates; this pass proves that the current experience starts, persists, survives ordinary restarts and behaves coherently in the operator environment.
 
 ## 0. Evidence boundary
 
-Execute against the current documented baseline in `mk1/STATUS.md`.
-
-At the time this checklist was frozen:
+The certified **product-code baseline** through S2 is:
 
 ```text
-main = 002177e90431d6009498a88cc6eb20efc46e14b3
+002177e90431d6009498a88cc6eb20efc46e14b3
 ```
 
-This SHA passed post-merge canonical CI:
+That exact product SHA passed post-merge canonical CI:
 
 ```text
 backend-test        PASS
@@ -23,11 +21,32 @@ UI-01-CERT browser PASS
 run                 33982022917
 ```
 
-A different local SHA invalidates this receipt unless `mk1/STATUS.md` has been updated to bind the new SHA.
+Current `main` may be a documentation-only descendant of this product SHA. Therefore the exact tested `HEAD` must be recorded, but it does not have to equal the S2 product baseline.
+
+Before acceptance:
+
+```bash
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+TESTED_HEAD=$(git rev-parse HEAD)
+echo "$TESTED_HEAD"
+git merge-base --is-ancestor 002177e90431d6009498a88cc6eb20efc46e14b3 HEAD
+```
+
+The ancestor command must exit `0`.
+
+Then inspect the descendant range:
+
+```bash
+git diff --name-only 002177e90431d6009498a88cc6eb20efc46e14b3..HEAD
+```
+
+If that range contains runtime/product-code mutations that are not independently certified in `mk1/STATUS.md`, stop and record **FAIL — UNCERTIFIED DESCENDANT**. Documentation-only descendants do not replace or weaken the exact S2 product certificate.
 
 ## 1. Acceptance rule
 
-Use only these verdicts:
+Use only:
 
 ```text
 PASS
@@ -37,7 +56,7 @@ NOT EXERCISED
 
 Do not convert a FAIL into PASS by changing expected behavior during the run.
 
-A local acceptance PASS requires all **blocking** checks below to pass. `NOT EXERCISED` is allowed only for explicitly optional/non-S0→S2 boundaries such as LinkedIn or S3 generation.
+A local acceptance PASS requires all **blocking** checks below to pass. `NOT EXERCISED` is allowed only for explicitly optional/non-S0→S2 boundaries such as full model-provider readiness, LinkedIn or S3 generation.
 
 ## 2. Environment receipt
 
@@ -45,7 +64,10 @@ Record before testing:
 
 ```text
 Date/time:
-Git SHA:
+Tested Git HEAD:
+Certified product baseline: 002177e90431d6009498a88cc6eb20efc46e14b3
+Baseline-is-ancestor: PASS/FAIL
+Descendant changed files:
 OS:
 WSL/native Windows/Linux/macOS:
 Python:
@@ -58,7 +80,9 @@ Auth enabled: yes/no
 
 Blocking prerequisites:
 
-- [ ] `git rev-parse HEAD` matches the expected baseline.
+- [ ] current `HEAD` is recorded.
+- [ ] certified product baseline is an ancestor of current `HEAD`.
+- [ ] no uncertified runtime/product-code mutation exists after the baseline.
 - [ ] MongoDB is reachable.
 - [ ] backend starts without process crash.
 - [ ] `GET /health/live` succeeds.
@@ -123,7 +147,7 @@ Blocking.
 
 Create a test profile representing a real editorial identity you understand well enough to judge.
 
-Recommended operator fixture:
+Recommended fixture:
 
 ```text
 Name: Local Acceptance Tech
@@ -201,6 +225,16 @@ Route:
 
 S2 is a planning slice. It must **not** invoke S3 production or publish externally.
 
+Important current UI boundary:
+
+```text
+/create displays the newly created Batch
+Batch-history UI is not implemented in S2
+GET /api/batches/{batch_id} is the certified read-only retrieval path
+```
+
+Where this checklist asks you to inspect an older Batch, use the API evidence path rather than expecting a nonexistent history screen.
+
 ### S2.1 Create cockpit
 
 Blocking.
@@ -240,6 +274,20 @@ Verify:
 - [ ] Selected count is never falsely represented as requested count when fewer survive novelty gates.
 - [ ] Each selected item has a usable plan/identity rather than an empty placeholder.
 
+Open browser DevTools → Network, inspect the successful Batch-planning response and record:
+
+```text
+batch_id
+profile_id
+profile_version
+profile_snapshot_digest
+requested_size
+selected_size
+planning_trace.trace_id
+```
+
+Keep the `batch_id` for later persistence/freeze checks.
+
 ### S2.3 Honest partial completion
 
 Blocking principle; may be naturally observed rather than forced.
@@ -250,7 +298,7 @@ If selected `<` requested:
 - [ ] Product does not invent filler ideas solely to reach the requested number.
 - [ ] Planning evidence explains blocked/replaced/rewrite decisions at an appropriate level.
 
-If selected `==` requested, record `PARTIAL NOT NATURALLY OBSERVED`; the automated suite already certifies the partial path, so do not corrupt your local data just to manufacture one.
+If selected `==` requested, record `PARTIAL NOT NATURALLY OBSERVED`; the automated suite already certifies the partial path, so do not corrupt local data just to manufacture one.
 
 ### S2.4 Planning evidence disclosure
 
@@ -267,44 +315,72 @@ A test that reads hidden `<details>` content without opening it does not count a
 
 Blocking.
 
-After Batch creation:
+After recording the first Batch identity:
 
-- [ ] Note the profile/version used.
-- [ ] Modify the Profile again to create a newer version.
-- [ ] Return to the already-created Batch.
-- [ ] Existing Batch evidence remains bound to the version that created it; it must not silently mutate to the new current profile.
+1. note its `profile_version` and `profile_snapshot_digest` from the planning response;
+2. update the same Profile through S1 so a newer ProfileVersion becomes current;
+3. keep the original `batch_id`;
+4. re-fetch that original Batch using the authenticated read path:
+
+```text
+GET http://127.0.0.1:8000/api/batches/{batch_id}
+```
+
+One convenient browser-console check while signed in is:
+
+```js
+fetch("http://127.0.0.1:8000/api/batches/<BATCH_ID>", { credentials: "include" })
+  .then((r) => r.json())
+  .then(console.log)
+```
+
+Verify:
+
+- [ ] re-fetch succeeds.
+- [ ] old Batch `profile_version` equals the value recorded when it was created.
+- [ ] old Batch `profile_snapshot_digest` equals the original digest.
+- [ ] old Batch does not silently adopt the newer current ProfileVersion.
+- [ ] a newly planned future Batch may correctly use the newer current version.
 
 Expected invariant:
 
 ```text
-Batch history uses frozen ProfileVersion evidence
-future planning may use newer current ProfileVersion
+historical Batch → frozen ProfileVersion evidence
+future planning  → current accepted ProfileVersion
 ```
+
+The lack of a Batch-history screen is **not** a failure of this S2 contract; pretending such a screen exists would be.
 
 ### S2.6 Editorial Memory behavior
 
 Blocking at product level.
 
-Generate a second batch with the same Profile after the first accepted Batch exists.
+Generate a second batch with the same Profile after the first Batch exists.
 
 - [ ] Second planning request succeeds.
 - [ ] Product does not blindly repeat the identical idea/angle/hook set from the first Batch.
-- [ ] Where a topic is reused, treatment should be meaningfully different or accompanied by the appropriate novelty warning/reason.
+- [ ] Where a topic is reused, treatment is meaningfully different or accompanied by the appropriate novelty warning/reason.
 - [ ] A shortage of fresh ideas is represented honestly rather than bypassing cooldown/novelty standards.
 
-This is not a request to subjectively demand every output be brilliant. It is a check that recent memory is actually influencing planning and that repetition controls are visible/coherent.
+This is not a request to subjectively demand every output be brilliant. It checks that recent memory actually influences planning and repetition controls remain coherent.
 
 ### S2.7 Restart persistence
 
 Blocking.
+
+Before restart, keep at least one recorded `batch_id` plus its original `profile_version` and digest.
 
 - [ ] Stop backend and frontend normally.
 - [ ] Keep Mongo data.
 - [ ] Restart backend/frontend with the same environment.
 - [ ] Sign in again if necessary.
 - [ ] Existing Profile remains.
-- [ ] Existing Batch/ContentPlan evidence remains.
-- [ ] A subsequent planning operation still sees coherent editorial memory.
+- [ ] re-fetch `GET /api/batches/{batch_id}` succeeds after restart.
+- [ ] re-fetched Batch retains the original `profile_version` and `profile_snapshot_digest`.
+- [ ] content plans/planning trace referenced by the Batch response remain coherent.
+- [ ] a subsequent planning operation still sees coherent Editorial Memory.
+
+This is the S2 persistence proof until a dedicated Batch-history UI is implemented in a later slice.
 
 ## 6. Negative boundary checks
 
@@ -334,6 +410,7 @@ NEXT_PUBLIC_MK1_BATCH_PLANNING=false
 Restart frontend.
 
 - [ ] Frontend does not pretend the S2 product surface is active.
+- [ ] `/create` shows the bounded disabled state rather than a half-enabled cockpit.
 
 Restore the flag before finishing.
 
@@ -355,7 +432,7 @@ Blocking for declaring the local product usable enough to continue.
 
 Test at normal desktop width and one narrow/mobile-sized viewport.
 
-- [ ] No horizontal overflow that hides primary controls.
+- [ ] No horizontal overflow hides primary controls.
 - [ ] Navigation remains understandable.
 - [ ] Main action on `/profiles` is visually obvious.
 - [ ] Main action on `/create` is visually obvious.
@@ -380,12 +457,17 @@ Warnings may be acceptable if explained by an intentionally unconfigured optiona
 
 ## 9. Final receipt
 
-Fill this exactly:
+Fill exactly:
 
 ```text
 PRODAGENTIC MK1 LOCAL ACCEPTANCE
 
-Git SHA: ________________________________
+Certified product baseline:
+002177e90431d6009498a88cc6eb20efc46e14b3
+
+Tested Git HEAD: _________________________
+Baseline ancestor check: PASS / FAIL
+Descendant changed files reviewed: PASS / FAIL
 Date: ___________________________________
 Operator environment: ___________________
 
@@ -406,6 +488,12 @@ S2 ProfileVersion freeze  PASS / FAIL
 S2 Editorial Memory       PASS / FAIL
 S2 restart persistence    PASS / FAIL
 
+First Batch ID: __________________________
+First Batch profile_version: _____________
+First Batch profile digest: ______________
+Old Batch re-fetch after update: PASS / FAIL
+Old Batch re-fetch after restart: PASS / FAIL
+
 Feature flag fail-closed  PASS / FAIL
 No S3/publication sidefx  PASS / FAIL
 Desktop UX                PASS / FAIL
@@ -422,7 +510,9 @@ Overall                    PASS / FAIL
 Only declare the operator gate closed when:
 
 ```text
-exact documented SHA
+certified product baseline is ancestor of tested HEAD
+        +
+no uncertified product-code descendant
         +
 all blocking S0 checks PASS
         +
@@ -437,6 +527,6 @@ no accidental S3/publication side effect
 usable desktop + narrow viewport UX
 ```
 
-If a defect appears, preserve the local receipt and evidence, fix the defect on a new branch/candidate, run canonical CI, then repeat only the affected local acceptance path plus regression-sensitive paths.
+If a defect appears, preserve the local receipt/evidence, fix the defect on a new branch/candidate, run canonical CI, then repeat the affected local acceptance path plus regression-sensitive paths.
 
-Do not certify a new implementation SHA using the old local receipt.
+Do not certify a new implementation SHA using an old local receipt.
