@@ -26,4 +26,18 @@ describe("MK1 S0 application foundation", () => {
     expect(css).toContain("--pa-danger: #ff7070");
     expect(css).toContain("prefers-reduced-motion");
   });
+
+  it("keeps long MK1 work surfaces reachable without requiring browser zoom", () => {
+    const css = fs.readFileSync(
+      path.join(process.cwd(), "components", "mk1", "mk1-app-shell.module.css"),
+      "utf8",
+    );
+    const contentRule = css.match(/\.content\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(contentRule).toContain("height: 100dvh");
+    expect(contentRule).toContain("overflow-y: auto");
+    expect(contentRule).toContain("overflow-x: hidden");
+    expect(contentRule).toContain("scrollbar-gutter: stable");
+    expect(css).toContain("height: calc(100dvh - 68px)");
+  });
 });
