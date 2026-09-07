@@ -27,6 +27,37 @@ jobs:
       - name: Validate Compose model
         run: docker compose config --quiet
 
+      - name: Validate WSL launcher syntax
+        run: bash -n scripts/docker-wsl-up.sh
+
+      - name: Validate WSL NAT Compose model
+        env:
+          PRODAGENTIC_WEB_BIND_HOST: 172.30.10.20
+          NEXT_PUBLIC_API_URL: http://172.30.10.20:8000
+          PRODAGENTIC_ALLOW_PRIVATE_HTTP_API: "true"
+          CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://172.30.10.20:3000
+          FRONTEND_URL: http://172.30.10.20:3000
+        run: docker compose config --quiet
+
+      - name: Reject private HTTP API without explicit local opt-in
+        env:
+          NEXT_PUBLIC_API_URL: http://172.30.10.20:8000
+          PRODAGENTIC_ALLOW_PRIVATE_HTTP_API: "false"
+        run: |
+          if docker compose build frontend > /tmp/private-http-rejected.log 2>&1; then
+            cat /tmp/private-http-rejected.log
+            echo "Frontend build unexpectedly accepted RFC1918 HTTP without explicit opt-in"
+            exit 1
+          fi
+          cat /tmp/private-http-rejected.log
+          grep -q "RFC1918 HTTP is allowed only when PRODAGENTIC_ALLOW_PRIVATE_HTTP_API=true" /tmp/private-http-rejected.log
+
+      - name: Build explicit WSL private HTTP frontend candidate
+        env:
+          NEXT_PUBLIC_API_URL: http://172.30.10.20:8000
+          PRODAGENTIC_ALLOW_PRIVATE_HTTP_API: "true"
+        run: docker compose build frontend
+
       - name: Build local stack
         run: docker compose build
 
@@ -73,7 +104,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: docker-compose-local-evidence
-          path: docker-compose-local.log
+          path: |
+            docker-compose-local.log
+            /tmp/private-http-rejected.log
           if-no-files-found: ignore
           retention-days: 14
 
