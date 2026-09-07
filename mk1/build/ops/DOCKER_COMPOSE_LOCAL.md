@@ -1,10 +1,10 @@
 # DOCKER-COMPOSE-LOCAL — Build Record
 
-State: **IMPLEMENTED CANDIDATE — EXACT-HEAD CERTIFICATION REQUIRED**
+State: **IMPLEMENTATION CANDIDATE PASSED — CERTIFICATION RECEIPT HEAD CI REQUIRED**
 
 Branch: `ops/docker-compose-local-stack`
 
-Base authority: MK1 S0/S1/S2 certified product line plus the reconciled local-acceptance documentation on `main`.
+Base authority: `main@e1a75a0628dc7ee3977ef24004fb867c9d6ced20`, preserving the certified MK1 S0/S1/S2 product-code boundary.
 
 ## Objective
 
@@ -14,7 +14,7 @@ Provide one reproducible local command that starts the complete currently-author
 docker compose up --build
 ```
 
-The result must expose only loopback host bindings:
+The result exposes only loopback host bindings:
 
 ```text
 127.0.0.1:3000  frontend
@@ -22,9 +22,7 @@ The result must expose only loopback host bindings:
 127.0.0.1:27017 mongo
 ```
 
-## Scope
-
-This operational slice adds:
+## Scope implemented
 
 - root `docker-compose.yml`;
 - production-style `frontend/Dockerfile`;
@@ -33,8 +31,9 @@ This operational slice adds:
 - persistent Mongo and asset volumes;
 - Mongo/backend/frontend healthchecks;
 - health-gated startup dependencies;
-- a dedicated `DOCKER-COMPOSE-LOCAL smoke` GitHub Actions gate;
-- Docker-specific operator documentation.
+- dedicated `DOCKER-COMPOSE-LOCAL smoke` GitHub Actions gate;
+- Docker-specific operator documentation;
+- Docker certification receipt.
 
 The existing backend Dockerfile remains authoritative and is reused unchanged.
 
@@ -89,9 +88,78 @@ Mongo ping healthy
 
 Full `/health/ready` is deliberately not the Compose health gate because it includes provider readiness. S0→S2 deterministic planning may be locally accepted without a configured Gemini key.
 
-## Certification requirements
+## Exact implementation candidate
 
-The exact candidate head must pass:
+```text
+66555f71733308dd25a2274b005cfc1fad647252
+```
+
+### Canonical CI
+
+```text
+CI #713
+run:                34075776900
+frontend-test:       101601449819  PASS
+backend-test:        101601449951  PASS
+UI-01-CERT browser:  101601787273  PASS
+```
+
+Browser artifact:
+
+```text
+id:      10002045099
+name:    ui-01-cert-evidence
+sha256:  cdfdf9fdc0b4f5b755b47b6ac4aa7f2f5fd7f8ce50b650f022d432bfe1dde490
+```
+
+### Docker Compose Local
+
+```text
+Docker Compose Local #5
+run:  34075776893
+job:  101601495233
+PASS
+```
+
+Dedicated Compose gates passed:
+
+```text
+compose model validation              PASS
+backend + frontend image build        PASS
+health-gated full-stack startup       PASS
+Mongo ping                            PASS
+backend /health/live                  PASS
+frontend HTTP                         PASS
+local auth login + CSRF               PASS
+log evidence upload                   PASS
+CI teardown                           PASS
+```
+
+Compose artifact:
+
+```text
+id:      10001997661
+name:    docker-compose-local-evidence
+sha256:  30377ca75a8ae2c88a9e6fe87bb592fedae85f84963388f436f75d8c3871bce5
+```
+
+## Candidate decision
+
+The exact implementation candidate satisfies the frozen operational contract and both required test families.
+
+No unresolved implementation contradiction was found after the final hardening that changed LinkedIn from placeholder configuration to **truly unconfigured by default**.
+
+The authoritative certification details are recorded in:
+
+```text
+mk1/test/evidence/DOCKER_COMPOSE_LOCAL/CERTIFICATION.md
+```
+
+## Receipt-head rule
+
+This build record and the certification receipt bind the successful candidate evidence into the repository. Their commit is therefore a new documentation receipt head.
+
+The exact receipt head must itself pass unchanged:
 
 ```text
 canonical CI
@@ -100,27 +168,22 @@ canonical CI
   UI-01-CERT browser
 
 Docker Compose Local
-  compose model validation
-  backend image build
-  frontend image build
-  health-gated full stack start
-  Mongo ping
-  backend liveness
-  frontend HTTP
-  default local auth login
-  evidence log upload
-  clean CI teardown
+  DOCKER-COMPOSE-LOCAL smoke
 ```
 
-No merge is authorized if either workflow is red or incomplete.
+Only after both are fully green is PR #39 merge-approved.
 
-## Operator test after merge
+Any code or documentation mutation after that green receipt invalidates merge approval until the new exact head passes both workflow families again.
 
-Once exact-head CI and post-merge CI are green, the operator should run:
+## Post-merge rule
+
+After merge, the exact `main` SHA must pass both workflow families before operator use is promoted.
+
+Once that post-merge gate closes, the operator command is:
 
 ```bash
 git pull
 docker compose up --build
 ```
 
-and continue with `mk1/test/LOCAL_ACCEPTANCE.md`.
+and product-facing acceptance continues with `mk1/test/LOCAL_ACCEPTANCE.md`.
