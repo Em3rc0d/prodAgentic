@@ -5,7 +5,7 @@ services:
     image: mongo:7
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - prodagentic_mongo_data:/data/db
     healthcheck:
@@ -21,24 +21,46 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     init: true
-    env_file:
-      - ./.env.docker
     environment:
       PRODAGENTIC_ENV: development
+      APP_DEFAULT_LANGUAGE: ${APP_DEFAULT_LANGUAGE:-es}
+      LANGUAGE_MIN_CONFIDENCE: ${LANGUAGE_MIN_CONFIDENCE:-0.6}
+      LANGUAGE_MIN_MARGIN: ${LANGUAGE_MIN_MARGIN:-0.2}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+
       MONGO_URI: mongodb://mongo:27017/prodagentic_local
       MONGO_DB: prodagentic_local
       PRODAGENTIC_ASSET_ROOT: /app/assets
+      PRODAGENTIC_DEPLOYMENT_KEY: ${PRODAGENTIC_DEPLOYMENT_KEY:-local-docker-installation}
+
       MK1_ENABLED: "true"
       MK1_PROFILE_V2: "true"
       MK1_BATCH_PLANNING: "true"
       IMAGE_RENDER_ENABLED: "false"
       SCHEDULER_ENABLED: "false"
+
+      PRODAGENTIC_AUTH_ENABLED: ${PRODAGENTIC_AUTH_ENABLED:-true}
+      PRODAGENTIC_ADMIN_USER: ${PRODAGENTIC_ADMIN_USER:-admin}
+      PRODAGENTIC_ADMIN_PASSWORD: ${PRODAGENTIC_ADMIN_PASSWORD:-local-docker-password-change-me}
+      PRODAGENTIC_SESSION_SECRET: ${PRODAGENTIC_SESSION_SECRET:-local-docker-session-secret-change-me-0123456789abcdef}
+      PRODAGENTIC_SESSION_TTL_SECONDS: ${PRODAGENTIC_SESSION_TTL_SECONDS:-43200}
       PRODAGENTIC_COOKIE_SECURE: "false"
       PRODAGENTIC_COOKIE_SAMESITE: lax
+
       CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       FRONTEND_URL: http://localhost:3000
+
+      LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID:-local-compose-not-authorized}
+      LINKEDIN_CLIENT_SECRET: ${LINKEDIN_CLIENT_SECRET:-local-compose-not-authorized}
+      LINKEDIN_REDIRECT_URI: http://127.0.0.1:8000/api/integrations/linkedin/callback
+      PRODAGENTIC_LINKEDIN_TOKEN_KEY: ${PRODAGENTIC_LINKEDIN_TOKEN_KEY:-local-compose-linkedin-token-key-change-me-0123456789}
+      LINKEDIN_API_VERSION: ${LINKEDIN_API_VERSION:-202608}
+      LINKEDIN_STATIC_FALLBACK_ENABLED: "false"
+
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
+      N8N_ALLOW_DIRECT_FALLBACK: "false"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - prodagentic_assets:/app/assets
     depends_on:
@@ -71,7 +93,7 @@ services:
       PORT: "3000"
       HOSTNAME: 0.0.0.0
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       backend:
         condition: service_healthy
