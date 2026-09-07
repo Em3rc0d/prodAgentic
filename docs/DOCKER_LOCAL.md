@@ -123,7 +123,7 @@ Do not run the destructive form against a stack whose data you intend to keep.
 
 The stack starts without an environment file.
 
-For custom local credentials or a Gemini key, copy:
+For custom local credentials, a Gemini key, or deliberate testing of an optional integration, copy:
 
 ```bash
 cp .env.docker.example .env.docker
@@ -183,7 +183,8 @@ For S0→S2 acceptance:
 - image rendering is disabled;
 - the scheduler is disabled;
 - LinkedIn static fallback is disabled;
-- placeholder LinkedIn configuration does not authorize an account;
+- LinkedIn client id, client secret and token-encryption key are empty by default;
+- the LinkedIn integration therefore reports itself unconfigured until the operator deliberately supplies credentials;
 - no LinkedIn post should be created;
 - no external publication should occur;
 - no S3 Research/Writer/Editor/Visual generation is required for Batch planning.
@@ -299,6 +300,10 @@ Auth configuration requires a password of at least 12 characters and a session s
 ### `/health/ready` is not ready
 
 If no `GEMINI_API_KEY` is configured, this can be expected. Use `/health/live` to distinguish a running backend from full provider readiness.
+
+### LinkedIn says not configured
+
+That is the expected S0→S2 local default. Do not add real OAuth credentials merely to pass the planning acceptance gate.
 
 ### I changed a `NEXT_PUBLIC_*` flag but nothing changed
 
