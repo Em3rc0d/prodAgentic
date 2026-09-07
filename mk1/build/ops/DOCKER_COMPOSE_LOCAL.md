@@ -48,7 +48,7 @@ The existing backend Dockerfile remains authoritative and is reused unchanged.
 - S3 is not authorized by this stack.
 - image rendering and scheduler are disabled for the S0→S2 acceptance surface.
 - LinkedIn static fallback is disabled.
-- placeholder LinkedIn configuration grants no publishing authority.
+- LinkedIn OAuth credentials are empty by default, so the integration remains unconfigured until explicitly supplied by the operator.
 - no real secret is checked into the repository.
 - local default auth credentials are acceptable only because all checked-in host bindings are loopback-only; operators should override them before using non-test local data.
 
