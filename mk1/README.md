@@ -19,19 +19,20 @@ S0→S2 LOCAL OPERATOR ACCEPTANCE  ⏳ READY TO EXECUTE
 S3 STRUCTURED AGENT CELL         ○ NEXT PLANNED SLICE
 ```
 
-The certified S2 merge baseline documented for operator testing is:
+The certified S2 **product-code baseline** is:
 
 ```text
 002177e90431d6009498a88cc6eb20efc46e14b3
 ```
 
-That exact `main` SHA passed backend, frontend and UI browser post-merge CI.
+That exact SHA passed backend, frontend and UI browser post-merge CI. Current `main` may later include documentation-only descendants; those do not replace this product certificate.
 
 To run the product locally:
 
 1. read [`../docs/LOCAL_DEVELOPMENT.md`](../docs/LOCAL_DEVELOPMENT.md);
 2. execute [`test/LOCAL_ACCEPTANCE.md`](test/LOCAL_ACCEPTANCE.md);
-3. preserve exact PASS/FAIL evidence instead of redefining expected behavior during the run.
+3. record the exact `HEAD` tested and verify the certified product baseline remains its ancestor;
+4. preserve exact PASS/FAIL evidence instead of redefining expected behavior during the run.
 
 S0→S2 acceptance must not trigger S3 production or external publication.
 
