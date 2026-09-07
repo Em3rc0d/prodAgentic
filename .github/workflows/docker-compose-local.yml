@@ -1,0 +1,82 @@
+name: Docker Compose Local
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: docker-compose-local-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose-smoke:
+    name: DOCKER-COMPOSE-LOCAL smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Docker versions
+        run: |
+          docker version
+          docker compose version
+
+      - name: Validate Compose model
+        run: docker compose config --quiet
+
+      - name: Build local stack
+        run: docker compose build
+
+      - name: Start local stack and wait for health
+        run: docker compose up -d --wait --wait-timeout 240
+
+      - name: Show service state
+        run: docker compose ps
+
+      - name: Verify Mongo
+        run: |
+          docker compose exec -T mongo mongosh --quiet --eval \
+            'if (db.runCommand({ ping: 1 }).ok !== 1) { quit(2) }'
+
+      - name: Verify backend liveness
+        run: curl --fail --silent --show-error http://127.0.0.1:8000/health/live
+
+      - name: Verify frontend HTTP
+        run: curl --fail --silent --show-error http://127.0.0.1:3000/ >/dev/null
+
+      - name: Verify default local auth boundary
+        shell: bash
+        run: |
+          login_json="$(curl --fail --silent --show-error \
+            -X POST http://127.0.0.1:8000/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"local-docker-password-change-me"}')"
+          LOGIN_JSON="$login_json" python - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["LOGIN_JSON"])
+          assert payload.get("authenticated") is True, payload
+          assert payload.get("csrf_token"), payload
+          print("Local auth smoke PASSED")
+          PY
+
+      - name: Capture Compose logs
+        if: always()
+        run: docker compose logs --no-color > docker-compose-local.log || true
+
+      - name: Upload Compose evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-compose-local-evidence
+          path: docker-compose-local.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Destroy CI stack
+        if: always()
+        run: docker compose down -v --remove-orphans

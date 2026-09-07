@@ -29,15 +29,63 @@ UI-01-CERT browser PASS
 run                 33982022917
 ```
 
-`main` may contain later documentation-only descendants. Those do not replace the product-code certification boundary above; `mk1/STATUS.md` is the canonical ledger.
+`main` may contain later documentation/operations descendants. Those do not replace the product-code certification boundary above; `mk1/STATUS.md` is the canonical ledger.
 
-The next operator gate is **local S0→S2 acceptance** before expanding the product further.
+## Run locally with Docker
 
-Start here:
+Preferred local path:
 
-- [`docs/LOCAL_DEVELOPMENT.md`](docs/LOCAL_DEVELOPMENT.md) — local toolchain, environment, Mongo, backend and frontend startup.
+```bash
+git pull
+docker compose up --build
+```
+
+Then open:
+
+```text
+http://localhost:3000
+```
+
+Default local login:
+
+```text
+username: admin
+password: local-docker-password-change-me
+```
+
+The checked-in local Compose contract starts:
+
+```text
+MongoDB 7      127.0.0.1:27017
+FastAPI        127.0.0.1:8000
+Next.js        127.0.0.1:3000
+```
+
+with health-gated startup and persistent named volumes for Mongo and owned assets.
+
+Detailed Docker runbook:
+
+- [`docs/DOCKER_LOCAL.md`](docs/DOCKER_LOCAL.md)
+
+Optional overrides:
+
+```bash
+cp .env.docker.example .env.docker
+docker compose --env-file .env.docker up --build
+```
+
+The default stack is loopback-only and scoped to certified MK1 S0→S2. It does not authorize S3 or external publication.
+
+## Local operator acceptance
+
+After the stack is healthy, execute:
+
 - [`mk1/test/LOCAL_ACCEPTANCE.md`](mk1/test/LOCAL_ACCEPTANCE.md) — fail-closed operator acceptance checklist.
 - [`mk1/STATUS.md`](mk1/STATUS.md) — canonical certification/status ledger.
+
+Manual/non-Docker setup remains documented in:
+
+- [`docs/LOCAL_DEVELOPMENT.md`](docs/LOCAL_DEVELOPMENT.md)
 
 The local S0→S2 pass must not trigger the future S3 production cell or publish externally.
 
@@ -132,7 +180,7 @@ A new engineer or agent should read:
 7. `mk1/arch/INVARIANTS.md`
 8. `mk1/plan/DESIGN_GRAPH.md`
 9. `mk1/plan/BUILD_ENTRY_CRITERIA.md`
-10. `docs/LOCAL_DEVELOPMENT.md` when running the product locally.
+10. `docs/DOCKER_LOCAL.md` when running the product locally.
 
 ## Build authorization phrase
 

@@ -2,7 +2,31 @@
 
 FastAPI backend for prodAgentic.
 
-The active MK1 product baseline is currently certified through S2. For the complete local operator runbook, use [`../docs/LOCAL_DEVELOPMENT.md`](../docs/LOCAL_DEVELOPMENT.md).
+The active MK1 product baseline is currently certified through S2.
+
+## Preferred full-stack local path
+
+From the repository root:
+
+```bash
+docker compose up --build
+```
+
+Compose reuses the existing `backend/Dockerfile`, starts Mongo first, waits for Mongo health, then starts the backend with:
+
+```text
+MONGO_URI=mongodb://mongo:27017/prodagentic_local
+```
+
+The backend is published only on:
+
+```text
+127.0.0.1:8000
+```
+
+See [`../docs/DOCKER_LOCAL.md`](../docs/DOCKER_LOCAL.md).
+
+For manual/non-Docker setup, use [`../docs/LOCAL_DEVELOPMENT.md`](../docs/LOCAL_DEVELOPMENT.md).
 
 ## Toolchain
 
@@ -25,7 +49,7 @@ Test/development-only dependencies are in:
 requirements-dev.txt
 ```
 
-## Local setup
+## Local setup without Compose
 
 Create and activate a virtual environment:
 
@@ -99,7 +123,7 @@ FRONTEND_URL=http://localhost:3000
 
 Never commit `.env`.
 
-## Start
+## Start manually
 
 ```bash
 python -m uvicorn main:app --host 127.0.0.1 --port 8000
@@ -119,6 +143,10 @@ curl http://127.0.0.1:8000/health/ready
 
 `/health/ready` includes broader runtime/provider readiness. Missing `GEMINI_API_KEY` may therefore make readiness fail even when the S0→S2 application surface can still be exercised. Preserve the distinction in test evidence.
 
+## Docker health boundary
+
+Compose deliberately uses `/health/live` rather than `/health/ready` as the backend container healthcheck. The local S0→S2 planning surface does not require the future S3 model-generation cell, while readiness includes provider availability.
+
 ## Tests
 
 ```bash
@@ -126,7 +154,7 @@ python -m compileall .
 python -m pytest -q
 ```
 
-Canonical CI also runs the suite against a real MongoDB 7 service and builds/smokes the production Docker image.
+Canonical CI also runs the suite against a real MongoDB 7 service, builds/smokes the production backend image, and the dedicated Docker Compose workflow starts the complete Mongo + backend + frontend stack.
 
 ## Current MK1 authority
 
@@ -158,7 +186,7 @@ S2 must not invoke S3 Research/Writer/Editor/Visual or publish externally.
 
 ## Operator acceptance
 
-After backend/frontend are running, follow:
+After the stack is running, follow:
 
 ```text
 ../mk1/test/LOCAL_ACCEPTANCE.md

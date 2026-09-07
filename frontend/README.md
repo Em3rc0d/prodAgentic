@@ -10,7 +10,21 @@ S1 — Profile V2
 S2 — Batch + Editorial Memory + Novelty
 ```
 
-For the complete operator setup, use [`../docs/LOCAL_DEVELOPMENT.md`](../docs/LOCAL_DEVELOPMENT.md).
+## Preferred full-stack local path
+
+From the repository root:
+
+```bash
+docker compose up --build
+```
+
+Then open `http://localhost:3000`.
+
+The Compose path builds this frontend from `frontend/Dockerfile`, starts Mongo + backend first through health-gated dependencies, and freezes the browser-visible API origin to `http://127.0.0.1:8000`.
+
+See [`../docs/DOCKER_LOCAL.md`](../docs/DOCKER_LOCAL.md).
+
+For manual/non-Docker setup, use [`../docs/LOCAL_DEVELOPMENT.md`](../docs/LOCAL_DEVELOPMENT.md).
 
 ## Toolchain
 
@@ -23,7 +37,7 @@ Next.js 16.3.3
 React 19.2.4
 ```
 
-## Local environment
+## Local environment without Compose
 
 Create `frontend/.env.local`:
 
@@ -36,7 +50,7 @@ NEXT_PUBLIC_MK1_BATCH_PLANNING=true
 
 The matching backend flags must also be enabled. Frontend flags do not create backend authority.
 
-## Install and run
+## Install and run manually
 
 ```bash
 npm ci
@@ -77,6 +91,18 @@ On PowerShell, set the same values through `$env:<NAME>` before `npm run build`.
 
 The production build intentionally fails when `NEXT_PUBLIC_API_URL` is absent or is not a clean backend origin.
 
+## Docker image contract
+
+`frontend/Dockerfile` uses Node 24 multi-stage build layers:
+
+```text
+deps -> npm ci
+builder -> npm run build -> npm prune --omit=dev
+runner -> non-root node user + production Next runtime
+```
+
+`NEXT_PUBLIC_*` values are build-time inputs, so changing them requires rebuilding the image.
+
 ## Product UX boundary
 
 MK1 is designed as a low-friction cockpit:
@@ -90,7 +116,7 @@ MK1 is designed as a low-friction cockpit:
 
 ## Local acceptance
 
-After both frontend/backend are running, execute:
+After the stack is running, execute:
 
 ```text
 ../mk1/test/LOCAL_ACCEPTANCE.md

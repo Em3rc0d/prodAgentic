@@ -6,6 +6,7 @@ venv/
 .venv/
 env/
 .env
+.env.docker
 
 # Node
 node_modules/
