@@ -3,19 +3,19 @@
 **As of:** 2026-09-06  
 **Stage:** IMPLEMENTATION — S0/S1/S2 CERTIFIED AND MERGED  
 **Current operator gate:** LOCAL ACCEPTANCE OF THE S0→S2 PRODUCT SURFACE  
-**Next planned implementation slice:** S3 — Structured Agent Cell (not present on `main` yet)
+**Next planned implementation slice:** S3 — Structured Agent Cell (not present on the certified product baseline)
 
-## Canonical repository state
+## Canonical product baseline
 
-Current production-development authority is `main` at:
+The exact **certified product-code baseline** through S2 is:
 
 ```text
 002177e90431d6009498a88cc6eb20efc46e14b3
 ```
 
-That merge commit is `MK1 S2: Batch planning, editorial memory and novelty (#37)` and contains the exact certified S2 receipt head as its second parent.
+That commit is `MK1 S2: Batch planning, editorial memory and novelty (#37)` and preserves the exact certified S2 receipt head as its second parent.
 
-Post-merge CI on this exact `main` SHA is green:
+Post-merge CI on that exact product SHA is green:
 
 ```text
 CI run: 33982022917
@@ -24,7 +24,9 @@ frontend-test       PASS
 UI-01-CERT browser PASS
 ```
 
-The repository therefore has an exact-SHA green product baseline through S2. Local acceptance is an operator/product validation step; it does not replace CI certification and it does not authorize claims about later slices.
+Documentation-only descendants may advance `main` without replacing this product certification boundary. A documentation commit is not a new product-code certificate.
+
+For local acceptance, record the exact `HEAD` you test and verify that the certified product baseline above remains an ancestor. If commits after the product baseline modify runtime/product code, they require their own certification before they can inherit this acceptance authority.
 
 ## MK1 certification ledger
 
@@ -32,15 +34,13 @@ The repository therefore has an exact-SHA green product baseline through S2. Loc
 
 - reviewed design head: `730c2f89ec6527031dc95d0e4fbf86c981a41b6f`
 - Design Freeze PR: `#32`
-- canonical design merge on `main`: `2211ffe5123fbf2d23d6b88ba3cd0257f569b5d1`
+- canonical design merge: `2211ffe5123fbf2d23d6b88ba3cd0257f569b5d1`
 - Build Entry receipt: `mk1/plan/BUILD_ENTRY_RECEIPT.md`
 - build authorization phrase: `TAKE THE HUMMER`
 
 ### S0 — Foundation + Bootstrap Tenant
 
 State: **CERTIFIED / MERGED**
-
-Canonical certification evidence:
 
 ```text
 reviewed code head: 74056ec8930aecd61ad771da94076046dc95a9c8
@@ -52,7 +52,7 @@ UI-01-CERT browser PASS
 
 S0 established the server-owned tenant boundary, tenant-scoped repositories, additive/idempotent bootstrap migration and the gated MK1 shell without transferring authority from unfinished slices.
 
-Certified S0 merge used by S1 as authority:
+Certified S0 merge used by S1:
 
 ```text
 88a615c519b5918944256afd678b67139ed8f0bd
@@ -61,8 +61,6 @@ Certified S0 merge used by S1 as authority:
 ### S1 — Profile V2
 
 State: **CERTIFIED / MERGED**
-
-Canonical certification evidence:
 
 ```text
 certified candidate: b7b821691da6fe8375109ab00e6eb08c4858e5b4
@@ -74,7 +72,7 @@ UI-01-CERT browser PASS
 
 S1 closed the low-friction Profile V2 proposal/acceptance flow, immutable ProfileVersion history, exact acceptance digests, restart recovery for interrupted profile updates, tenant isolation, allowlisted migration and the structural secret/OAuth boundary.
 
-Certified S1 merge used by S2 as authority:
+Certified S1 merge used by S2:
 
 ```text
 bfa64cb7e03e2344be80a789f0871bbac2bbbcea
@@ -82,7 +80,7 @@ bfa64cb7e03e2344be80a789f0871bbac2bbbcea
 
 ### S2 — Batch + Editorial Memory + Novelty
 
-State: **CERTIFIED / MERGED**
+State: **CERTIFIED / MERGED / POST-MERGE GREEN**
 
 Implementation candidate:
 
@@ -99,7 +97,7 @@ frontend-test       PASS
 UI-01-CERT browser PASS
 ```
 
-Exact documentation/certification receipt head:
+Exact certification receipt head:
 
 ```text
 59d45a9dede3fd65246f4bba40707d707d4deea2
@@ -114,13 +112,13 @@ frontend-test       PASS
 UI-01-CERT browser PASS
 ```
 
-Merge to `main`:
+Merge/product baseline:
 
 ```text
 002177e90431d6009498a88cc6eb20efc46e14b3
 ```
 
-Post-merge exact-main CI:
+Post-merge exact-product CI:
 
 ```text
 CI run:             33982022917
@@ -129,11 +127,16 @@ frontend-test       PASS
 UI-01-CERT browser PASS
 ```
 
+Detailed post-merge receipts:
+
+- `mk1/build/slices/S2/POST_MERGE.md`
+- `mk1/test/evidence/S2/POST_MERGE_RECEIPT.md`
+
 S2 introduces first-class Batch planning, rebuildable Editorial Memory, explainable Novelty, immutable ContentPlanV1 evidence and the low-friction `/create` cockpit. S2 intentionally does **not** invoke the S3 Research/Writer/Editor/Visual production cell and does not publish externally.
 
-## Product surface currently authorized for local acceptance
+## Product surface authorized for local acceptance
 
-With MK1 S0/S1/S2 feature flags enabled, the local acceptance surface is:
+With MK1 S0/S1/S2 feature flags enabled:
 
 ```text
 bootstrap tenant
@@ -180,7 +183,9 @@ Expected operator-visible behavior:
 - S2 planning remains provider-free/deterministic with respect to semantic novelty evaluation.
 - No S3 production cell or external publication should occur during this acceptance pass.
 
-## Feature gates for the S0→S2 local acceptance
+Important UI boundary: S2 currently shows the newly planned Batch in `/create`, but it does not yet provide a Batch-history browser. Historical/freeze verification therefore uses the certified read-only Batch API `GET /api/batches/{batch_id}` as evidence; the acceptance checklist states this explicitly rather than pretending a history UI exists.
+
+## Feature gates for S0→S2 local acceptance
 
 Backend:
 
@@ -203,15 +208,27 @@ Defaults remain off in checked-in runtime examples so incomplete/future authorit
 
 ## Local acceptance authority
 
-The canonical setup guide is:
+Canonical setup guide:
 
 - `docs/LOCAL_DEVELOPMENT.md`
 
-The operator acceptance checklist is:
+Operator acceptance checklist:
 
 - `mk1/test/LOCAL_ACCEPTANCE.md`
 
-Local acceptance should be executed from the exact current `main` SHA shown above unless a later commit is explicitly certified and this status file is updated.
+Run acceptance from synchronized `main`, record the exact tested `HEAD`, and verify:
+
+```bash
+git merge-base --is-ancestor 002177e90431d6009498a88cc6eb20efc46e14b3 HEAD
+```
+
+For a documentation-only descendant, review:
+
+```bash
+git diff --name-only 002177e90431d6009498a88cc6eb20efc46e14b3..HEAD
+```
+
+No un-certified runtime/product-code mutation may be hidden inside that descendant range.
 
 ## What local acceptance does and does not prove
 
@@ -236,7 +253,7 @@ Local acceptance does **not** by itself prove:
 
 ## Open repository hygiene
 
-A historical draft reconciliation PR (`#27`, `RECONCILE-01`) remains open. It predates the canonical MK1 slice line and is not the authority for S0/S1/S2 local acceptance. It must not be merged into the current MK1 line without an explicit reconciliation review against the accepted MK1 architecture and invariants.
+Historical draft PR `#27` (`RECONCILE-01`) predates the canonical MK1 slice line. It is not authority for S0/S1/S2 local acceptance and must not be merged into the current MK1 line without explicit reconciliation against accepted MK1 architecture/invariants.
 
 ## Next executable graph
 
