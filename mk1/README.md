@@ -4,6 +4,38 @@
 **Design cycle opened:** 2026-09-04  
 **Purpose:** reconcile prodAgentic into a production-grade, user-controlled, multi-profile agentic content operating system.
 
+## Current implementation state
+
+Canonical state is tracked in [`STATUS.md`](STATUS.md).
+
+As of 2026-09-06:
+
+```text
+DESIGN FREEZE                    ✅ CLOSED
+S0 FOUNDATION                    ✅ CERTIFIED / MERGED
+S1 PROFILE V2                    ✅ CERTIFIED / MERGED
+S2 BATCH + MEMORY + NOVELTY      ✅ CERTIFIED / MERGED
+S0→S2 LOCAL OPERATOR ACCEPTANCE  ⏳ READY TO EXECUTE
+S3 STRUCTURED AGENT CELL         ○ NEXT PLANNED SLICE
+```
+
+The certified S2 **product-code baseline** is:
+
+```text
+002177e90431d6009498a88cc6eb20efc46e14b3
+```
+
+That exact SHA passed backend, frontend and UI browser post-merge CI. Current `main` may later include documentation-only descendants; those do not replace this product certificate.
+
+To run the product locally:
+
+1. read [`../docs/LOCAL_DEVELOPMENT.md`](../docs/LOCAL_DEVELOPMENT.md);
+2. execute [`test/LOCAL_ACCEPTANCE.md`](test/LOCAL_ACCEPTANCE.md);
+3. record the exact `HEAD` tested and verify the certified product baseline remains its ancestor;
+4. preserve exact PASS/FAIL evidence instead of redefining expected behavior during the run.
+
+S0→S2 acceptance must not trigger S3 production or external publication.
+
 ## Product contract
 
 > prodAgentic is a governed agentic system for planning, producing, validating, approving, storing, scheduling, publishing, and learning from content for multiple editorial identities while keeping operational complexity inside the product rather than transferring it to the user.
@@ -19,6 +51,8 @@ Profile -> Memory -> Batch planning -> Candidate pool -> Novelty -> Diversity
 -> Research -> Writer -> Editor -> VisualSpec -> Render -> QA -> Human decision
 -> Immutable approval -> Scheduling -> Queue -> Publication -> Receipt -> Analytics -> Memory
 ```
+
+The full system line above is the MK1 target architecture. The current certified implementation stops after the S2 planning/memory boundary; later nodes remain future slices until separately built and certified.
 
 ## MK1 folder contract
 
@@ -85,6 +119,9 @@ Motion/video, autonomous approval, broad automatic multi-platform publishing, an
 
 ## Read next
 
+- Current state: `STATUS.md`
+- Local development: `../docs/LOCAL_DEVELOPMENT.md`
+- Local acceptance: `test/LOCAL_ACCEPTANCE.md`
 - Product thesis: `brainstorming/PRODUCT_THESIS.md`
 - MK0 reconciliation: `brainstorming/MK0_TO_MK1_RECONCILIATION.md`
 - Product design: `design/PRODUCT.md`

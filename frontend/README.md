@@ -1,36 +1,99 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# prodAgentic Frontend
 
-## Getting Started
+Next.js frontend for prodAgentic.
 
-First, run the development server:
+The active MK1 product surface is currently certified through:
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```text
+S0 — MK1 shell / bootstrap tenant
+S1 — Profile V2
+S2 — Batch + Editorial Memory + Novelty
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+For the complete operator setup, use [`../docs/LOCAL_DEVELOPMENT.md`](../docs/LOCAL_DEVELOPMENT.md).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Toolchain
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Canonical CI uses:
 
-## Learn More
+```text
+Node.js 24
+npm ci
+Next.js 16.3.3
+React 19.2.4
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Local environment
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Create `frontend/.env.local`:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```dotenv
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_MK1_SHELL=true
+NEXT_PUBLIC_MK1_PROFILE_V2=true
+NEXT_PUBLIC_MK1_BATCH_PLANNING=true
+```
 
-## Deploy on Vercel
+The matching backend flags must also be enabled. Frontend flags do not create backend authority.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Install and run
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm ci
+npm run dev
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+Primary MK1 routes for the current acceptance pass:
+
+```text
+/profiles
+/create
+```
+
+## Checks
+
+```bash
+npm run lint
+npm test
+```
+
+Production-style build:
+
+```bash
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 \
+NEXT_PUBLIC_MK1_SHELL=true \
+NEXT_PUBLIC_MK1_PROFILE_V2=true \
+NEXT_PUBLIC_MK1_BATCH_PLANNING=true \
+npm run build
+```
+
+On PowerShell, set the same values through `$env:<NAME>` before `npm run build`.
+
+The production build intentionally fails when `NEXT_PUBLIC_API_URL` is absent or is not a clean backend origin.
+
+## Product UX boundary
+
+MK1 is designed as a low-friction cockpit:
+
+- normal users should not configure models or agents;
+- important complexity is hidden by default but inspectable on demand;
+- Profile setup requires proposal review before immutable acceptance;
+- Create/Batch planning exposes concise status first and planning evidence progressively;
+- honest partial Batch completion is preferred over filler content;
+- S0→S2 must not trigger S3 production or external publication.
+
+## Local acceptance
+
+After both frontend/backend are running, execute:
+
+```text
+../mk1/test/LOCAL_ACCEPTANCE.md
+```
+
+Do not treat visual rendering alone as a PASS. The checklist includes persistence, restart, ProfileVersion freeze, Editorial Memory, feature flags and fail-closed boundaries.
