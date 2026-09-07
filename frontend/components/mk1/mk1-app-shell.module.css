@@ -1,5 +1,7 @@
 .shell {
+  height: 100dvh;
   min-height: 100dvh;
+  overflow: hidden;
   color: var(--pa-text-1);
   background: var(--pa-canvas);
 }
@@ -12,6 +14,9 @@
   display: flex;
   flex-direction: column;
   padding: var(--pa-space-4);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
   border-right: 1px solid var(--pa-line-subtle);
   background: var(--pa-surface-1);
 }
@@ -83,7 +88,22 @@
 }
 
 .health span { width: 7px; height: 7px; border-radius: 50%; background: var(--pa-success); }
-.content { min-height: 100dvh; margin-left: 216px; }
+
+/*
+ * The MK1 shell is viewport-bound, but the work surface is not content-bound.
+ * overflow-y:auto is intentional: one-screen layouts stay one-screen when they fit,
+ * while longer Profile/Batch states remain reachable without browser zoom.
+ */
+.content {
+  height: 100dvh;
+  min-height: 0;
+  margin-left: 216px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
 
 @media (max-width: 1023px) {
   .rail { width: 76px; padding-inline: var(--pa-space-2); }
@@ -100,6 +120,7 @@
     width: auto;
     height: 68px;
     padding: var(--pa-space-2);
+    overflow: hidden;
     border-top: 1px solid var(--pa-line);
     border-right: 0;
   }
@@ -108,5 +129,9 @@
   .navigation a:nth-child(2), .navigation a:nth-child(6) { display: none; }
   .navigation a { min-height: 50px; font-size: 11px; flex-direction: column; gap: 2px; }
   .statusMarker { width: 16px; height: 3px; }
-  .content { margin: 0 0 68px; }
+  .content {
+    height: calc(100dvh - 68px);
+    margin: 0 0 68px;
+    scrollbar-gutter: auto;
+  }
 }

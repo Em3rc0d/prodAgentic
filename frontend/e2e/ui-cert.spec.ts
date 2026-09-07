@@ -83,6 +83,15 @@ async function certifyRoute(
     expect(navBox.y + navBox.height).toBeLessThanOrEqual(page.viewportSize()!.height + 1);
   }
 
+  const mk1ScrollRegion = page.locator('[data-scroll-region="main"]');
+  if (await mk1ScrollRegion.count()) {
+    const overflowY = await mk1ScrollRegion.evaluate((element) => getComputedStyle(element).overflowY);
+    expect(
+      overflowY,
+      `${route.path} MK1 work surface must allow vertical overflow when content exceeds the viewport`,
+    ).toMatch(/^(auto|scroll)$/);
+  }
+
   expect(apiFailures, `${route.path} should not produce failing app/API requests`).toEqual([]);
   expect(consoleErrors, `${route.path} should not emit browser console errors`).toEqual([]);
 
@@ -201,7 +210,29 @@ test.describe("S2 memory-aware Batch planning", () => {
 
     await expect(page.getByRole("heading", { name: "4 of 4 ideas committed" })).toBeVisible();
     await page.getByText("Planning evidence").click();
-    await expect(page.getByText(/candidates evaluated/i)).toBeVisible();
+    const evidence = page.getByText(/candidates evaluated/i);
+    await expect(evidence).toBeVisible();
+
+    const scrollRegion = page.locator('[data-scroll-region="main"]');
+    const before = await scrollRegion.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
+    }));
+    expect(before.scrollHeight, "planned Batch should exceed the desktop work-surface height").toBeGreaterThan(before.clientHeight);
+
+    await scrollRegion.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await expect.poll(() => scrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await evidence.scrollIntoViewIfNeeded();
+
+    const [regionBox, evidenceBox] = await Promise.all([scrollRegion.boundingBox(), evidence.boundingBox()]);
+    expect(regionBox).not.toBeNull();
+    expect(evidenceBox).not.toBeNull();
+    if (regionBox && evidenceBox) {
+      expect(evidenceBox.y).toBeGreaterThanOrEqual(regionBox.y - 1);
+      expect(evidenceBox.y + evidenceBox.height).toBeLessThanOrEqual(regionBox.y + regionBox.height + 1);
+    }
+
     await page.screenshot({ path: `${SCREENSHOT_DIR}/desktop-s2-batch-planned.png`, fullPage: true });
   });
 });
