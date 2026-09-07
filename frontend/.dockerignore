@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+.env
+.env.*
+npm-debug.log*
+coverage
+test-results
+ui-cert-screenshots
