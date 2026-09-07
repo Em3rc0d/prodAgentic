@@ -2,11 +2,11 @@
 
 This is the canonical operator runbook for bringing the current MK1 product baseline up locally.
 
-It is intentionally scoped to the exact product state certified on `main` through **S2 — Batch + Editorial Memory + Novelty**. It does not pretend S3+ exists.
+It is intentionally scoped to the product state certified through **S2 — Batch + Editorial Memory + Novelty**. It does not pretend S3+ exists.
 
-## 1. Known-good repository baseline
+## 1. Known-good product baseline
 
-Before testing, synchronize to `main` and verify the expected baseline:
+Synchronize to current `main` before testing:
 
 ```bash
 git fetch origin
@@ -15,15 +15,15 @@ git pull --ff-only origin main
 git rev-parse HEAD
 ```
 
-Expected certified S2 merge baseline at the time this runbook was written:
+Record that exact `HEAD`; it is the commit you will actually test.
+
+The certified **product-code baseline** through S2 is:
 
 ```text
 002177e90431d6009498a88cc6eb20efc46e14b3
 ```
 
-If `main` has moved, do not assume this document certifies the newer SHA. Check `mk1/STATUS.md` first.
-
-The exact baseline above passed:
+That exact product SHA passed:
 
 ```text
 backend-test        PASS
@@ -32,6 +32,27 @@ UI-01-CERT browser PASS
 ```
 
 in post-merge CI run `33982022917`.
+
+Documentation-only commits may legitimately make current `main` a descendant of that SHA. Therefore do **not** require `git rev-parse HEAD` to equal `002177e...` after documentation consolidation. Instead verify the certified product baseline is still an ancestor:
+
+```bash
+git merge-base --is-ancestor 002177e90431d6009498a88cc6eb20efc46e14b3 HEAD
+echo $?
+```
+
+Expected exit code:
+
+```text
+0
+```
+
+Then inspect everything that changed after the certified product baseline:
+
+```bash
+git diff --name-only 002177e90431d6009498a88cc6eb20efc46e14b3..HEAD
+```
+
+For the documentation consolidation prepared with this runbook, the descendant range is expected to contain documentation only. If you see runtime/product-code changes (`.py`, `.ts`, `.tsx`, workflow/runtime configuration, dependency files, migrations, etc.) that are not separately certified and recorded in `mk1/STATUS.md`, **stop the acceptance run**. A documentation descendant does not magically certify new code.
 
 ## 2. Supported local toolchain
 
@@ -264,12 +285,20 @@ For a narrow diagnostic pass only, CI sometimes runs with auth disabled. Operato
 
 ## 9. Current MK1 routes to exercise
 
-The primary current surfaces are:
+Primary current surfaces:
 
 ```text
 /profiles    S1 Profile V2
 /create      S2 Batch + Memory + Novelty
 ```
+
+S2 currently renders the Batch just created in `/create`; it does **not** yet expose a Batch-history UI. The certified backend does expose a read-only retrieval path:
+
+```text
+GET /api/batches/{batch_id}
+```
+
+For historical/freeze checks in local acceptance, capture the `batch_id`, `profile_version` and `profile_snapshot_digest` from the Batch-planning network response, then re-fetch the same Batch through that endpoint after Profile updates/restarts. This is deliberate evidence inspection, not a claim that a history screen already exists.
 
 The full acceptance sequence is defined in:
 
@@ -305,7 +334,7 @@ Development server:
 npm run dev
 ```
 
-Production-style build verification requires an explicit API origin:
+Production-style build verification requires an explicit API origin.
 
 Linux/WSL/macOS:
 
@@ -417,7 +446,9 @@ docker start prodagentic-mongo
 When the local pass is complete, report:
 
 ```text
-git SHA
+tested git HEAD
+certified product baseline ancestor check PASS/FAIL
+files changed after product baseline
 OS / WSL or native Windows
 Python version
 Node version
@@ -428,11 +459,15 @@ login PASS/FAIL
 Profile V2 PASS/FAIL
 Profile update/history PASS/FAIL
 Create Batch PASS/FAIL
+first batch_id
+first batch profile_version
+first batch profile_snapshot_digest
 requested vs selected count
 planning evidence visible after disclosure PASS/FAIL
+re-fetch old Batch after Profile update/restart PASS/FAIL
 browser console errors, if any
 backend errors, if any
 screenshots for any visual/UX defect
 ```
 
-Use `mk1/test/LOCAL_ACCEPTANCE.md` as the authoritative checklist and fail closed: a defect is evidence to fix, not a reason to redefine the expected behavior during the test.
+Use `mk1/test/LOCAL_ACCEPTANCE.md` as the authoritative checklist and fail closed: a defect is evidence to fix, not a reason to redefine expected behavior during the test.
