@@ -1,7 +1,8 @@
 # MK1 S4 — VisualSpec V1 — Build Record
 
-Status: **BUILD ENTRY OPEN — IMPLEMENTATION NOT YET CERTIFIED**  
-Opened: 2026-09-08
+Status: **IMPLEMENTATION ACTIVE — CANDIDATE NOT YET FROZEN**  
+Opened: 2026-09-08  
+Reconciled after first implementation pass: 2026-09-08
 
 ## Slice ID
 
@@ -9,26 +10,34 @@ Opened: 2026-09-08
 
 ## Objective
 
-Transfer visual-planning authority from the frozen S3 text handoff into a typed, renderer-independent `VisualSpecV1` intermediate representation.
+Transfer visual-planning authority from the certified S3 text handoff into a strict, renderer-independent and durable `VisualSpecV1` intermediate representation.
 
-S4 must stop before render execution. The certified boundary is:
+The S4 boundary is:
 
 ```text
 ContentRevisionV1(DRAFT)
   + accepted ContentSpecV1
-  + frozen ProfileVersion.visual_system
-  + platform/canvas capability
+  + exact GenerationRun.VISUAL_PLANNING
+  + frozen ProfileVersion
         ↓
-VisualAgent / deterministic visual policy
+DesignProfileV1 (deterministic derived policy)
+        ↓
+S4 deterministic visual planner
         ↓
 VisualSpecV1
         ↓
-GenerationRun remains ready for S5 render authority
+copy-ref + structural validation
+        ↓
+immutable tenant-scoped persistence
+        ↓
+revision/run visual lineage
+        ↓
+S5 may later begin RENDERING
 ```
 
-S5 owns Chromium rendering, AssetStore bytes, asset hashes and preview bytes. S4 must not claim those capabilities.
+S4 **does not render**. Chromium rendering, AssetStore bytes, image generation, final asset digests, pixel QA and the transition into actual render execution belong to S5 and later slices.
 
-## Entry authority
+## Exact entry authority
 
 S3 product certificate:
 
@@ -36,39 +45,44 @@ S3 product certificate:
 a10dfec7f5851ae3f8c850fcc934009951f7d422
 ```
 
-S3 documentation closure / pre-S4 `main`:
+Final S3 documentation descendant:
 
 ```text
 2dd152e671667e1377907c53748aec83aaf4796b
 ```
 
-The S4 implementation branch must be aligned to the final repository-hygiene/S4-entry `main` before source changes begin.
+Repository-hygiene / S4 build-entry merge and exact implementation base:
 
-Active branch name:
+```text
+408f598bae5f200bbd90d9a06883cc740b69bcac
+```
+
+Active implementation branch:
 
 ```text
 mk1/s4-visualspec-v1
 ```
 
-## Frozen accepted design dependencies
+The branch was aligned to that exact `main` SHA before the first S4 source commit.
 
-S4 implementation is subordinate to:
+## Frozen architecture dependencies
 
-- `mk1/arch/VISUAL_SYSTEM.md` — VisualSpec envelope, page/block model, render strategies and DesignProfile concept;
-- `mk1/arch/AGENT_ARCHITECTURE.md` — VisualAgent authority, inputs, output and model-routing evidence;
-- `mk1/arch/CONTRACTS.md` — accepted structured-contract family;
-- `mk1/arch/DOMAIN_MODEL.md` — revision/run ownership and aggregate boundaries;
-- `mk1/arch/STATE_MACHINES.md` — GenerationRun/ContentItem lifecycle;
-- `mk1/arch/INVARIANTS.md` — authority and immutability rules;
-- `mk1/arch/GOVERNANCE_QA.md` — visual failure/recovery boundaries;
-- `mk1/design/DESIGN.md` and accepted product design docs — visual signature and low-friction UX constraints;
-- `mk1/plan/VERTICAL_SLICES.md` — S4 exit criteria;
-- `mk1/build/WORK_EXECUTION_DIRECTIVE.md` — implementation scope;
-- `mk1/test/TEST_STRATEGY.md` and golden datasets — certification requirements.
+S4 remains subordinate to:
 
-## Frozen S4 scope
+- `mk1/arch/VISUAL_SYSTEM.md`;
+- `mk1/arch/AGENT_ARCHITECTURE.md`;
+- `mk1/arch/CONTRACTS.md`;
+- `mk1/arch/DOMAIN_MODEL.md`;
+- `mk1/arch/STATE_MACHINES.md`;
+- `mk1/arch/INVARIANTS.md`;
+- `mk1/arch/GOVERNANCE_QA.md`;
+- `mk1/design/DESIGN.md`;
+- `mk1/plan/VERTICAL_SLICES.md`;
+- `mk1/test/TEST_STRATEGY.md`.
 
-V1 supported visual formats:
+No S3 contract is redefined. S4 consumes the certified `ContentSpecV1`, `ContentRevisionV1`, `GenerationRunV1` and `ProfileVersion` lineage directly.
+
+## V1 supported formats
 
 ```text
 single_image
@@ -76,355 +90,429 @@ carousel
 infographic
 ```
 
-Explicitly out of scope:
+Explicitly outside S4 V1:
 
 ```text
-text-only visual generation
+text-only VisualSpec generation
 GIF
 short_video
 renderer implementation
-AssetStore bytes
-visual QA/recovery
+Chromium/Playwright rendering
+AssetStore writes
+image-provider calls
+pixel QA
 human approval
-publication/scheduling
+scheduling
+publication
 ```
 
-A text-only ContentSpec does not require a VisualSpec unless a later policy explicitly promotes it through a separate accepted contract.
+A `ContentSpecV1(format="text")` is rejected by the S4 planner as not requiring a VisualSpec.
 
-## Existing runtime inspected at entry
-
-### S3 typed production boundary
-
-`backend/domain/production/models.py` already provides:
-
-- `ContentSpecV1`;
-- `SingleImageSpecV1`;
-- `CarouselSpecV1` / `CarouselSlideV1`;
-- `InfographicSpecV1` / `InfographicSectionV1`;
-- `ContentRevisionV1`;
-- `GenerationRunV1` with `VISUAL_PLANNING` state;
-- `AgentKind.VISUAL` and typed attempt evidence.
-
-This is the authoritative S4 input lineage. S4 must not create a second competing ContentSpec family.
-
-### Profile visual input
-
-`ProfileVersion` contains:
-
-```text
-visual_system: VisualSystem
-```
-
-and the current `VisualSystem` contract contains:
-
-```text
-traits: tuple[str, ...]
-```
-
-The architecture describes a richer DesignProfile policy (typography roles, palette mapping, density, spacing/radius, icon language, image treatment, layout preferences and marks), but those fields are not currently first-class mutable ProfileVersion fields.
-
-S4 therefore must introduce a **deterministic derived DesignProfile mapping** from the immutable ProfileVersion snapshot/traits plus controlled defaults/presets. It must not silently mutate S1 ProfileVersion schema or invent user brand properties that were never accepted.
-
-### Legacy/MK0 visual capability
-
-Historical visual/rendering code is evidence and potential adapter material only. It does not become MK1 S4 authority by name. In particular, prior raw prompt/image-generation or renderer-specific objects cannot bypass `VisualSpecV1`.
-
-## Proposed module boundary
-
-Target layout, subject to code inspection before first source commit:
+## Actual implementation map
 
 ```text
 backend/domain/visual/
   __init__.py
-  models.py              # VisualSpecV1, page/block unions, asset requirements, DesignProfileV1
-  ports.py               # VisualPlannerPort / VisualAgentPort
+  models.py
+  ports.py
 
 backend/application/visual/
   __init__.py
-  design_profile.py      # deterministic ProfileVersion -> DesignProfileV1
-  service.py             # authority checks + VisualSpec production/persistence
-  validation.py          # copy-ref, page-count and structural invariants
-
-backend/infrastructure/agents/
-  structured_visual.py   # model-backed typed VisualAgent adapter, if needed
+  design_profile.py
+  planner.py
+  validation.py
+  service.py
 
 backend/infrastructure/mongo/
-  visual.py              # tenant-scoped VisualSpec lineage persistence
+  visual.py
 
 backend/routes/
-  visual.py              # bounded S4 planning/read surface
+  visual.py
 
 backend/tests/
-  test_s4_visual_contracts.py
-  test_s4_copy_reference_integrity.py
-  test_s4_design_profile_mapping.py
-  test_s4_visual_service.py
-  test_s4_structured_visual_adapter.py
+  test_s4_api_surface.py
+  test_s4_visualspec.py
   test_mk1_s4_mongo.py
+
+.github/workflows/
+  s4-cert.yml
 ```
 
-Do not create renderer/asset modules under S4 merely as placeholders for S5 unless interfaces are strictly necessary for capability input.
+Existing files extended:
 
-## VisualSpecV1 authority
+```text
+backend/main.py       mounts the S4 router
+backend/db/mongo.py   installs S4 tenant/lineage indexes
+```
 
-The implementation must conform to the frozen envelope:
+No renderer or AssetStore module is created or imported by the S4 authority path.
+
+## VisualSpecV1 contract implemented
+
+`backend/domain/visual/models.py` implements strict frozen models with `extra="forbid"`.
+
+Envelope:
 
 ```text
 visual_spec_id
+schema_version = 1
 spec_version = 1
 content_spec_id
 revision_id
-format = single_image | carousel | infographic
+format
 canvas
 render_strategy
 visual_pattern
 style.design_profile_ref
+style.design_profile_digest
 pages[]
 asset_requirements[]
 alt_text_plan
+supersedes_visual_spec_id
 ```
 
-Page/block structure must be typed, bounded and reject unknown fields.
-
-Allowed V1 block union:
+V1 block union:
 
 ```text
-TextBlock
-ShapeBlock
-IconBlock
-ImageBlock
-DiagramBlock
-DividerBlock
-MetricBlock
+TextBlockV1
+ShapeBlockV1
+IconBlockV1
+ImageBlockV1
+DiagramBlockV1
+DividerBlockV1
+MetricBlockV1
 ```
 
-## Critical-copy rule
+Structural gates reject:
 
-Critical editorial text is owned by the accepted `ContentSpecV1`, not by VisualAgent.
+- unknown fields;
+- duplicate page IDs;
+- non-contiguous page indices;
+- duplicate block IDs per page;
+- duplicate asset requirement IDs;
+- ImageBlocks referencing unknown asset requirements;
+- incompatible format/render-strategy pairs;
+- invalid canvas/safe-zone dimensions.
 
-VisualSpec critical `TextBlock` values must use validated `copy_ref` paths such as:
+## Critical-copy authority
+
+Critical editorial copy is never generated inside S4.
+
+A critical `TextBlockV1` must satisfy:
 
 ```text
+editorial_critical = true
+copy_ref != null
+literal = null
+```
+
+A decorative/non-critical text block may use a bounded literal only when it has exactly one copy source and is explicitly `editorial_critical=false`.
+
+The accepted copy-ref resolver is built from the exact frozen `ContentSpecV1`, not from client-submitted strings.
+
+Examples:
+
+```text
+content_spec.format_spec.headline
+content_spec.format_spec.supporting_copy[0]
 content_spec.format_spec.slides[slide-2].headline
+content_spec.format_spec.slides[slide-2].bullets[1]
+content_spec.format_spec.sections[ci].value_or_copy
 ```
 
-Literal text is permitted only for bounded decorative microcopy with:
+S4 validation fails closed on:
 
-```text
-editorial_critical = false
-```
+- unknown refs;
+- refs outside the actual format union;
+- ContentSpec identity mismatch;
+- missing accepted visual-critical fields;
+- carousel page count/order/role mismatch;
+- literal critical copy;
+- DesignProfile ref/digest/style mismatch.
 
-S4 validation must fail closed on:
+For V1 the deterministic planner references all accepted format-specific copy that appears in the visual contract rather than silently dropping accepted slide/section content.
 
-- unknown copy refs;
-- refs to a different ContentSpec;
-- refs whose format path is invalid for the actual format union;
-- duplicate/ambiguous page or block IDs;
-- missing critical hook/headline coverage required by format policy;
-- literal critical text where a copy reference is required.
-
-## Format-specific invariants
+## Format invariants implemented
 
 ### Single image
 
 - exactly one page;
-- canvas within accepted static bounds;
-- hook/headline represented by a critical copy ref;
-- supporting copy references accepted ContentSpec values when editorially critical;
-- render strategy must be compatible with a single canvas.
+- static 1080×1350 portrait canvas;
+- DesignProfile-derived safe zone;
+- accepted headline/supporting copy/footer are critical refs;
+- renderer-independent `COMPOSED_STATIC` strategy.
 
 ### Carousel
 
-- page count must correspond to accepted carousel semantics and configured bounds;
-- page indices contiguous and unique;
-- each page has a stable role/layout family;
-- critical headlines/bodies reference the exact slide IDs from ContentSpec;
-- no VisualAgent-created extra editorial slide is allowed.
+- page count equals exact accepted `CarouselSpecV1.slides` count;
+- slide order is preserved;
+- page role equals accepted slide role;
+- all slide headline/body/bullet refs are exact ID-based refs;
+- `CAROUSEL` strategy only;
+- no extra editorial slide can be introduced by S4.
 
 ### Infographic
 
-- one or bounded multi-canvas spec only if frozen contract permits it;
-- title/sections reference exact infographic title/section IDs;
-- metric blocks cannot fabricate numbers; any metric content must resolve from ContentSpec/research authority through a copy ref;
-- relationship/diagram semantics cannot add unsupported factual claims.
+- V1 is exactly one canvas;
+- accepted title and each section label/value/relationship use exact section-ID refs;
+- `INFOGRAPHIC` strategy only;
+- no free metric/relationship claim can be fabricated by the planner.
 
-## DesignProfileV1 mapping
+Multi-canvas infographic remains deferred until a later contract version explicitly authorizes it.
 
-S4 must create an immutable, digestible derived visual policy with at least:
+## DesignProfileV1
+
+Current S1 `ProfileVersion.visual_system` intentionally remains unchanged and contains only bounded traits. S4 therefore introduces a **derived**, immutable visual policy instead of mutating S1 history.
+
+Mapping version:
 
 ```text
-design_profile_id / version or stable digest
+mk1-design-profile-v1
+```
+
+Derived fields:
+
+```text
+design_profile_id
+mapping_version
 profile_id
 profile_version
 source_profile_digest
-typography roles/preset IDs
+typography token roles
 palette token mapping
 density
-spacing/radius scale
+spacing scale
+radius scale
 icon language
 image treatment
 layout-family preferences
 safe-zone policy
+digest
 ```
 
-Rules:
+Rules implemented:
 
-1. mapping is deterministic for the same ProfileVersion + mapping version;
-2. unknown/free-form traits may influence only allowlisted mapping dimensions;
-3. no arbitrary CSS/font/url/script is accepted from Profile traits;
-4. output is versioned/digestible and suitable for snapshot tests;
-5. S4 does not distribute font files or embed secret/external auth material;
-6. mapping changes require a new mapping version and invalidate affected visual specs according to dependency rules.
+1. same exact ProfileVersion -> same DesignProfile bytes/digest;
+2. the source ProfileVersion digest is part of DesignProfile identity;
+3. free-form visual traits are normalized and matched only against an allowlisted vocabulary;
+4. unknown traits cannot become CSS, font names, URLs, scripts, token IDs or renderer directives;
+5. all emitted style values are controlled enums/token refs;
+6. changing the mapping requires a new mapping version;
+7. the repository re-verifies the DesignProfile digest on persistence/read.
 
-## Render-strategy policy
+The initial allowlisted semantic buckets cover sparse/minimal, dense/technical, bold, dark and soft tendencies. Unknown values are ignored as styling instructions while still remaining represented indirectly by the immutable upstream ProfileVersion digest.
 
-V1 strategies remain those frozen by architecture:
+## Deterministic planner decision
+
+S4 V1 uses a deterministic server-owned planner rather than a model-backed VisualAgent adapter.
+
+This is deliberate:
+
+- the frozen architecture allows deterministic visual policy;
+- S4 does not need provider variance to prove its typed intermediate representation;
+- no model means no new provider retry/repair authority is introduced in this slice;
+- critical copy remains mechanically derived by reference;
+- layout family selection is bounded by DesignProfile preferences.
+
+A future model-backed visual planner may be introduced behind the same typed boundary, but it would require its own bounded structured-output repair and `AgentAttemptEvidenceV1` proof. S4 does not claim that capability now.
+
+## Run-state decision
+
+A successful S4 plan keeps:
 
 ```text
-COMPOSED_STATIC
-GENERATED_BACKGROUND
-GENERATED_VISUAL_PLUS_COMPOSITE
-DIAGRAM
-CAROUSEL
-INFOGRAPHIC
-PHOTO_OVERLAY
+GenerationRun.state = VISUAL_PLANNING
+ContentRevision.status = DRAFT
 ```
 
-S4 chooses/specifies strategy but does not render it.
+and binds only:
 
-Strategy selection must be deterministic where the format/content semantics are deterministic. A model may propose visual semantics inside a bounded contract, but server policy owns final compatibility validation.
+```text
+GenerationRun.visual_spec_ref
+ContentRevision.visual_spec_ref
+ContentRevision.visual_spec_digest
+```
 
-## Persistence and lineage
+Reason: `RENDERING` means render execution has actually begun. S4 must not fabricate an S5 state transition merely because visual intent exists.
 
-VisualSpec is durable business/evidence state, not ephemeral model output.
+S5 owns the future transition:
 
-Required persistence properties:
+```text
+VISUAL_PLANNING -> RENDERING
+```
 
-- `tenant_id` scoped;
-- exact `content_spec_id` + `revision_id` binding;
-- exact ProfileVersion/design-profile digest binding;
-- immutable spec snapshot once accepted by S4;
-- regeneration creates a new VisualSpec lineage item rather than overwriting history;
-- provider/model attempt evidence, when a model is used, follows the S3 AgentAttempt evidence discipline;
-- process restart can reopen/read the exact VisualSpec.
+## Persistence / crash recovery
 
-A successful S4 handoff must not mark the content `REVIEWABLE`, `APPROVED` or `COMPLETED`.
+Collections:
 
-## API boundary
+```text
+design_profiles
+visual_specs
+```
 
-Expected bounded API shape, to be finalized during implementation without leaking raw schemas into the UX:
+Indexes:
+
+```text
+(tenant_id, design_profile_id) UNIQUE
+(tenant_id, profile_id, profile_version, mapping_version) UNIQUE
+(tenant_id, visual_spec_id) UNIQUE
+(tenant_id, revision_id, created_at)
+```
+
+Persistence properties:
+
+- tenant scope is structural through `TenantScopedMongoRepository`;
+- DesignProfile and VisualSpec snapshots are immutable business/evidence records;
+- exact hashes are verified on read;
+- revision pointer advance uses compare-and-set;
+- regeneration appends a new VisualSpec and sets `supersedes_visual_spec_id` rather than overwriting history;
+- exact visual-plan identity is deterministic for the same revision/content/design/previous-pointer planning attempt;
+- retry after a crash between spec insert and revision CAS reuses the same immutable VisualSpec ID;
+- `ContentRevision.visual_spec_ref` is the durable S4 pointer;
+- if a process dies after revision CAS but before the `GenerationRun.visual_spec_ref` mirror update, the next call verifies the lineage, repairs the run mirror and returns the already-bound spec instead of producing a second accidental regeneration.
+
+No transaction is falsely claimed. Recovery semantics are explicit and tested.
+
+## API boundary implemented
 
 ```text
 POST /api/content-revisions/{revision_id}/visual-spec
 GET  /api/visual-specs/{visual_spec_id}
 ```
 
-The server must resolve tenant, revision, ContentSpec, ProfileVersion and GenerationRun authority. The client may not submit arbitrary frozen snapshots or choose another tenant/profile/run.
+The POST body carries no tenant/profile/run/frozen snapshot authority. The server resolves:
 
-If existing routing conventions require a different resource path, the build record must document the decision before candidate freeze.
+```text
+TenantContext
+-> ContentRevision
+-> GenerationRun
+-> persisted ContentSpec artifact
+-> exact ProfileVersion
+-> derived DesignProfile
+```
+
+The GET path re-verifies VisualSpec and DesignProfile integrity before returning them.
 
 ## Feature gate
 
-Before adding a new flag, inspect the frozen registry. If an S4-specific flag already exists, reuse it. Otherwise introduce one narrow fail-closed flag subordinate to `MK1_ENABLED`.
+S4 reuses the already-frozen flag:
 
-S4 must default off until certified.
+```text
+MK1_VISUALSPEC
+```
 
-## Required certification gates
+It remains subordinate to `MK1_ENABLED` and defaults off. No second S4 flag was invented.
 
-Canonical regression gates remain mandatory on one exact candidate SHA:
+S4-CERT explicitly runs with:
+
+```text
+MK1_VISUALSPEC=true
+MK1_RENDER_WORKER=false
+IMAGE_RENDER_ENABLED=false
+SCHEDULER_ENABLED=false
+```
+
+## Dedicated certification workflow
+
+Workflow:
+
+```text
+.github/workflows/s4-cert.yml
+```
+
+Job:
+
+```text
+S4-CERT visualspec-v1
+```
+
+The dedicated gate proves:
+
+- S4 modules compile;
+- canonical API surface is mounted;
+- feature flag is fail-closed and master-gated;
+- strict VisualSpec contract behavior;
+- deterministic DesignProfile mapping;
+- Content Seller single-image golden fixture;
+- Logan/automotive carousel golden fixture;
+- Tech/LinkedIn infographic golden fixture;
+- copy-ref resolution/integrity and missing-copy rejection;
+- exact lineage/digest authority;
+- immutable regeneration lineage;
+- real Mongo restart/reopen behavior;
+- tenant isolation;
+- stale revision-pointer CAS rejection;
+- zero AssetStore/publication side effects in the S4 Mongo scenario;
+- AST source probe for renderer/AssetStore/publication execution dependency.
+
+## Required exact-candidate consensus
+
+One immutable S4 candidate SHA must pass unchanged:
 
 ```text
 backend-test
 frontend-test
 UI-01-CERT browser
 DOCKER-COMPOSE-LOCAL smoke
-```
-
-S4 adds a dedicated semantic gate:
-
-```text
+S3-CERT structured-agent-cell
 S4-CERT visualspec-v1
 ```
 
-The dedicated gate must cover at minimum:
+Only after all six pass may the implementation SHA be frozen as the S4 candidate.
 
-- strict VisualSpec/page/block schema validation;
-- single-image/carousel/infographic fixtures;
-- copy-ref resolution and rejection of unknown/critical literals;
-- deterministic DesignProfile mapping snapshots;
-- format/page-count/canvas/layout compatibility;
-- asset requirement structural validation without rendering;
-- tenant/revision/content/profile lineage binding;
-- restart/reopen persistence;
-- bounded model structured-output repair if model-backed planning is enabled;
-- feature flag fail-closed behavior;
-- explicit proof that no renderer/AssetStore/publication side effect occurs.
+Then a receipt-only documentation head may record the evidence. That exact receipt head must pass all six gates again before exact-head merge. The merged `main` SHA must then pass post-merge consensus.
 
 ## Golden fixtures
 
-At least the three product lines already named by MK1 architecture should be represented:
+S4 semantic/layout golden coverage is intentionally cross-product:
 
 ```text
-Content Seller
-Logan / automotive
-Tech / LinkedIn
+Content Seller       single_image
+Logan / automotive   carousel
+Tech / LinkedIn      infographic
 ```
 
-For S4 the golden result is the stable semantic/layout spec, not pixel rendering. Pixel quality is S5 authority.
+The golden output is a stable semantic/layout IR, **not pixels**.
 
-## Risks touched
+## Explicit non-claims
 
-S4 directly touches visual-quality risk R07 and introduces several implementation risks:
+S4 does not certify:
 
-- visually valid but generic/unbranded specs;
-- free-form Profile visual traits leaking arbitrary styling authority;
-- model-generated critical text bypassing ContentSpec;
-- carousel page mismatch vs accepted slide IDs;
-- metric/diagram blocks accidentally increasing factual specificity;
-- renderer concerns leaking backward into the domain IR;
-- unstable layout mappings causing non-reproducible snapshots;
-- S4 overclaiming S5 render quality.
+- final image appearance;
+- font loading/render fidelity;
+- clipping/overlap;
+- image-generation quality;
+- actual asset bytes;
+- AssetStore ownership;
+- visual model QA;
+- publication readiness;
+- human approval.
 
-Mitigations are encoded in the typed contract, deterministic DesignProfile mapping, copy refs, strict strategy/format policy and explicit S5 boundary.
+Those remain downstream gates.
 
-## Candidate freeze law
+## Candidate-freeze law
 
-Before candidate freeze:
+Before freezing a candidate:
 
-1. reconcile this build record with actual modules/endpoints;
-2. append every discovered mistake/near-miss to `ERROR_LEDGER.md`;
-3. ensure docs/status are truthful;
-4. run implementation-specific preflight tests;
-5. make no remaining architecture/product decisions.
+1. reconcile this record with actual code;
+2. append every discovered error/near-miss to `ERROR_LEDGER.md`;
+3. inspect the full branch diff against `408f598...`;
+4. obtain S4-specific tests plus normal regressions;
+5. leave no unresolved architecture/product decision inside S4.
 
-Then freeze one exact implementation SHA. After freeze, no product/test/workflow/contract change is allowed. A receipt-only documentation head may follow only after the exact candidate is fully green.
-
-## Exit claim
-
-S4 may be declared `CERTIFIED / MERGED` only when it proves:
-
-```text
-accepted ContentSpec + exact revision/profile authority
-        ↓
-strict VisualSpecV1
-        ↓
-validated critical copy refs
-        ↓
-deterministic DesignProfile mapping
-        ↓
-durable restart-safe lineage
-```
-
-with no rendering claim.
+After candidate freeze, no product/test/workflow/contract change is allowed. Only certification receipts may be appended, and those create a new receipt head requiring full revalidation.
 
 ## Current decision
 
 ```text
 S3 product                  CERTIFIED / MERGED
-S3 docs                     CLOSED
-Repository hygiene          IN ENTRY RECONCILIATION
-S4 branch                   CREATED, MUST ALIGN TO FINAL ENTRY MAIN
-S4 implementation           NOT STARTED
+S4 entry main               408f598bae5f200bbd90d9a06883cc740b69bcac
+S4 branch                   ALIGNED / ACTIVE
+VisualSpecV1                IMPLEMENTED
+DesignProfileV1             IMPLEMENTED
+copy-ref integrity          IMPLEMENTED
+Mongo persistence           IMPLEMENTED
+S4-CERT workflow            IMPLEMENTED
 S4 candidate                NOT FROZEN
 S4 certification            NOT CLAIMED
 S5 renderer authority       NOT STARTED
