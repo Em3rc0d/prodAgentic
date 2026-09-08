@@ -86,42 +86,46 @@ describe("MK1 S2 Create", () => {
     mockedBatches.createBatchV1.mockResolvedValue(response());
   });
 
-  it("starts with outcome-level controls and plans four pieces by default", async () => {
+  it("starts with outcome-level controls and plans four content directions by default", async () => {
     render(<Mk1BatchCreate />);
     expect(await screen.findByRole("heading", { name: "Create for Logan" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Tomorrow" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "4" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText(/Topic for this batch/i)).toBeVisible();
     expect(screen.queryByLabelText("Goal")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
+    fireEvent.change(screen.getByLabelText(/Topic for this batch/i), { target: { value: "wheel bearings" } });
+    fireEvent.click(screen.getByRole("button", { name: "Plan next batch" }));
     await waitFor(() => expect(mockedBatches.createBatchV1).toHaveBeenCalledTimes(1));
     expect(mockedBatches.createBatchV1.mock.calls[0][0]).toBe("profile-1");
     expect(mockedBatches.createBatchV1.mock.calls[0][1].requested_size).toBe(4);
+    expect(mockedBatches.createBatchV1.mock.calls[0][1].constraints?.include_topics).toEqual(["wheel bearings"]);
     expect(mockedBatches.createBatchV1.mock.calls[0][1].target_window.timezone).toBeTruthy();
-    expect(await screen.findByRole("heading", { name: "4 of 4 ideas committed" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "4 of 4 content directions selected" })).toBeVisible();
+    expect(screen.getAllByText("Production brief · not final copy")).toHaveLength(4);
     expect(screen.getByText("Fresh · review note")).toBeVisible();
 
     fireEvent.click(screen.getByText("Planning evidence"));
     expect(screen.getByText(/4 candidates evaluated/i)).toBeVisible();
   });
 
-  it("tells the truth when novelty returns fewer items", async () => {
+  it("tells the truth when novelty returns fewer directions", async () => {
     mockedBatches.createBatchV1.mockResolvedValueOnce(response(2));
     render(<Mk1BatchCreate />);
     await screen.findByRole("heading", { name: "Create for Logan" });
-    fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
-    expect(await screen.findByRole("heading", { name: "2 of 4 ideas committed" })).toBeVisible();
-    expect(screen.getByText("We returned fewer ideas instead of repeating recent content.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Plan next batch" }));
+    expect(await screen.findByRole("heading", { name: "2 of 4 content directions selected" })).toBeVisible();
+    expect(screen.getByText(/returned fewer directions instead of inventing topics/i)).toBeVisible();
     expect(screen.getByText(/were not relaxed to fill the batch/i)).toBeVisible();
   });
 
-  it("keeps optional constraints out of the primary path", async () => {
+  it("keeps secondary constraints out of the primary path", async () => {
     render(<Mk1BatchCreate />);
     await screen.findByRole("heading", { name: "Create for Logan" });
     fireEvent.click(screen.getByRole("button", { name: "Add optional constraints" }));
     fireEvent.change(screen.getByLabelText("Goal"), { target: { value: "teach safe maintenance" } });
     fireEvent.change(screen.getByLabelText("Avoid for this batch"), { target: { value: "llantas, aceite" } });
-    fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
+    fireEvent.click(screen.getByRole("button", { name: "Plan next batch" }));
     await waitFor(() => expect(mockedBatches.createBatchV1).toHaveBeenCalled());
     const request = mockedBatches.createBatchV1.mock.calls.at(-1)?.[1];
     expect(request?.constraints?.campaign_goal).toBe("teach safe maintenance");
