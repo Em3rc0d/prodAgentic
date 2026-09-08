@@ -13,25 +13,19 @@ S0 — Foundation + Bootstrap Tenant       ✅
 S1 — Profile V2                         ✅
 S2 — Batch + Editorial Memory + Novelty ✅
 S3 — Structured Agent Cell              ✅
+S4 — VisualSpec V1                      ✅
 ```
 
-Current work:
+Next work:
 
 ```text
-S4 — VisualSpec V1                      🔨 BUILD ENTRY
 S5 — Renderer + AssetStore              ⛔ NOT STARTED
 ```
 
-S3 product-code certificate:
+S4 product-code certificate:
 
 ```text
-a10dfec7f5851ae3f8c850fcc934009951f7d422
-```
-
-Final S3 documentation descendant / pre-S4-entry main:
-
-```text
-2dd152e671667e1377907c53748aec83aaf4796b
+6a0a653d615e7fa2d1d63bc41b6b265b19646202
 ```
 
 `mk1/STATUS.md` is the canonical certification ledger. Product-code certificate boundaries and later documentation descendants are intentionally distinguished.
@@ -61,24 +55,33 @@ EditorialReviewV1
     ↓
 ContentRevisionV1(DRAFT)
     ↓
+DesignProfileV1
+    ↓
+VisualSpecV1
+    ↓
 GenerationRun.VISUAL_PLANNING
 ```
 
-S4 now adds the typed visual intermediate representation. S4 does **not** own render bytes; Chromium rendering/AssetStore belongs to S5.
+S4 certifies the typed visual intermediate representation. It does **not** own render bytes; Chromium/Playwright rendering, AssetStore and pixel QA begin in S5+.
 
-## S4 target boundary
+## S4 certified boundary
 
 ```text
 accepted ContentSpecV1
-  + exact ContentRevisionV1
-  + frozen ProfileVersion visual policy
+  + exact ContentRevisionV1(DRAFT)
+  + GenerationRun.VISUAL_PLANNING
+  + exact frozen ProfileVersion
         ↓
-VisualAgent / deterministic visual policy
+deterministic DesignProfileV1
         ↓
-VisualSpecV1
+strict VisualSpecV1
+        ↓
+validated critical copy refs
+        ↓
+durable tenant-scoped lineage
 ```
 
-V1 VisualSpec formats:
+Certified VisualSpec V1 formats:
 
 ```text
 single_image
@@ -86,10 +89,11 @@ carousel
 infographic
 ```
 
-Critical editorial text must reference the accepted ContentSpec instead of being freely invented inside the VisualAgent.
+Critical editorial text references accepted `ContentSpecV1`; S4 does not freely regenerate that copy.
 
-Build authority:
+Canonical S4 evidence:
 
+- [`mk1/test/evidence/S4/CERTIFICATION.md`](mk1/test/evidence/S4/CERTIFICATION.md)
 - [`mk1/build/slices/S4/BUILD_RECORD.md`](mk1/build/slices/S4/BUILD_RECORD.md)
 - [`mk1/build/slices/S4/ERROR_LEDGER.md`](mk1/build/slices/S4/ERROR_LEDGER.md)
 - [`mk1/arch/VISUAL_SYSTEM.md`](mk1/arch/VISUAL_SYSTEM.md)
@@ -100,14 +104,13 @@ Canonical branch/PR policy:
 
 - [`mk1/build/REPOSITORY_HYGIENE.md`](mk1/build/REPOSITORY_HYGIENE.md)
 
-Current integration model:
+Integration authority:
 
 ```text
 main                     canonical integration authority
-mk1/s4-visualspec-v1     active S4 implementation branch
 ```
 
-There is currently no `developer`/`develop` branch. Historical uncertified/superseded PRs are archived instead of being merged merely to empty the branch list.
+There is no `developer`/`develop` branch. Historical uncertified/superseded PRs are archived instead of being merged merely to empty the branch list. Historical refs are not force-moved to simulate deletion.
 
 ## Run locally with Docker
 
@@ -133,7 +136,7 @@ password: local-docker-password-change-me
 
 The checked-in local Compose contract starts MongoDB, FastAPI and Next.js with health-gated startup and persistent named volumes.
 
-For WSL native Docker where Windows `localhost` forwarding is unreliable, use the certified launcher documented in:
+For WSL native Docker where Windows `localhost` forwarding is unreliable, use:
 
 - [`docs/WSL_NATIVE_DOCKER.md`](docs/WSL_NATIVE_DOCKER.md)
 
