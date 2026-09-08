@@ -96,6 +96,46 @@ async def _ensure_mk1_planning_indexes(db):
     )
 
 
+async def _ensure_mk1_production_indexes(db):
+    """Install S3 GenerationRun/artifact/revision lineage invariants."""
+    await db["generation_runs"].create_index(
+        [("tenant_id", 1), ("run_id", 1)],
+        unique=True,
+        name="tenant_generation_run_unique",
+    )
+    await db["generation_runs"].create_index(
+        [("tenant_id", 1), ("content_id", 1), ("started_at", -1)],
+        name="tenant_content_generation_runs",
+    )
+    await db["agent_run_attempts"].create_index(
+        [("tenant_id", 1), ("agent_run_id", 1)],
+        unique=True,
+        name="tenant_agent_run_attempt_unique",
+    )
+    await db["agent_run_attempts"].create_index(
+        [("tenant_id", 1), ("run_id", 1), ("created_at", 1), ("attempt", 1)],
+        name="tenant_generation_attempt_lineage",
+    )
+    await db["production_artifacts"].create_index(
+        [("tenant_id", 1), ("artifact_id", 1)],
+        unique=True,
+        name="tenant_production_artifact_unique",
+    )
+    await db["production_artifacts"].create_index(
+        [("tenant_id", 1), ("run_id", 1), ("artifact_type", 1)],
+        name="tenant_generation_artifacts",
+    )
+    await db["content_revisions"].create_index(
+        [("tenant_id", 1), ("revision_id", 1)],
+        unique=True,
+        name="tenant_content_revision_unique",
+    )
+    await db["content_revisions"].create_index(
+        [("tenant_id", 1), ("content_id", 1), ("created_at", -1)],
+        name="tenant_content_revisions_recent",
+    )
+
+
 async def connect_db(*, run_bootstrap_migration: bool = True, run_profile_bridge: bool | None = None):
     global _client, _db, _bootstrap_migration_report
     mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
@@ -106,6 +146,7 @@ async def connect_db(*, run_bootstrap_migration: bool = True, run_profile_bridge
         await _ensure_indexes(_db)
         await _ensure_mk1_foundation_indexes(_db)
         await _ensure_mk1_planning_indexes(_db)
+        await _ensure_mk1_production_indexes(_db)
         if run_bootstrap_migration:
             from application.tenancy.bootstrap import migrate_bootstrap_tenant
             report = await migrate_bootstrap_tenant(_db)
