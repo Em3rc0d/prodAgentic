@@ -198,3 +198,29 @@ Correction:
 The S5 browser test reads the real golden manifest, serves the exact generated Logan PNG bytes to the Review preview, checks natural image dimensions, desktop/mobile usability, page navigation, QA-pending wording and absence of approval authority.
 
 Status: PREVENTED BY DEDICATED S5 REVIEW GATE.
+
+## E019 — Golden-generation pipeline produced a false-green step
+
+Observed:
+The first S5-CERT candidate `6a2b1ec9e1987a8a612dcfdb9ff8d032a4811828` showed the golden-generation step as successful, but `golden-run-1.txt` and `golden-run-2.txt` were empty and no `manifest.json` or PNGs existed. The following manifest-verification step correctly failed.
+
+Root cause:
+The workflow invoked `python scripts/s5_generate_goldens.py | tee ...` from `backend/` without making the backend package root available to the script import path, and the pipeline did not enable `pipefail`. The Python process could therefore fail before contacting Chromium while `tee` returned zero.
+
+Correction:
+The S5-CERT workflow now supplies `PYTHONPATH=${{ github.workspace }}/backend` and executes the golden generator under `set -o pipefail`. The Review Playwright evidence pipeline is also fail-closed with `pipefail`.
+
+Status: REPAIRED / FIRST CANDIDATE SUPERSEDED.
+
+## E020 — Pull-request merge ref is not the product candidate identity
+
+Observed:
+GitHub Actions checks out a synthetic merge ref for `pull_request` events, so `GITHUB_SHA`/`checkout_sha` can differ from `github.event.pull_request.head.sha`.
+
+Risk:
+Using the synthetic merge SHA as the certificate would bind evidence to a transient GitHub merge ref rather than the exact source branch head reviewed for S5.
+
+Correction:
+S5 receipts record both identities. Candidate freeze and product certification authority use the exact `pr_head_sha`; the synthetic merge SHA is retained only as CI execution context.
+
+Status: DOCUMENTED / PROCESS GUARDRAIL.
