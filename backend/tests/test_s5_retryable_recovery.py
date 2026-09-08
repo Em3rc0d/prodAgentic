@@ -80,6 +80,9 @@ async def test_retryable_s5_failure_stays_recoverable_and_success_clears_failure
         assert finished is not None and finished.state == GenerationRunState.QA
         assert finished.failure is None
         assert finished.completed_at is None
+    finally:
+        await client.drop_database(database_name)
+        client.close()
 
 
 @pytest.mark.asyncio
