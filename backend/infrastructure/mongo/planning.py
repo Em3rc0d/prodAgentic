@@ -4,7 +4,13 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from domain.planning.models import Batch, ContentItem, EditorialMemoryEntry, PersistedContentPlan
+from domain.planning.models import (
+    Batch,
+    ContentEditorialState,
+    ContentItem,
+    EditorialMemoryEntry,
+    PersistedContentPlan,
+)
 from domain.planning.trace import BatchPlanningTraceV1
 from domain.tenants.models import TenantContext
 from infrastructure.mongo.scoped_repository import TenantScopedMongoRepository
@@ -85,9 +91,6 @@ class MongoPlanningRepository:
         trace_inserted = False
         batch_inserted = False
         try:
-            # Batch is the visibility/commit marker. Evidence is written first so
-            # a visible Batch never points at missing selected-plan evidence after
-            # an ordinary adapter failure.
             await self.traces.insert_one(trace.model_dump())
             trace_inserted = True
             for plan in plans:
@@ -120,6 +123,27 @@ class MongoPlanningRepository:
     async def get_plan_for_content(self, content_id: str) -> PersistedContentPlan | None:
         document = _clean(await self.plans.find_one({"content_id": content_id}))
         return PersistedContentPlan.model_validate(document) if document else None
+
+    async def transition_content_item(
+        self,
+        content_id: str,
+        *,
+        expected_state: ContentEditorialState,
+        new_state: ContentEditorialState,
+        current_revision_id: str | None = None,
+        now: datetime,
+    ) -> bool:
+        update = {
+            "editorial_state": new_state.value,
+            "updated_at": now,
+        }
+        if current_revision_id is not None:
+            update["current_revision_id"] = current_revision_id
+        result = await self.items.update_one(
+            {"content_id": content_id, "editorial_state": expected_state.value},
+            {"$set": update},
+        )
+        return result.matched_count == 1
 
     async def list_batch_items(self, batch_id: str) -> list[ContentItem]:
         documents = await self.items.find_many({"batch_id": batch_id}, sort=[("created_at", 1)])
