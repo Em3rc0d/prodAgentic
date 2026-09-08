@@ -1,6 +1,6 @@
 # MK1 S3 — Structured Four-Agent Text Cell — Build Record
 
-Status: **IMPLEMENTATION CLOSED — CANDIDATE FREEZE PENDING**
+Status: **IMPLEMENTATION + PRE-FREEZE DOCUMENTATION CLOSED — FREEZE NEXT**
 
 ## Slice ID
 
@@ -78,6 +78,7 @@ backend/tests/
   test_s3_structured_router_adapter.py
   test_s3_content_lifecycle.py
   test_s3_api_surface.py
+  test_s3_failure_lineage.py
   test_mk1_s3_mongo.py
 
 .github/workflows/
@@ -110,9 +111,11 @@ All authoritative S3 models reject unexpected fields.
 ## Agent production flow
 
 ```text
-PLANNED ContentItem
-  -> application lifecycle claim
-  -> PRODUCING
+resolve ContentItem
+  -> resolve exact persisted ContentPlan
+  -> resolve frozen ProfileVersion
+  -> resolve S3 service/model-router readiness
+  -> atomic lifecycle claim: PLANNED -> PRODUCING
   -> GenerationRun.CREATED
   -> RESEARCHING
   -> ResearchPackV1
@@ -140,15 +143,20 @@ S3 does not fabricate `READY_FOR_REVIEW`; that requires later visual/QA authorit
 4. Writer `claims_used` must resolve inside the exact `ResearchPackV1`.
 5. Writer may not reference `forbidden` claims.
 6. Editor may not introduce unknown/forbidden claim IDs.
-7. Structured-output repair is bounded.
+7. Structured-output contract repair is bounded.
 8. Writer/editor revision cycles are bounded.
 9. Regeneration creates new run/revision provenance instead of overwriting history.
 10. Provider/model/attempt/latency/token/cost/input-output digest lineage is persisted safely.
-11. Agents do not mutate domain state directly.
-12. ContentItem lifecycle is application-owned and tenant-scoped.
-13. S3 feature exposure is fail-closed under `MK1_STRUCTURED_AGENT_CELL` and the master `MK1_ENABLED` gate.
-14. S3 stops at `VISUAL_PLANNING`; S4 remains separate authority.
-15. No publication/scheduling/external side-effect authority is introduced by S3.
+11. Attempt ordinals reflect real invocation order; separate repair/retry attempts cannot all claim ordinal `1`.
+12. Failed/contract-repair attempts carried by adapter failures are persisted before terminal failure whenever a run exists.
+13. A typed artifact that later fails domain/authority verification preserves its producing attempt and leaves the run explicitly `FAILED`.
+14. Every post-creation failure path terminalizes `GenerationRun` with safe bounded failure metadata and completion time; successful S3 alone hands off at `VISUAL_PLANNING`.
+15. Agents do not mutate domain state directly.
+16. ContentItem lifecycle is application-owned, atomic and tenant-scoped.
+17. Runtime/service readiness is resolved before `PLANNED -> PRODUCING` is claimed.
+18. S3 feature exposure is fail-closed under `MK1_STRUCTURED_AGENT_CELL` and the master `MK1_ENABLED` gate.
+19. S3 stops at `VISUAL_PLANNING`; S4 remains separate authority.
+20. No publication/scheduling/external side-effect authority is introduced by S3.
 
 ## Feature flags
 
@@ -174,6 +182,8 @@ content_revisions
 
 Indexes enforce run/attempt/artifact/revision identity and support per-content lineage reads. `content_items` remains the ContentItem aggregate collection and receives atomic lifecycle/current-revision updates.
 
+Failure lineage is not treated as secondary telemetry: safe failed/contract-repair attempts are durable audit evidence linked to the exact `GenerationRun`.
+
 ## API boundary
 
 Canonical FastAPI app mounts:
@@ -184,20 +194,22 @@ GET  /api/generation-runs/{run_id}
 GET  /api/content-revisions/{revision_id}
 ```
 
-The POST resolves the persisted ContentItem, exact persisted ContentPlan and frozen ProfileVersion server-side. The client does not supply arbitrary plan/profile authority.
+The POST resolves the persisted ContentItem, exact persisted ContentPlan and frozen ProfileVersion server-side. The client does not supply arbitrary plan/profile authority. The canonical API-surface certification uses the FastAPI OpenAPI contract, avoiding dependence on internal route-class identity.
 
 ## Failure paths
 
-- malformed structured output -> bounded contract repair, then safe failure;
+- malformed structured output -> bounded contract repair, attempt evidence retained, then safe failure if exhausted;
+- provider/routing failure -> classified safe failure with available attempt lineage persisted;
+- typed-but-semantically-invalid artifact -> preserve producing attempt, fail closed, terminalize run;
 - missing/wrong agent lineage -> fail closed;
 - `ResearchPack.NO_GO` -> domain stop;
 - unsupported/forbidden writer claim -> fail closed;
 - editor introduced claim -> fail closed;
 - editor `REJECT` -> run failure;
 - editor revision budget exhausted -> run failure;
-- provider/routing failure -> classified safe failure;
 - persistence failure -> no fabricated success;
 - concurrent/non-PLANNED production claim -> `409`/fail closed;
+- unavailable S3 runtime dependency before lifecycle claim -> no `PRODUCING` mutation;
 - S3 failure after lifecycle claim -> ContentItem `FAILED`;
 - successful S3 text -> ContentItem remains `PRODUCING` and binds the DRAFT revision for S4.
 
@@ -205,7 +217,13 @@ The POST resolves the persisted ContentItem, exact persisted ContentPlan and fro
 
 See `mk1/build/slices/S3/ERROR_LEDGER.md`.
 
-Notable certification near-miss: generic CI was green at `3ebe0a66f3711c0f01301095b77163d908e59998` while the new production router was not mounted in `backend/main.py`. This SHA is diagnostic only and is not a certification candidate.
+Notable historical candidates/runs are diagnostic only unless explicitly named by the final certification receipt. Important discoveries include:
+
+- generic CI green at `3ebe0a66f3711c0f01301095b77163d908e59998` while the new production router was not mounted;
+- first dedicated S3-CERT at `862f3760fe5be4c7580b4b0ed16b5b91f0e03d05` failed on a brittle API-route introspection assertion and also failed to preserve its own receipt artifact;
+- subsequent pre-freeze audit found attempt ordinal, failed-attempt durability, semantic-failure terminalization and lifecycle-readiness ordering defects; all were repaired before freeze.
+
+None of those superseded SHAs may be used as S3 certification evidence.
 
 ## Test/certification gates
 
@@ -226,19 +244,26 @@ S3-CERT structured-agent-cell
 
 The dedicated gate covers:
 
-- canonical API mount;
+- canonical OpenAPI API surface;
 - fail-closed feature flag behavior;
-- contract validation;
+- strict contract validation and extra-field rejection;
 - claim provenance enforcement;
-- bounded repair/revision;
-- ContentItem lifecycle transitions;
-- real Mongo lineage persistence/restart recovery.
+- bounded structured repair/revision;
+- accurate attempt ordinals;
+- failed-attempt persistence;
+- semantic-failure terminalization;
+- ContentItem lifecycle transitions/readiness ordering;
+- real Mongo lineage persistence and restart/reopen reads.
+
+The S3 workflow records exact run identity before the first fallible gate so red runs remain auditable evidence rather than disappearing.
 
 ## Candidate freeze law
 
 The certification candidate must be one exact SHA after implementation/documentation reconciliation. No source/test/workflow changes are allowed after freeze. If any such file changes, the candidate is invalidated and a new candidate SHA is required.
 
 A later certification-receipt-only commit may reference the frozen product candidate; that receipt head must itself pass the required gates before merge.
+
+The exact candidate SHA is intentionally not self-recorded in this pre-freeze file because a commit cannot truthfully contain its own final SHA. Freeze identity is recorded externally on PR #43 immediately after this reconciliation commit and then immutably in `mk1/test/evidence/S3/CERTIFICATION.md` after exact-candidate gates pass.
 
 ## Known limitations / explicit non-claims
 
@@ -257,4 +282,4 @@ Disable `MK1_STRUCTURED_AGENT_CELL` or revert the S3 merge. Existing S0-S2 user 
 
 ## Certification evidence
 
-Pending exact candidate freeze and green exact-SHA runs. No S3 certification claim is valid until `mk1/test/evidence/S3/CERTIFICATION.md` records the exact candidate and required run IDs.
+Pending exact candidate freeze and green exact-SHA runs. No S3 certification claim is valid until `mk1/test/evidence/S3/CERTIFICATION.md` records the exact frozen candidate and required run/job/artifact identities.
