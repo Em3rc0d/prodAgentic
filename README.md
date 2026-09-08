@@ -6,34 +6,112 @@ prodAgentic is a governed agentic content-production system. It plans, produces,
 
 The active product generation is **MK1**.
 
-Certified implementation/product-code baseline through S2:
-
-```text
-002177e90431d6009498a88cc6eb20efc46e14b3
-```
-
 Certified/merged slices:
 
 ```text
 S0 — Foundation + Bootstrap Tenant       ✅
 S1 — Profile V2                         ✅
 S2 — Batch + Editorial Memory + Novelty ✅
+S3 — Structured Agent Cell              ✅
 ```
 
-Post-merge canonical CI on that exact product SHA:
+Current work:
 
 ```text
-backend-test        PASS
-frontend-test       PASS
-UI-01-CERT browser PASS
-run                 33982022917
+S4 — VisualSpec V1                      🔨 BUILD ENTRY
+S5 — Renderer + AssetStore              ⛔ NOT STARTED
 ```
 
-`main` may contain later documentation/operations descendants. Those do not replace the product-code certification boundary above; `mk1/STATUS.md` is the canonical ledger.
+S3 product-code certificate:
+
+```text
+a10dfec7f5851ae3f8c850fcc934009951f7d422
+```
+
+Final S3 documentation descendant / pre-S4-entry main:
+
+```text
+2dd152e671667e1377907c53748aec83aaf4796b
+```
+
+`mk1/STATUS.md` is the canonical certification ledger. Product-code certificate boundaries and later documentation descendants are intentionally distinguished.
+
+## Certified MK1 journey today
+
+```text
+Bootstrap Tenant
+    ↓
+Profile V2 quick setup
+    ↓
+immutable ProfileVersion
+    ↓
+Create / Batch planning
+    ↓
+Editorial Memory
+    ↓
+Novelty + diversity
+    ↓
+ContentPlanV1
+    ↓
+ResearchPackV1
+    ↓
+ContentSpecV1
+    ↓
+EditorialReviewV1
+    ↓
+ContentRevisionV1(DRAFT)
+    ↓
+GenerationRun.VISUAL_PLANNING
+```
+
+S4 now adds the typed visual intermediate representation. S4 does **not** own render bytes; Chromium rendering/AssetStore belongs to S5.
+
+## S4 target boundary
+
+```text
+accepted ContentSpecV1
+  + exact ContentRevisionV1
+  + frozen ProfileVersion visual policy
+        ↓
+VisualAgent / deterministic visual policy
+        ↓
+VisualSpecV1
+```
+
+V1 VisualSpec formats:
+
+```text
+single_image
+carousel
+infographic
+```
+
+Critical editorial text must reference the accepted ContentSpec instead of being freely invented inside the VisualAgent.
+
+Build authority:
+
+- [`mk1/build/slices/S4/BUILD_RECORD.md`](mk1/build/slices/S4/BUILD_RECORD.md)
+- [`mk1/build/slices/S4/ERROR_LEDGER.md`](mk1/build/slices/S4/ERROR_LEDGER.md)
+- [`mk1/arch/VISUAL_SYSTEM.md`](mk1/arch/VISUAL_SYSTEM.md)
+
+## Repository hygiene
+
+Canonical branch/PR policy:
+
+- [`mk1/build/REPOSITORY_HYGIENE.md`](mk1/build/REPOSITORY_HYGIENE.md)
+
+Current integration model:
+
+```text
+main                     canonical integration authority
+mk1/s4-visualspec-v1     active S4 implementation branch
+```
+
+There is currently no `developer`/`develop` branch. Historical uncertified/superseded PRs are archived instead of being merged merely to empty the branch list.
 
 ## Run locally with Docker
 
-Preferred local path:
+Default local path:
 
 ```bash
 git pull
@@ -53,108 +131,46 @@ username: admin
 password: local-docker-password-change-me
 ```
 
-The checked-in local Compose contract starts:
+The checked-in local Compose contract starts MongoDB, FastAPI and Next.js with health-gated startup and persistent named volumes.
 
-```text
-MongoDB 7      127.0.0.1:27017
-FastAPI        127.0.0.1:8000
-Next.js        127.0.0.1:3000
-```
+For WSL native Docker where Windows `localhost` forwarding is unreliable, use the certified launcher documented in:
 
-with health-gated startup and persistent named volumes for Mongo and owned assets.
+- [`docs/WSL_NATIVE_DOCKER.md`](docs/WSL_NATIVE_DOCKER.md)
 
-Detailed Docker runbook:
+Other canonical runbooks:
 
 - [`docs/DOCKER_LOCAL.md`](docs/DOCKER_LOCAL.md)
-
-Optional overrides:
-
-```bash
-cp .env.docker.example .env.docker
-docker compose --env-file .env.docker up --build
-```
-
-The default stack is loopback-only and scoped to certified MK1 S0→S2. It does not authorize S3 or external publication.
-
-## Local operator acceptance
-
-After the stack is healthy, execute:
-
-- [`mk1/test/LOCAL_ACCEPTANCE.md`](mk1/test/LOCAL_ACCEPTANCE.md) — fail-closed operator acceptance checklist.
-- [`mk1/STATUS.md`](mk1/STATUS.md) — canonical certification/status ledger.
-
-Manual/non-Docker setup remains documented in:
-
 - [`docs/LOCAL_DEVELOPMENT.md`](docs/LOCAL_DEVELOPMENT.md)
-
-The local S0→S2 pass must not trigger the future S3 production cell or publish externally.
+- [`mk1/test/LOCAL_ACCEPTANCE.md`](mk1/test/LOCAL_ACCEPTANCE.md)
 
 ## Generations
 
-This repository uses explicit product generations.
-
-- **MK0** — the existing implementation lineage: FastAPI/Next.js product, `ContentRun` lifecycle, Content Profiles, immutable approval bundle, durable asset ownership, LinkedIn publishing, scheduling, and release hardening.
-- **MK1** — the reconciled product generation. MK1 keeps proven safety invariants from MK0 but redesigns the product around first-class Profiles, Batches, ContentItems, GenerationRuns, Editorial Memory, Novelty, structured agent contracts, VisualSpec, governed QA, queue-based execution, capability-aware distribution, analytics, and progressive-disclosure UX.
-
-MK0 is evidence and migration authority where explicitly retained. MK1 is the current design and implementation authority for new product work.
-
-## Implemented MK1 journey today
-
-The currently certified product path is:
-
-```text
-Bootstrap Tenant
-    ↓
-MK1 Shell
-    ↓
-Profile V2 quick setup
-    ↓
-proposal review
-    ↓
-explicit human acceptance
-    ↓
-immutable ProfileVersion
-    ↓
-Create cockpit
-    ↓
-Batch planning
-    ↓
-Editorial Memory
-    ↓
-Novelty + diversity
-    ↓
-ContentPlanV1
-    ↓
-Batch + ContentItems
-```
-
-Later MK1 architecture includes Research, Writer, Editor, Visual, QA, approval, scheduling, publication and learning, but those nodes must be implemented and certified by their own slices before they are treated as current MK1 authority.
+- **MK0** — historical implementation lineage: FastAPI/Next.js product, ContentRun lifecycle, legacy Content Profiles, approval/publishing/storage/release work. It remains evidence/migration authority only where explicitly retained.
+- **MK1** — current reconciled generation built around first-class Profiles, Batches, ContentItems, GenerationRuns, Editorial Memory, Novelty, structured agent contracts, VisualSpec, governed QA, queue-based execution, capability-aware distribution, analytics and progressive-disclosure UX.
 
 ## MK1 repository method
-
-Every MK generation is organized using the same lifecycle vocabulary:
 
 ```text
 brainstorming/  exploration and hypotheses; never authoritative by itself
 design/         product, UX and visual design contracts
 arch/           domain, application and infrastructure architecture
 plan/           dependency graph, delivery order, risks and gates
-build/          implementation guidance, migration notes and build records
+build/          implementation records, slice ledgers and repository hygiene
 test/           test strategy, golden datasets and certification evidence
 mining-site/    evidence intake, provenance ledger and repository findings
 quarries/       scoped investigations that may promote findings upstream
 ```
 
-The canonical MK1 index is [`mk1/README.md`](mk1/README.md).
+Canonical MK1 index: [`mk1/README.md`](mk1/README.md).
 
 ## Documentation authority
 
-When documents conflict, use this precedence inside the active MK:
+When documents conflict inside the active MK:
 
 ```text
 accepted ADR / invariant
         >
-arch contract
+architecture contract
         >
 design contract
         >
@@ -165,25 +181,23 @@ build note
 brainstorming / quarry finding
 ```
 
-Certification receipts and `mk1/STATUS.md` establish whether an implementation slice actually crossed its required gates. Historical MK0 documents do not override an explicit MK1 decision.
+Certification receipts plus `mk1/STATUS.md` determine whether a slice actually crossed its gates.
 
 ## Required reading order
 
-A new engineer or agent should read:
-
 1. `mk1/README.md`
 2. `mk1/STATUS.md`
-3. `mk1/brainstorming/PRODUCT_THESIS.md`
-4. `mk1/design/PRODUCT.md`
-5. `mk1/arch/SYSTEM_ARCHITECTURE.md`
-6. `mk1/arch/DOMAIN_MODEL.md`
-7. `mk1/arch/INVARIANTS.md`
-8. `mk1/plan/DESIGN_GRAPH.md`
-9. `mk1/plan/BUILD_ENTRY_CRITERIA.md`
-10. `docs/DOCKER_LOCAL.md` when running the product locally.
+3. `mk1/build/REPOSITORY_HYGIENE.md`
+4. `mk1/brainstorming/PRODUCT_THESIS.md`
+5. `mk1/design/PRODUCT.md`
+6. `mk1/arch/SYSTEM_ARCHITECTURE.md`
+7. `mk1/arch/DOMAIN_MODEL.md`
+8. `mk1/arch/INVARIANTS.md`
+9. `mk1/arch/CONTRACTS.md`
+10. `mk1/arch/AGENT_ARCHITECTURE.md`
+11. `mk1/arch/VISUAL_SYSTEM.md`
+12. current slice build record + error ledger.
 
 ## Build authorization phrase
 
-MK1 uses **“Take the hummer”** as the explicit phrase meaning that the design graph is closed enough to begin implementation. The phrase is valid only when the build-entry criteria in `mk1/plan/BUILD_ENTRY_CRITERIA.md` are satisfied.
-
-Each implementation slice still requires its own exact-SHA tests, evidence and certification; the phrase never bypasses those gates.
+MK1 uses **“Take the hummer”** to indicate that the graph is sufficiently closed to begin a build slice. It never bypasses exact-SHA testing, slice-specific certification, receipt-head revalidation, exact-head merge or post-merge evidence.

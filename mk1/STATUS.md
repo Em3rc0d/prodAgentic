@@ -1,274 +1,300 @@
 # prodAgentic MK1 Status
 
-**As of:** 2026-09-06  
-**Stage:** IMPLEMENTATION — S0/S1/S2 CERTIFIED AND MERGED  
-**Current operator gate:** LOCAL ACCEPTANCE OF THE S0→S2 PRODUCT SURFACE  
-**Next planned implementation slice:** S3 — Structured Agent Cell (not present on the certified product baseline)
+**As of:** 2026-09-08  
+**Stage:** IMPLEMENTATION — S0/S1/S2/S3 CERTIFIED AND MERGED  
+**Current slice:** S4 — VisualSpec V1 — BUILD ENTRY  
+**Integration authority:** `main` (no `developer`/`develop` branch exists)
 
-## Canonical product baseline
+## Canonical main and product certificate boundaries
 
-The exact **certified product-code baseline** through S2 is:
-
-```text
-002177e90431d6009498a88cc6eb20efc46e14b3
-```
-
-That commit is `MK1 S2: Batch planning, editorial memory and novelty (#37)` and preserves the exact certified S2 receipt head as its second parent.
-
-Post-merge CI on that exact product SHA is green:
+Current pre-S4-entry `main` at the start of this reconciliation:
 
 ```text
-CI run: 33982022917
-backend-test        PASS
-frontend-test       PASS
-UI-01-CERT browser PASS
+2dd152e671667e1377907c53748aec83aaf4796b
 ```
 
-Documentation-only descendants may advance `main` without replacing this product certification boundary. A documentation commit is not a new product-code certificate.
+S3 product-code certificate boundary:
 
-For local acceptance, record the exact `HEAD` you test and verify that the certified product baseline above remains an ancestor. If commits after the product baseline modify runtime/product code, they require their own certification before they can inherit this acceptance authority.
+```text
+a10dfec7f5851ae3f8c850fcc934009951f7d422
+```
+
+The later `2dd152e...` merge is the final S3 documentation descendant. It records/finalizes evidence but does not replace the S3 product-code certificate.
+
+Earlier certified slice boundaries remain independently valid and are not retroactively redefined by later slices.
 
 ## MK1 certification ledger
 
 ### Design Freeze
 
-- reviewed design head: `730c2f89ec6527031dc95d0e4fbf86c981a41b6f`
-- Design Freeze PR: `#32`
-- canonical design merge: `2211ffe5123fbf2d23d6b88ba3cd0257f569b5d1`
-- Build Entry receipt: `mk1/plan/BUILD_ENTRY_RECEIPT.md`
-- build authorization phrase: `TAKE THE HUMMER`
+State: **CLOSED**
+
+```text
+reviewed design head  730c2f89ec6527031dc95d0e4fbf86c981a41b6f
+PR                    #32
+canonical merge       2211ffe5123fbf2d23d6b88ba3cd0257f569b5d1
+```
+
+Build authorization phrase: `TAKE THE HUMMER`.
 
 ### S0 — Foundation + Bootstrap Tenant
 
 State: **CERTIFIED / MERGED**
 
 ```text
-reviewed code head: 74056ec8930aecd61ad771da94076046dc95a9c8
-CI run:             33892749948 / #677
-backend-test        PASS
-frontend-test       PASS
-UI-01-CERT browser PASS
+reviewed code head    74056ec8930aecd61ad771da94076046dc95a9c8
+CI run                33892749948 / #677
+backend-test          PASS
+frontend-test         PASS
+UI-01-CERT browser    PASS
+merge used by S1      88a615c519b5918944256afd678b67139ed8f0bd
 ```
 
-S0 established the server-owned tenant boundary, tenant-scoped repositories, additive/idempotent bootstrap migration and the gated MK1 shell without transferring authority from unfinished slices.
-
-Certified S0 merge used by S1:
-
-```text
-88a615c519b5918944256afd678b67139ed8f0bd
-```
+Authority gained: server-owned tenant boundary, tenant-scoped repositories, additive/idempotent bootstrap migration and gated MK1 shell.
 
 ### S1 — Profile V2
 
 State: **CERTIFIED / MERGED**
 
 ```text
-certified candidate: b7b821691da6fe8375109ab00e6eb08c4858e5b4
-CI run:             33928753075 / #689
-backend-test        PASS
-frontend-test       PASS
-UI-01-CERT browser PASS
+candidate             b7b821691da6fe8375109ab00e6eb08c4858e5b4
+CI run                33928753075 / #689
+backend-test          PASS
+frontend-test         PASS
+UI-01-CERT browser    PASS
+merge used by S2      bfa64cb7e03e2344be80a789f0871bbac2bbbcea
 ```
 
-S1 closed the low-friction Profile V2 proposal/acceptance flow, immutable ProfileVersion history, exact acceptance digests, restart recovery for interrupted profile updates, tenant isolation, allowlisted migration and the structural secret/OAuth boundary.
-
-Certified S1 merge used by S2:
-
-```text
-bfa64cb7e03e2344be80a789f0871bbac2bbbcea
-```
+Authority gained: low-friction Profile V2 proposal/acceptance, immutable ProfileVersion history, exact digests, crash/restart recovery and structural secret boundary.
 
 ### S2 — Batch + Editorial Memory + Novelty
 
 State: **CERTIFIED / MERGED / POST-MERGE GREEN**
 
-Implementation candidate:
-
 ```text
-3aa962e0d1bd378a3fa0eaa1b252dcd0a69affa2
+implementation candidate  3aa962e0d1bd378a3fa0eaa1b252dcd0a69affa2
+candidate CI run          33981477379 / #698
+receipt head              59d45a9dede3fd65246f4bba40707d707d4deea2
+product merge             002177e90431d6009498a88cc6eb20efc46e14b3
+post-merge CI run         33982022917
 ```
 
-Code-candidate evidence:
+Post-merge canonical gates:
 
 ```text
-CI run:             33981477379 / #698
-backend-test        PASS
-frontend-test       PASS
-UI-01-CERT browser PASS
+backend-test          PASS
+frontend-test         PASS
+UI-01-CERT browser    PASS
 ```
 
-Exact certification receipt head:
+Authority gained: Batch planning, rebuildable Editorial Memory, explainable Novelty/diversity, immutable ContentPlanV1 evidence and Create cockpit planning surface.
+
+#### Historical S2-quality line
+
+PR #42 / branch `mk1/s2-quality-hardening` is **CLOSED / NOT MERGED**. It captured an operator-found topic-authority/UX defect but never achieved the required exact-head browser certification and was intentionally excluded from S3. It is historical diagnostic debt, not current product authority. If revisited, re-derive it from current main under a new certified line.
+
+### S3 — Structured Agent Cell
+
+State: **CERTIFIED / MERGED / DOCUMENTATION CLOSED / POST-MERGE GREEN**
+
+Frozen implementation candidate:
 
 ```text
-59d45a9dede3fd65246f4bba40707d707d4deea2
+9d5db5bb375af0522c4d14c946abb70805147d64
 ```
 
-Receipt-head canonical CI:
+Candidate exact-SHA consensus:
 
 ```text
-CI run:             33981751709
-backend-test        PASS
-frontend-test       PASS
-UI-01-CERT browser PASS
+backend-test                   PASS
+frontend-test                  PASS
+UI-01-CERT browser             PASS
+DOCKER-COMPOSE-LOCAL smoke     PASS
+S3-CERT structured-agent-cell  PASS
 ```
 
-Merge/product baseline:
+Receipt-only head:
 
 ```text
-002177e90431d6009498a88cc6eb20efc46e14b3
+53fc5ae804bcbcd4e85ae0f0c02f8fb5b3000d2e
 ```
 
-Post-merge exact-product CI:
+S3 product merge:
 
 ```text
-CI run:             33982022917
-backend-test        PASS
-frontend-test       PASS
-UI-01-CERT browser PASS
+a10dfec7f5851ae3f8c850fcc934009951f7d422
 ```
 
-Detailed post-merge receipts:
-
-- `mk1/build/slices/S2/POST_MERGE.md`
-- `mk1/test/evidence/S2/POST_MERGE_RECEIPT.md`
-
-S2 introduces first-class Batch planning, rebuildable Editorial Memory, explainable Novelty, immutable ContentPlanV1 evidence and the low-friction `/create` cockpit. S2 intentionally does **not** invoke the S3 Research/Writer/Editor/Visual production cell and does not publish externally.
-
-## Product surface authorized for local acceptance
-
-With MK1 S0/S1/S2 feature flags enabled:
+Final documentation descendant merge:
 
 ```text
-bootstrap tenant
+2dd152e671667e1377907c53748aec83aaf4796b
+```
+
+Final descendant post-merge consensus:
+
+```text
+backend-test                   PASS
+frontend-test                  PASS
+UI-01-CERT browser             PASS
+DOCKER-COMPOSE-LOCAL smoke     PASS
+S3-CERT structured-agent-cell  PASS
+```
+
+Canonical S3 receipt:
+
+- `mk1/test/evidence/S3/CERTIFICATION.md`
+
+Error/near-miss history:
+
+- `mk1/build/slices/S3/ERROR_LEDGER.md`
+
+Authority gained:
+
+```text
+ContentPlanV1
+  -> ResearchPackV1
+  -> ContentSpecV1
+  -> EditorialReviewV1
+  -> ContentRevisionV1(DRAFT)
+  -> GenerationRun.VISUAL_PLANNING
+```
+
+S3 does not own VisualSpec, render bytes, QA, approval or publication.
+
+## S4 — VisualSpec V1
+
+State: **BUILD ENTRY / NOT CERTIFIED**
+
+Frozen architectural flow:
+
+```text
+accepted ContentSpecV1
+  + ContentRevisionV1
+  + frozen ProfileVersion visual policy
+        ↓
+VisualAgent / deterministic visual policy
+        ↓
+VisualSpecV1
+```
+
+Required V1 formats:
+
+```text
+single_image
+carousel
+infographic
+```
+
+S4 exit requires:
+
+- strict VisualSpec/page/block contracts;
+- critical copy references to exact ContentSpec values;
+- deterministic/versioned DesignProfile mapping;
+- page/canvas/layout/asset-requirement structural validation;
+- tenant/revision/profile lineage persistence and restart reads;
+- no renderer/AssetStore side effects;
+- exact candidate SHA with canonical CI + Docker + dedicated `S4-CERT` green.
+
+Build record:
+
+- `mk1/build/slices/S4/BUILD_RECORD.md`
+
+Error ledger:
+
+- `mk1/build/slices/S4/ERROR_LEDGER.md`
+
+Active implementation branch:
+
+```text
+mk1/s4-visualspec-v1
+```
+
+It must be aligned to the exact S4-entry `main` produced by this repository-hygiene reconciliation before any source commit.
+
+## Current product surface
+
+Certified MK1 authority now extends through text production and VisualSpec handoff readiness:
+
+```text
+Bootstrap Tenant
     ↓
-MK1 shell
-    ↓
-/profiles
-    ↓
-Profile V2 proposal
-    ↓
-explicit acceptance
+Profile V2
     ↓
 immutable ProfileVersion
     ↓
-/create
+Batch + Editorial Memory + Novelty
     ↓
-Profile selector
+ContentPlanV1
     ↓
-Tomorrow / This week
+ResearchPackV1
     ↓
-1 / 4 / 7 requested pieces
+ContentSpecV1
     ↓
-Generate next batch
+EditorialReviewV1
     ↓
-Editorial Memory refresh
+ContentRevisionV1(DRAFT)
     ↓
-oversized candidate pool
-    ↓
-Novelty + diversity selection
-    ↓
-ContentPlanV1 evidence
-    ↓
-Batch + ContentItems
+VISUAL_PLANNING
 ```
 
-Expected operator-visible behavior:
-
-- Profile setup is low-friction and does not expose model/agent controls.
-- Proposal review occurs before immutable ProfileVersion creation.
-- Batch planning reports `selected/requested` honestly.
-- Insufficient novelty may return fewer items than requested; standards are not silently relaxed.
-- Planning evidence is progressively disclosed rather than permanently expanded.
-- The exact ProfileVersion used for planning is frozen into Batch/ContentItem/ContentPlan evidence.
-- S2 planning remains provider-free/deterministic with respect to semantic novelty evaluation.
-- No S3 production cell or external publication should occur during this acceptance pass.
-
-Important UI boundary: S2 currently shows the newly planned Batch in `/create`, but it does not yet provide a Batch-history browser. Historical/freeze verification therefore uses the certified read-only Batch API `GET /api/batches/{batch_id}` as evidence; the acceptance checklist states this explicitly rather than pretending a history UI exists.
-
-## Feature gates for S0→S2 local acceptance
-
-Backend:
+What remains future authority:
 
 ```text
-MK1_ENABLED=true
-MK1_PROFILE_V2=true
-MK1_BATCH_PLANNING=true
+S4 VisualSpec         BUILD ENTRY
+S5 Renderer/AssetStore
+S6 QA/Recovery
+S7 Review/Approval V2
+S8 Export Package
+S9 Redis Streams/Outbox
+S10 Calendar/LinkedIn MK1 publication
+S11 Analytics snapshots
+S12 Planner learning
 ```
 
-Frontend:
+## Local runtime
 
-```text
-NEXT_PUBLIC_MK1_SHELL=true
-NEXT_PUBLIC_MK1_PROFILE_V2=true
-NEXT_PUBLIC_MK1_BATCH_PLANNING=true
-NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
-```
+Docker/WSL local-stack support remains independently certified. The operator should synchronize to current `main` and use the documented WSL/native-Docker launcher when Windows localhost forwarding is unreliable.
 
-Defaults remain off in checked-in runtime examples so incomplete/future authority is never enabled implicitly.
-
-## Local acceptance authority
-
-Canonical setup guide:
+Canonical guides:
 
 - `docs/LOCAL_DEVELOPMENT.md`
-
-Operator acceptance checklist:
-
+- `docs/DOCKER_LOCAL.md`
+- `docs/WSL_NATIVE_DOCKER.md`
 - `mk1/test/LOCAL_ACCEPTANCE.md`
 
-Run acceptance from synchronized `main`, record the exact tested `HEAD`, and verify:
+Older S0→S2 acceptance wording must not be interpreted as evidence that S3/S4 were executed locally; product-code certification and operator-machine acceptance remain distinct boundaries.
 
-```bash
-git merge-base --is-ancestor 002177e90431d6009498a88cc6eb20efc46e14b3 HEAD
-```
+## Repository hygiene
 
-For a documentation-only descendant, review:
+Canonical policy:
 
-```bash
-git diff --name-only 002177e90431d6009498a88cc6eb20efc46e14b3..HEAD
-```
+- `mk1/build/REPOSITORY_HYGIENE.md`
 
-No un-certified runtime/product-code mutation may be hidden inside that descendant range.
+At S4 entry:
 
-## What local acceptance does and does not prove
-
-Local acceptance can prove:
-
-- the certified code starts correctly on the operator machine;
-- Mongo persistence works in the operator environment;
-- S0 tenant bootstrap and auth/session behavior are usable locally;
-- S1 Profile V2 UX/API behavior is usable locally;
-- S2 Create/Batch/Memory/Novelty behavior is usable locally;
-- the product surface matches the intended low-friction interaction model.
-
-Local acceptance does **not** by itself prove:
-
-- S3+ generation behavior;
-- production deployment readiness;
-- production OAuth/LinkedIn behavior;
-- production backups/restores;
-- multi-user/RBAC readiness;
-- publication authority beyond already-certified MK0 paths;
-- commercial release readiness.
-
-## Open repository hygiene
-
-Historical draft PR `#27` (`RECONCILE-01`) predates the canonical MK1 slice line. It is not authority for S0/S1/S2 local acceptance and must not be merged into the current MK1 line without explicit reconciliation against accepted MK1 architecture/invariants.
+- there is no `developer`/`develop` branch;
+- PR #42 is closed/not merged as uncertified S2 diagnostic debt;
+- historical draft PR #27 is closed/not merged as superseded pre-MK1 reconciliation history;
+- completed feature/fix/docs/slice branch refs are eligible for deletion only after merge/archival verification;
+- historical refs must not be force-moved merely to simulate deletion.
 
 ## Next executable graph
 
 ```text
-DESIGN FREEZE                    ✅ CLOSED
+DESIGN FREEZE                 ✅ CLOSED
         ↓
-S0 FOUNDATION                    ✅ CERTIFIED / MERGED
+S0 FOUNDATION                 ✅ CERTIFIED / MERGED
         ↓
-S1 PROFILE V2                    ✅ CERTIFIED / MERGED
+S1 PROFILE V2                 ✅ CERTIFIED / MERGED
         ↓
-S2 BATCH + MEMORY + NOVELTY      ✅ CERTIFIED / MERGED
+S2 BATCH + MEMORY + NOVELTY   ✅ CERTIFIED / MERGED
         ↓
-S0→S2 LOCAL OPERATOR ACCEPTANCE  ⏳ READY TO EXECUTE
+S3 STRUCTURED AGENT CELL      ✅ CERTIFIED / MERGED
         ↓
-S3 STRUCTURED AGENT CELL         ○ NEXT PLANNED SLICE
+S4 VISUALSPEC V1              🔨 BUILD ENTRY
+        ↓
+S5 RENDERER + ASSETSTORE      ⛔ NOT STARTED
 ```
 
-The local acceptance gate is intentionally between S2 and the next product expansion so usability/environment defects are discovered before more execution machinery is layered on top.
+No S4 certificate is valid until one exact candidate SHA, its receipt head, exact-head merge and post-merge gates are recorded.

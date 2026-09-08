@@ -8,51 +8,49 @@
 
 Canonical state is tracked in [`STATUS.md`](STATUS.md).
 
-As of 2026-09-06:
+As of 2026-09-08:
 
 ```text
 DESIGN FREEZE                    ✅ CLOSED
 S0 FOUNDATION                    ✅ CERTIFIED / MERGED
 S1 PROFILE V2                    ✅ CERTIFIED / MERGED
 S2 BATCH + MEMORY + NOVELTY      ✅ CERTIFIED / MERGED
-S0→S2 LOCAL OPERATOR ACCEPTANCE  ⏳ READY TO EXECUTE
-S3 STRUCTURED AGENT CELL         ○ NEXT PLANNED SLICE
+S3 STRUCTURED AGENT CELL         ✅ CERTIFIED / MERGED
+S4 VISUALSPEC V1                 🔨 BUILD ENTRY
+S5 RENDERER + ASSETSTORE         ⛔ NOT STARTED
 ```
 
-The certified S2 **product-code baseline** is:
+Current S3 product certificate:
 
 ```text
-002177e90431d6009498a88cc6eb20efc46e14b3
+a10dfec7f5851ae3f8c850fcc934009951f7d422
 ```
 
-That exact SHA passed backend, frontend and UI browser post-merge CI. Current `main` may later include documentation-only descendants; those do not replace this product certificate.
+Current pre-S4-entry `main` after the final S3 documentation descendant:
 
-To run the product locally:
+```text
+2dd152e671667e1377907c53748aec83aaf4796b
+```
 
-1. read [`../docs/LOCAL_DEVELOPMENT.md`](../docs/LOCAL_DEVELOPMENT.md);
-2. execute [`test/LOCAL_ACCEPTANCE.md`](test/LOCAL_ACCEPTANCE.md);
-3. record the exact `HEAD` tested and verify the certified product baseline remains its ancestor;
-4. preserve exact PASS/FAIL evidence instead of redefining expected behavior during the run.
-
-S0→S2 acceptance must not trigger S3 production or external publication.
+The distinction matters: documentation descendants may advance `main` without replacing an earlier exact product-code certificate.
 
 ## Product contract
 
 > prodAgentic is a governed agentic system for planning, producing, validating, approving, storing, scheduling, publishing, and learning from content for multiple editorial identities while keeping operational complexity inside the product rather than transferring it to the user.
 
-The desired user experience is intentionally much smaller than the internal process:
+The desired user experience is intentionally smaller than the internal process:
 
 ```text
 USER
-Generate tomorrow -> Review -> Approve -> Schedule
+Generate -> Review -> Approve -> Schedule
 
 SYSTEM
-Profile -> Memory -> Batch planning -> Candidate pool -> Novelty -> Diversity
--> Research -> Writer -> Editor -> VisualSpec -> Render -> QA -> Human decision
--> Immutable approval -> Scheduling -> Queue -> Publication -> Receipt -> Analytics -> Memory
+Profile -> Memory -> Batch planning -> Novelty -> Research -> Writer -> Editor
+-> VisualSpec -> Render -> QA -> Human decision -> Immutable approval
+-> Scheduling -> Queue -> Publication -> Receipt -> Analytics -> Memory
 ```
 
-The full system line above is the MK1 target architecture. The current certified implementation stops after the S2 planning/memory boundary; later nodes remain future slices until separately built and certified.
+The certified implementation now reaches the S3 `VISUAL_PLANNING` handoff. S4 owns only the typed visual intermediate representation; S5 owns render bytes/assets.
 
 ## MK1 folder contract
 
@@ -62,22 +60,61 @@ The full system line above is the MK1 target architecture. The current certified
 | `design/` | product/UX/visual contracts | Yes, below accepted ADRs and architecture invariants |
 | `arch/` | domain, agent, data, execution and platform architecture | Yes |
 | `plan/` | dependency graph, slices, risks, entry/exit gates | Execution authority, not domain authority |
-| `build/` | implementation mapping and migration records | Must conform to design/arch |
-| `test/` | certification model and evidence requirements | Verification authority |
+| `build/` | implementation mapping, migration records, slice ledgers and repository hygiene | Must conform to design/arch |
+| `test/` | test strategy, certification model and evidence | Verification authority |
 | `mining-site/` | observed evidence and provenance | Evidence, not policy |
-| `quarries/` | bounded research questions and calibrations | No until promoted |
+| `quarries/` | bounded research questions/calibrations | No until promoted |
+
+## Repository branch policy
+
+Canonical policy: [`build/REPOSITORY_HYGIENE.md`](build/REPOSITORY_HYGIENE.md).
+
+Current rule:
+
+```text
+main                       integration authority
+mk1/s4-visualspec-v1       active slice branch
+```
+
+No `developer`/`develop` branch exists. Do not invent one without an explicit workflow decision.
+
+Completed branches are eligible for deletion after their work is reachable from `main` or their PR is explicitly archived. Historical refs must not be force-moved to simulate deletion.
+
+## Slice documentation
+
+Every active slice maintains at minimum:
+
+```text
+mk1/build/slices/SN/BUILD_RECORD.md
+mk1/build/slices/SN/ERROR_LEDGER.md
+```
+
+and, after certification:
+
+```text
+mk1/test/evidence/SN/CERTIFICATION.md
+```
+
+S4 entry documents:
+
+- [`build/slices/S4/BUILD_RECORD.md`](build/slices/S4/BUILD_RECORD.md)
+- [`build/slices/S4/ERROR_LEDGER.md`](build/slices/S4/ERROR_LEDGER.md)
+
+S3 canonical receipt:
+
+- [`test/evidence/S3/CERTIFICATION.md`](test/evidence/S3/CERTIFICATION.md)
 
 ## Provenance labels
 
 MK1 documentation may label assertions as:
 
-- `OFFICIAL` — externally authoritative source or product contract explicitly accepted for MK1.
-- `OBSERVED` — directly observed in current repository behavior/code.
+- `OFFICIAL` — externally authoritative source or explicitly accepted product contract.
+- `OBSERVED` — directly observed in repository behavior/code.
 - `INFERRED` — derived from evidence but not directly asserted by a source.
 - `INSPIRED` — design influence, not a requirement to copy.
 - `GENERATED` — new MK1 design choice created in this cycle.
 
-A generated design decision becomes authoritative only when it is placed in `design/`, `arch/`, or an accepted ADR and its dependencies are closed.
+A generated design decision becomes authoritative only when promoted into accepted design/architecture/ADR authority and its dependency graph is closed.
 
 ## MK1 non-negotiables
 
@@ -87,25 +124,27 @@ A generated design decision becomes authoritative only when it is placed in `des
 4. Batches are planned before pieces are produced.
 5. Agents exchange structured contracts, not undocumented prose blobs.
 6. Deterministic software handles deterministic problems.
-7. Human approval is required in MK1 v1.
-8. Approved evidence is immutable.
-9. MongoDB is the system of record; Redis is transport/coordination only.
-10. External publication uncertainty is reconciled, never blindly retried.
-11. Tenant isolation exists in the domain from day one even if the first deployment boots a single tenant.
-12. Platform integrations are capability-driven; manual export is always a valid fallback.
-13. Performance is a learning signal, never permission to violate novelty, brand or safety.
-14. No important architectural node remains open before a dependent build slice starts.
+7. Critical visual copy is owned by accepted ContentSpec references, not freely regenerated by a visual model.
+8. Human approval is required in MK1 v1.
+9. Approved evidence is immutable.
+10. MongoDB is the system of record; Redis is transport/coordination only.
+11. External publication uncertainty is reconciled, never blindly retried.
+12. Tenant isolation exists in the domain from day one even if the first deployment boots a single tenant.
+13. Platform integrations are capability-driven; manual export is always a valid fallback.
+14. Performance is a learning signal, never permission to violate novelty, brand or safety.
+15. No important architectural node remains open before a dependent build slice starts.
+16. A green generic CI run never substitutes for a slice-specific authority gate.
 
 ## V1 outcome
 
-MK1 v1 must support:
+MK1 v1 targets:
 
 - multiple Profiles;
 - lightweight Profile onboarding plus inference from examples;
 - configurable Batches;
 - Editorial Memory and novelty/cooldown enforcement;
 - Planner + Research + Writer + Editor + Visual cell;
-- single image, carousel, and infographic VisualSpecs;
+- single image, carousel and infographic VisualSpecs;
 - deterministic composition plus optional generated visual components;
 - deterministic, semantic and visual QA;
 - explicit human review and immutable approval;
@@ -115,15 +154,26 @@ MK1 v1 must support:
 - manual publish package for unsupported channels;
 - basic metric snapshots and performance summaries.
 
-Motion/video, autonomous approval, broad automatic multi-platform publishing, and advanced optimization remain later-generation slices unless explicitly promoted.
+Motion/video, autonomous approval, broad automatic multi-platform publishing and advanced optimization remain later-generation slices unless explicitly promoted.
 
-## Read next
+## Required reading order
 
-- Current state: `STATUS.md`
-- Local development: `../docs/LOCAL_DEVELOPMENT.md`
-- Local acceptance: `test/LOCAL_ACCEPTANCE.md`
-- Product thesis: `brainstorming/PRODUCT_THESIS.md`
-- MK0 reconciliation: `brainstorming/MK0_TO_MK1_RECONCILIATION.md`
-- Product design: `design/PRODUCT.md`
-- Architecture: `arch/SYSTEM_ARCHITECTURE.md`
-- Design graph: `plan/DESIGN_GRAPH.md`
+1. `README.md`
+2. `STATUS.md`
+3. `build/REPOSITORY_HYGIENE.md`
+4. `plan/BUILD_ENTRY_RECEIPT.md`
+5. `brainstorming/PRODUCT_THESIS.md`
+6. `design/PRODUCT.md`
+7. `arch/SYSTEM_ARCHITECTURE.md`
+8. `arch/DOMAIN_MODEL.md`
+9. `arch/INVARIANTS.md`
+10. `arch/CONTRACTS.md`
+11. `arch/AGENT_ARCHITECTURE.md`
+12. `arch/VISUAL_SYSTEM.md`
+13. `plan/VERTICAL_SLICES.md`
+14. `build/WORK_EXECUTION_DIRECTIVE.md`
+15. current slice `BUILD_RECORD.md` + `ERROR_LEDGER.md`
+
+## Build authorization phrase
+
+MK1 uses **“Take the hummer”** as the explicit phrase meaning the design graph is closed enough to begin implementation. It never bypasses slice-specific exact-SHA tests, evidence, receipts or post-merge certification.
