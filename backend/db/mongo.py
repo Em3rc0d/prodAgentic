@@ -21,16 +21,9 @@ async def _ensure_indexes(db):
 
 async def _ensure_mk1_foundation_indexes(db):
     """Install S0/S1 indexes without changing the legacy index-test contract."""
-    await db["tenants"].create_index(
-        "tenant_id",
-        unique=True,
-        name="tenant_id_unique",
-    )
+    await db["tenants"].create_index("tenant_id", unique=True, name="tenant_id_unique")
     for collection_name in ("content_profiles", "content_runs", "posts", "linkedin_connections"):
-        await db[collection_name].create_index(
-            "tenant_id",
-            name=f"{collection_name}_tenant_id",
-        )
+        await db[collection_name].create_index("tenant_id", name=f"{collection_name}_tenant_id")
     await db["profiles"].create_index(
         [("tenant_id", 1), ("profile_id", 1)],
         unique=True,
@@ -46,40 +39,30 @@ async def _ensure_mk1_foundation_indexes(db):
 async def _ensure_mk1_planning_indexes(db):
     """Install S2 Batch/ContentItem/Memory persistence invariants."""
     await db["batches"].create_index(
-        [("tenant_id", 1), ("batch_id", 1)],
-        unique=True,
-        name="tenant_batch_id_unique",
+        [("tenant_id", 1), ("batch_id", 1)], unique=True, name="tenant_batch_id_unique"
     )
     await db["batches"].create_index(
         [("tenant_id", 1), ("profile_id", 1), ("created_at", -1)],
         name="tenant_profile_batches_recent",
     )
     await db["content_items"].create_index(
-        [("tenant_id", 1), ("content_id", 1)],
-        unique=True,
-        name="tenant_content_id_unique",
+        [("tenant_id", 1), ("content_id", 1)], unique=True, name="tenant_content_id_unique"
     )
     await db["content_items"].create_index(
-        [("tenant_id", 1), ("batch_id", 1)],
-        name="tenant_batch_content_items",
+        [("tenant_id", 1), ("batch_id", 1)], name="tenant_batch_content_items"
     )
     await db["content_items"].create_index(
         [("tenant_id", 1), ("profile_id", 1), ("editorial_state", 1)],
         name="tenant_profile_editorial_state",
     )
     await db["content_plans"].create_index(
-        [("tenant_id", 1), ("artifact_id", 1)],
-        unique=True,
-        name="tenant_content_plan_unique",
+        [("tenant_id", 1), ("artifact_id", 1)], unique=True, name="tenant_content_plan_unique"
     )
     await db["content_plans"].create_index(
-        [("tenant_id", 1), ("batch_id", 1)],
-        name="tenant_batch_content_plans",
+        [("tenant_id", 1), ("batch_id", 1)], name="tenant_batch_content_plans"
     )
     await db["editorial_memory"].create_index(
-        [("tenant_id", 1), ("memory_id", 1)],
-        unique=True,
-        name="tenant_memory_id_unique",
+        [("tenant_id", 1), ("memory_id", 1)], unique=True, name="tenant_memory_id_unique"
     )
     await db["editorial_memory"].create_index(
         [("tenant_id", 1), ("profile_id", 1), ("effective_at", -1)],
@@ -90,49 +73,62 @@ async def _ensure_mk1_planning_indexes(db):
         name="tenant_profile_memory_topic",
     )
     await db["planning_traces"].create_index(
-        [("tenant_id", 1), ("batch_id", 1)],
-        unique=True,
-        name="tenant_batch_planning_trace_unique",
+        [("tenant_id", 1), ("batch_id", 1)], unique=True, name="tenant_batch_planning_trace_unique"
     )
 
 
 async def _ensure_mk1_production_indexes(db):
     """Install S3 GenerationRun/artifact/revision lineage invariants."""
     await db["generation_runs"].create_index(
-        [("tenant_id", 1), ("run_id", 1)],
-        unique=True,
-        name="tenant_generation_run_unique",
+        [("tenant_id", 1), ("run_id", 1)], unique=True, name="tenant_generation_run_unique"
     )
     await db["generation_runs"].create_index(
         [("tenant_id", 1), ("content_id", 1), ("started_at", -1)],
         name="tenant_content_generation_runs",
     )
     await db["agent_run_attempts"].create_index(
-        [("tenant_id", 1), ("agent_run_id", 1)],
-        unique=True,
-        name="tenant_agent_run_attempt_unique",
+        [("tenant_id", 1), ("agent_run_id", 1)], unique=True, name="tenant_agent_run_attempt_unique"
     )
     await db["agent_run_attempts"].create_index(
         [("tenant_id", 1), ("run_id", 1), ("created_at", 1), ("attempt", 1)],
         name="tenant_generation_attempt_lineage",
     )
     await db["production_artifacts"].create_index(
-        [("tenant_id", 1), ("artifact_id", 1)],
-        unique=True,
-        name="tenant_production_artifact_unique",
+        [("tenant_id", 1), ("artifact_id", 1)], unique=True, name="tenant_production_artifact_unique"
     )
     await db["production_artifacts"].create_index(
         [("tenant_id", 1), ("run_id", 1), ("artifact_type", 1)],
         name="tenant_generation_artifacts",
     )
     await db["content_revisions"].create_index(
-        [("tenant_id", 1), ("revision_id", 1)],
-        unique=True,
-        name="tenant_content_revision_unique",
+        [("tenant_id", 1), ("revision_id", 1)], unique=True, name="tenant_content_revision_unique"
     )
     await db["content_revisions"].create_index(
         [("tenant_id", 1), ("content_id", 1), ("created_at", -1)],
         name="tenant_content_revisions_recent",
+    )
+
+
+async def _ensure_mk1_visual_indexes(db):
+    """Install S4 DesignProfile/VisualSpec immutable lineage invariants."""
+    await db["design_profiles"].create_index(
+        [("tenant_id", 1), ("design_profile_id", 1)],
+        unique=True,
+        name="tenant_design_profile_unique",
+    )
+    await db["design_profiles"].create_index(
+        [("tenant_id", 1), ("profile_id", 1), ("profile_version", 1), ("mapping_version", 1)],
+        unique=True,
+        name="tenant_profile_design_mapping_unique",
+    )
+    await db["visual_specs"].create_index(
+        [("tenant_id", 1), ("visual_spec_id", 1)],
+        unique=True,
+        name="tenant_visual_spec_unique",
+    )
+    await db["visual_specs"].create_index(
+        [("tenant_id", 1), ("revision_id", 1), ("created_at", 1)],
+        name="tenant_revision_visual_lineage",
     )
 
 
@@ -147,6 +143,7 @@ async def connect_db(*, run_bootstrap_migration: bool = True, run_profile_bridge
         await _ensure_mk1_foundation_indexes(_db)
         await _ensure_mk1_planning_indexes(_db)
         await _ensure_mk1_production_indexes(_db)
+        await _ensure_mk1_visual_indexes(_db)
         if run_bootstrap_migration:
             from application.tenancy.bootstrap import migrate_bootstrap_tenant
             report = await migrate_bootstrap_tenant(_db)
