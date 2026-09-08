@@ -126,6 +126,7 @@ class StructuredAgentCellService:
         )
         await self.repository.create_run(run)
 
+        # RESEARCH
         run = await self._transition(run, GenerationRunState.RESEARCHING)
         research_input_digest = canonical_sha256(
             {
@@ -141,19 +142,38 @@ class StructuredAgentCellService:
                 profile=profile,
             )
         except Exception as exc:
-            await self._fail_run(run, "RESEARCH_AGENT_FAILED", "research", retryable=True)
-            raise ProductionContractViolation("Research agent failed before producing a valid typed artifact") from exc
+            run = await self._fail_run(run, "RESEARCH_AGENT_FAILED", "research", retryable=True)
+            await self._persist_exception_attempts(
+                run=run,
+                expected_agent=AgentKind.RESEARCH,
+                expected_input_digest=research_input_digest,
+                exc=exc,
+            )
+            raise ProductionContractViolation(
+                "Research agent failed before producing a valid typed artifact"
+            ) from exc
 
         research = research_result.artifact
-        self._verify_research(plan, research)
         research_digest = canonical_sha256(research)
-        research_refs = await self._persist_attempts(
-            run=run,
-            expected_agent=AgentKind.RESEARCH,
-            attempts=research_result.attempts,
-            expected_input_digest=research_input_digest,
-            expected_output_digest=research_digest,
-        )
+        try:
+            research_refs = await self._persist_attempts(
+                run=run,
+                expected_agent=AgentKind.RESEARCH,
+                attempts=research_result.attempts,
+                expected_input_digest=research_input_digest,
+                expected_output_digest=research_digest,
+            )
+            run = await self._bind_attempt_refs(run, research_refs)
+            self._verify_research(plan, research)
+        except ProductionContractViolation:
+            await self._fail_run(
+                run,
+                "RESEARCH_CONTRACT_VIOLATION",
+                "research",
+                retryable=False,
+            )
+            raise
+
         await self.repository.save_artifact(
             tenant_id=tenant_id,
             run_id=run.run_id,
@@ -162,12 +182,7 @@ class StructuredAgentCellService:
             digest=research_digest,
             payload=research.model_dump(mode="json"),
         )
-        run = run.model_copy(
-            update={
-                "research_pack_ref": research.research_id,
-                "agent_run_refs": run.agent_run_refs + research_refs,
-            }
-        )
+        run = run.model_copy(update={"research_pack_ref": research.research_id})
         await self.repository.update_run(run)
 
         if research.verdict == ResearchVerdict.NO_GO:
@@ -180,6 +195,7 @@ class StructuredAgentCellService:
             )
             raise ProductionDomainStop("Research verdict NO_GO")
 
+        # WRITER
         run = await self._transition(run, GenerationRunState.WRITING)
         writer_input_digest = canonical_sha256(
             {
@@ -197,19 +213,38 @@ class StructuredAgentCellService:
                 research=research,
             )
         except Exception as exc:
-            await self._fail_run(run, "WRITER_AGENT_FAILED", "writing", retryable=True)
-            raise ProductionContractViolation("Writer agent failed before producing a valid typed artifact") from exc
+            run = await self._fail_run(run, "WRITER_AGENT_FAILED", "writing", retryable=True)
+            await self._persist_exception_attempts(
+                run=run,
+                expected_agent=AgentKind.WRITER,
+                expected_input_digest=writer_input_digest,
+                exc=exc,
+            )
+            raise ProductionContractViolation(
+                "Writer agent failed before producing a valid typed artifact"
+            ) from exc
 
         content = writer_result.artifact
-        self._verify_content(plan, profile, research, content)
         content_digest = canonical_sha256(content)
-        writer_refs = await self._persist_attempts(
-            run=run,
-            expected_agent=AgentKind.WRITER,
-            attempts=writer_result.attempts,
-            expected_input_digest=writer_input_digest,
-            expected_output_digest=content_digest,
-        )
+        try:
+            writer_refs = await self._persist_attempts(
+                run=run,
+                expected_agent=AgentKind.WRITER,
+                attempts=writer_result.attempts,
+                expected_input_digest=writer_input_digest,
+                expected_output_digest=content_digest,
+            )
+            run = await self._bind_attempt_refs(run, writer_refs)
+            self._verify_content(plan, profile, research, content)
+        except ProductionContractViolation:
+            await self._fail_run(
+                run,
+                "WRITER_CONTRACT_VIOLATION",
+                "writing",
+                retryable=False,
+            )
+            raise
+
         await self.repository.save_artifact(
             tenant_id=tenant_id,
             run_id=run.run_id,
@@ -218,14 +253,10 @@ class StructuredAgentCellService:
             digest=content_digest,
             payload=content.model_dump(mode="json"),
         )
-        run = run.model_copy(
-            update={
-                "content_spec_ref": content.content_spec_id,
-                "agent_run_refs": run.agent_run_refs + writer_refs,
-            }
-        )
+        run = run.model_copy(update={"content_spec_ref": content.content_spec_id})
         await self.repository.update_run(run)
 
+        # EDITOR
         run = await self._transition(run, GenerationRunState.EDITING)
         final_review: EditorialReviewV1 | None = None
 
@@ -250,19 +281,38 @@ class StructuredAgentCellService:
                     revision_cycle=revision_cycle,
                 )
             except Exception as exc:
-                await self._fail_run(run, "EDITOR_AGENT_FAILED", "editing", retryable=True)
-                raise ProductionContractViolation("Editor agent failed before producing a valid typed artifact") from exc
+                run = await self._fail_run(run, "EDITOR_AGENT_FAILED", "editing", retryable=True)
+                await self._persist_exception_attempts(
+                    run=run,
+                    expected_agent=AgentKind.EDITOR,
+                    expected_input_digest=editor_input_digest,
+                    exc=exc,
+                )
+                raise ProductionContractViolation(
+                    "Editor agent failed before producing a valid typed artifact"
+                ) from exc
 
             review = editor_result.artifact
-            self._verify_review(plan, research, content, review)
             review_digest = canonical_sha256(review)
-            editor_refs = await self._persist_attempts(
-                run=run,
-                expected_agent=AgentKind.EDITOR,
-                attempts=editor_result.attempts,
-                expected_input_digest=editor_input_digest,
-                expected_output_digest=review_digest,
-            )
+            try:
+                editor_refs = await self._persist_attempts(
+                    run=run,
+                    expected_agent=AgentKind.EDITOR,
+                    attempts=editor_result.attempts,
+                    expected_input_digest=editor_input_digest,
+                    expected_output_digest=review_digest,
+                )
+                run = await self._bind_attempt_refs(run, editor_refs)
+                self._verify_review(plan, research, content, review)
+            except ProductionContractViolation:
+                await self._fail_run(
+                    run,
+                    "EDITOR_CONTRACT_VIOLATION",
+                    "editing",
+                    retryable=False,
+                )
+                raise
+
             await self.repository.save_artifact(
                 tenant_id=tenant_id,
                 run_id=run.run_id,
@@ -271,12 +321,7 @@ class StructuredAgentCellService:
                 digest=review_digest,
                 payload=review.model_dump(mode="json"),
             )
-            run = run.model_copy(
-                update={
-                    "editorial_review_ref": review.review_id,
-                    "agent_run_refs": run.agent_run_refs + editor_refs,
-                }
-            )
+            run = run.model_copy(update={"editorial_review_ref": review.review_id})
             await self.repository.update_run(run)
 
             if review.verdict == EditorialVerdict.REJECT:
@@ -314,16 +359,21 @@ class StructuredAgentCellService:
                 )
                 raise ProductionContractViolation("REVISE requires revised_content_spec")
 
-            self._verify_content(plan, profile, research, revised)
-            if revised.content_spec_id == content.content_spec_id:
+            try:
+                self._verify_content(plan, profile, research, revised)
+                if revised.content_spec_id == content.content_spec_id:
+                    raise ProductionContractViolation(
+                        "Editor revision must create a new ContentSpec identity"
+                    )
+            except ProductionContractViolation:
                 await self._fail_run(
                     run,
-                    "EDITOR_REVISION_NOT_VERSIONED",
+                    "EDITOR_REVISION_CONTRACT_VIOLATION",
                     "editing",
                     retryable=False,
-                    safe_message="Editor revision reused an existing ContentSpec identity.",
+                    safe_message="Editor revision violated frozen content authority.",
                 )
-                raise ProductionContractViolation("Editor revision must create a new ContentSpec identity")
+                raise
 
             content = revised
             content_digest = canonical_sha256(content)
@@ -339,7 +389,13 @@ class StructuredAgentCellService:
             await self.repository.update_run(run)
 
         if final_review is None:
-            raise AssertionError("editor loop exited without a terminal verdict")
+            await self._fail_run(
+                run,
+                "EDITOR_TERMINAL_VERDICT_MISSING",
+                "editing",
+                retryable=False,
+            )
+            raise ProductionContractViolation("Editor loop exited without a terminal verdict")
 
         final_content_digest = canonical_sha256(content)
         revision = ContentRevisionV1(
@@ -402,21 +458,29 @@ class StructuredAgentCellService:
         if content.plan_id != plan.plan_id:
             raise ProductionContractViolation("ContentSpec plan_id mismatch")
         if content.format != plan.format:
-            raise ProductionContractViolation("ContentSpec format cannot silently change the ContentPlan format")
+            raise ProductionContractViolation(
+                "ContentSpec format cannot silently change the ContentPlan format"
+            )
         if content.language != profile.copy_policy.target_language:
-            raise ProductionContractViolation("ContentSpec language does not match frozen ProfileVersion copy policy")
+            raise ProductionContractViolation(
+                "ContentSpec language does not match frozen ProfileVersion copy policy"
+            )
 
         claims = {item.claim_id: item for item in research.claims}
         unknown = set(content.claims_used) - set(claims)
         if unknown:
-            raise ProductionContractViolation(f"ContentSpec references unknown claim IDs: {sorted(unknown)}")
+            raise ProductionContractViolation(
+                f"ContentSpec references unknown claim IDs: {sorted(unknown)}"
+            )
         forbidden = {
             claim_id
             for claim_id in content.claims_used
             if claims[claim_id].publishability == ClaimPublishability.FORBIDDEN
         }
         if forbidden:
-            raise ProductionContractViolation(f"ContentSpec references forbidden claim IDs: {sorted(forbidden)}")
+            raise ProductionContractViolation(
+                f"ContentSpec references forbidden claim IDs: {sorted(forbidden)}"
+            )
 
     @classmethod
     def _verify_review(
@@ -433,17 +497,26 @@ class StructuredAgentCellService:
             claims = {item.claim_id: item for item in research.claims}
             unknown = set(revised.claims_used) - set(claims)
             if unknown:
-                raise ProductionContractViolation(f"Editor introduced unknown claim IDs: {sorted(unknown)}")
+                raise ProductionContractViolation(
+                    f"Editor introduced unknown claim IDs: {sorted(unknown)}"
+                )
             forbidden = {
                 claim_id
                 for claim_id in revised.claims_used
                 if claims[claim_id].publishability == ClaimPublishability.FORBIDDEN
             }
             if forbidden:
-                raise ProductionContractViolation(f"Editor introduced forbidden claim IDs: {sorted(forbidden)}")
-        if review.verdict == EditorialVerdict.APPROVE_TEXT and review.revised_content_spec is not None:
-            if canonical_sha256(review.revised_content_spec) != canonical_sha256(content):
-                raise ProductionContractViolation("APPROVE_TEXT cannot silently replace the reviewed ContentSpec")
+                raise ProductionContractViolation(
+                    f"Editor introduced forbidden claim IDs: {sorted(forbidden)}"
+                )
+        if (
+            review.verdict == EditorialVerdict.APPROVE_TEXT
+            and review.revised_content_spec is not None
+            and canonical_sha256(review.revised_content_spec) != canonical_sha256(content)
+        ):
+            raise ProductionContractViolation(
+                "APPROVE_TEXT cannot silently replace the reviewed ContentSpec"
+            )
 
     async def _persist_attempts(
         self,
@@ -455,34 +528,97 @@ class StructuredAgentCellService:
         expected_output_digest: str,
     ) -> tuple[str, ...]:
         if not attempts:
-            await self._fail_run(
-                run,
-                "AGENT_LINEAGE_MISSING",
-                expected_agent.value.lower(),
-                retryable=False,
-                safe_message="Agent returned no attempt lineage.",
-            )
             raise ProductionContractViolation("Agent attempt lineage is required")
 
-        ids = [item.agent_run_id for item in attempts]
-        if len(ids) != len(set(ids)):
-            raise ProductionContractViolation("agent_run_id values must be unique per invocation")
-        if any(item.agent != expected_agent for item in attempts):
-            raise ProductionContractViolation("Agent attempt lineage contains the wrong agent identity")
-        if any(item.input_digest != expected_input_digest for item in attempts):
-            raise ProductionContractViolation("Agent attempt input digest does not bind the authoritative input")
-
+        self._verify_attempt_envelope(
+            attempts=attempts,
+            expected_agent=expected_agent,
+            expected_input_digest=expected_input_digest,
+        )
         terminal = attempts[-1]
         if terminal.status != AgentAttemptStatus.SUCCESS:
-            raise ProductionContractViolation("Agent invocation must terminate with SUCCESS lineage")
+            raise ProductionContractViolation(
+                "Agent invocation must terminate with SUCCESS lineage"
+            )
         if terminal.output_digest != expected_output_digest:
-            raise ProductionContractViolation("Agent success output digest does not bind the typed artifact")
+            raise ProductionContractViolation(
+                "Agent success output digest does not bind the typed artifact"
+            )
 
         for attempt in attempts:
             await self.repository.append_agent_attempt(run.tenant_id, run.run_id, attempt)
-        return tuple(ids)
+        return tuple(item.agent_run_id for item in attempts)
 
-    async def _transition(self, run: GenerationRunV1, state: GenerationRunState) -> GenerationRunV1:
+    async def _persist_exception_attempts(
+        self,
+        *,
+        run: GenerationRunV1,
+        expected_agent: AgentKind,
+        expected_input_digest: str,
+        exc: Exception,
+    ) -> tuple[str, ...]:
+        attempts = tuple(getattr(exc, "attempts", ()) or ())
+        if not attempts:
+            return ()
+        self._verify_attempt_envelope(
+            attempts=attempts,
+            expected_agent=expected_agent,
+            expected_input_digest=expected_input_digest,
+        )
+        if any(item.status == AgentAttemptStatus.SUCCESS for item in attempts):
+            raise ProductionContractViolation(
+                "A failed agent invocation cannot carry SUCCESS terminal evidence"
+            )
+        for attempt in attempts:
+            await self.repository.append_agent_attempt(run.tenant_id, run.run_id, attempt)
+        refs = tuple(item.agent_run_id for item in attempts)
+        await self._bind_attempt_refs(run, refs)
+        return refs
+
+    @staticmethod
+    def _verify_attempt_envelope(
+        *,
+        attempts: tuple[AgentAttemptEvidenceV1, ...],
+        expected_agent: AgentKind,
+        expected_input_digest: str,
+    ) -> None:
+        ids = [item.agent_run_id for item in attempts]
+        if len(ids) != len(set(ids)):
+            raise ProductionContractViolation(
+                "agent_run_id values must be unique per invocation"
+            )
+        if any(item.agent != expected_agent for item in attempts):
+            raise ProductionContractViolation(
+                "Agent attempt lineage contains the wrong agent identity"
+            )
+        if any(item.input_digest != expected_input_digest for item in attempts):
+            raise ProductionContractViolation(
+                "Agent attempt input digest does not bind the authoritative input"
+            )
+        ordinals = [item.attempt for item in attempts]
+        if ordinals != sorted(ordinals) or len(ordinals) != len(set(ordinals)):
+            raise ProductionContractViolation(
+                "Agent attempt ordinals must be unique and monotonic"
+            )
+
+    async def _bind_attempt_refs(
+        self,
+        run: GenerationRunV1,
+        refs: tuple[str, ...],
+    ) -> GenerationRunV1:
+        if not refs:
+            return run
+        existing = set(run.agent_run_refs)
+        merged = run.agent_run_refs + tuple(ref for ref in refs if ref not in existing)
+        updated = run.model_copy(update={"agent_run_refs": merged})
+        await self.repository.update_run(updated)
+        return updated
+
+    async def _transition(
+        self,
+        run: GenerationRunV1,
+        state: GenerationRunState,
+    ) -> GenerationRunV1:
         updated = run.model_copy(update={"state": state})
         await self.repository.update_run(updated)
         return updated
@@ -494,7 +630,9 @@ class StructuredAgentCellService:
         stage: str,
         *,
         retryable: bool,
-        safe_message: str = "A production stage failed before a valid authoritative artifact was produced.",
+        safe_message: str = (
+            "A production stage failed before a valid authoritative artifact was produced."
+        ),
     ) -> GenerationRunV1:
         failed = run.model_copy(
             update={
@@ -505,6 +643,7 @@ class StructuredAgentCellService:
                     retryable=retryable,
                     safe_message=safe_message,
                 ),
+                "completed_at": utc_now(),
             }
         )
         await self.repository.update_run(failed)
