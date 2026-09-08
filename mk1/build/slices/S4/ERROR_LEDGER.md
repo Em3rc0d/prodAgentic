@@ -52,7 +52,7 @@ S4 could silently fabricate a full brand system, mutate S1 schema, or allow arbi
 
 Correction decision:
 
-S4 will derive an immutable, versioned `DesignProfileV1` through an allowlisted deterministic mapper from the frozen ProfileVersion snapshot plus controlled defaults/presets. Unknown traits may not inject arbitrary CSS, fonts, URLs, scripts, secrets or renderer directives.
+S4 derives an immutable, versioned `DesignProfileV1` through an allowlisted deterministic mapper from the frozen ProfileVersion snapshot plus controlled defaults/presets. Unknown traits may not inject arbitrary CSS, fonts, URLs, scripts, secrets or renderer directives.
 
 Prevention rule:
 
@@ -147,6 +147,78 @@ S4 golden tests certify schema, semantics, copy references, deterministic mappin
 Prevention rule:
 
 Every certificate states explicit non-claims for downstream slices.
+
+## S4-E009 — VisualSpec persistence has a crash window before revision pointer binding
+
+Observed:
+
+The durable operation has two writes: first persist the immutable `VisualSpecV1`, then compare-and-set `ContentRevision.visual_spec_ref`. A process can stop after the spec insert and before the pointer update.
+
+Risk:
+
+A naive retry with random identity would create duplicate specs for the same semantic generation attempt and make restart recovery ambiguous.
+
+Correction:
+
+The S4 lineage uses deterministic VisualSpec identity for the same revision/content/design input and immutable persistence. A retry can reopen the already persisted spec and complete the pointer binding without replacing history.
+
+Prevention rule:
+
+Whenever an immutable artifact is written before a mutable authority pointer, identity and retry semantics must make the first write durable intent rather than orphaned garbage.
+
+## S4-E010 — Revision pointer may advance before GenerationRun mirror is updated
+
+Observed:
+
+After the revision CAS succeeds, a crash can occur before `GenerationRun.visual_spec_ref` is updated.
+
+Risk:
+
+Treating the run mirror as primary authority would incorrectly fabricate another visual plan or reject a valid durable revision lineage after restart.
+
+Correction:
+
+`ContentRevision.visual_spec_ref` is treated as the durable S4 binding. On retry, the referenced VisualSpec is reloaded and checked against revision/content lineage; only then may the GenerationRun mirror be repaired to the same spec ID.
+
+Prevention rule:
+
+For duplicated pointers, define one durable authority and make all mirrors recoverable from it. Never let a cache/mirror outrank the immutable binding.
+
+## S4-E011 — S4 must not move GenerationRun to RENDERING
+
+Observed:
+
+The frozen GenerationRun machine orders `VISUAL_PLANNING -> RENDERING`, which can tempt S4 to transition state merely because a VisualSpec exists.
+
+Risk:
+
+Doing so would claim that render execution started even though S4 has no renderer, AssetStore or render-side-effect authority.
+
+Correction:
+
+A successful S4 plan leaves `GenerationRun.state=VISUAL_PLANNING`, binds `visual_spec_ref`, and hands that exact spec to S5. S5 owns the transition to `RENDERING` when execution actually begins.
+
+Prevention rule:
+
+State transitions describe real authority/side effects, not milestone optimism. Do not advance a state just to make a slice look complete.
+
+## S4-E012 — Deterministic planner path has no model-attempt evidence by design
+
+Observed:
+
+The initial S4 implementation can derive DesignProfile and VisualSpec deterministically without invoking a visual model.
+
+Risk:
+
+Certification language could incorrectly demand `AgentAttemptEvidenceV1` for a model call that never occurred, or a future model adapter could be smuggled in without the S3 evidence discipline.
+
+Correction:
+
+The V1 certificate accepts the deterministic path with zero VisualAgent provider attempts. If a model-backed visual planner is introduced later, its structured-output/repair attempts must be persisted with the existing S3 attempt-evidence discipline before that path becomes certified authority.
+
+Prevention rule:
+
+Do not fabricate telemetry for absent external calls; equally, do not add an external model path without evidence, bounded repair and a new exact-SHA certification pass.
 
 ## Ledger discipline
 
