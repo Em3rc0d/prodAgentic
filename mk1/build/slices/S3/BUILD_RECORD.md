@@ -1,6 +1,6 @@
 # MK1 S3 — Structured Four-Agent Text Cell — Build Record
 
-Status: **IMPLEMENTATION + PRE-FREEZE DOCUMENTATION CLOSED — FREEZE NEXT**
+Status: **CERTIFIED / MERGED**
 
 ## Slice ID
 
@@ -23,10 +23,10 @@ S3 intentionally stops before `VisualSpecV1`; visual planning remains S4 authori
 
 ## Base authority
 
-- certified `main`: `37292e17cfcbc50588aa248e1b14577637b3f68d`
-- branch: `mk1/s3-structured-agent-cell`
-- PR: `#43`
-- S2 quality-hardening PR `#42` is deliberately not inherited; S3 started from the last certified main.
+- certified S3 base `main`: `37292e17cfcbc50588aa248e1b14577637b3f68d`
+- implementation branch: `mk1/s3-structured-agent-cell`
+- implementation PR: `#43`
+- S2 quality-hardening PR `#42` was deliberately not inherited; S3 started from the last certified main.
 
 ## Accepted design dependencies
 
@@ -99,14 +99,7 @@ Registered/versioned Pydantic-compatible contracts include:
 - `GenerationFailureV1`
 - `ContentRevisionV1`
 
-Format-specific text contracts cover:
-
-- text;
-- single image copy semantics;
-- carousel slide semantics;
-- infographic section semantics.
-
-All authoritative S3 models reject unexpected fields.
+Format-specific text contracts cover text, single-image copy semantics, carousel slide semantics and infographic section semantics. All authoritative S3 models reject unexpected fields.
 
 ## Agent production flow
 
@@ -133,7 +126,7 @@ resolve ContentItem
   -> S4 authority
 ```
 
-S3 does not fabricate `READY_FOR_REVIEW`; that requires later visual/QA authority.
+S3 does not fabricate `READY_FOR_REVIEW`; later visual/QA authority is required.
 
 ## Core invariants
 
@@ -141,7 +134,7 @@ S3 does not fabricate `READY_FOR_REVIEW`; that requires later visual/QA authorit
 2. Every authoritative agent stage ends in a versioned typed contract.
 3. Research `NO_GO` is a domain stop, not a blind retry trigger.
 4. Writer `claims_used` must resolve inside the exact `ResearchPackV1`.
-5. Writer may not reference `forbidden` claims.
+5. Writer may not reference forbidden claims.
 6. Editor may not introduce unknown/forbidden claim IDs.
 7. Structured-output contract repair is bounded.
 8. Writer/editor revision cycles are bounded.
@@ -182,7 +175,7 @@ content_revisions
 
 Indexes enforce run/attempt/artifact/revision identity and support per-content lineage reads. `content_items` remains the ContentItem aggregate collection and receives atomic lifecycle/current-revision updates.
 
-Failure lineage is not treated as secondary telemetry: safe failed/contract-repair attempts are durable audit evidence linked to the exact `GenerationRun`.
+Failure lineage is not secondary telemetry: safe failed/contract-repair attempts are durable audit evidence linked to the exact `GenerationRun`.
 
 ## API boundary
 
@@ -194,7 +187,7 @@ GET  /api/generation-runs/{run_id}
 GET  /api/content-revisions/{revision_id}
 ```
 
-The POST resolves the persisted ContentItem, exact persisted ContentPlan and frozen ProfileVersion server-side. The client does not supply arbitrary plan/profile authority. The canonical API-surface certification uses the FastAPI OpenAPI contract, avoiding dependence on internal route-class identity.
+The POST resolves the persisted ContentItem, exact persisted ContentPlan and frozen ProfileVersion server-side. The client does not supply arbitrary plan/profile authority. API-surface certification validates the emitted FastAPI OpenAPI contract.
 
 ## Failure paths
 
@@ -204,7 +197,7 @@ The POST resolves the persisted ContentItem, exact persisted ContentPlan and fro
 - missing/wrong agent lineage -> fail closed;
 - `ResearchPack.NO_GO` -> domain stop;
 - unsupported/forbidden writer claim -> fail closed;
-- editor introduced claim -> fail closed;
+- editor-introduced claim -> fail closed;
 - editor `REJECT` -> run failure;
 - editor revision budget exhausted -> run failure;
 - persistence failure -> no fabricated success;
@@ -215,55 +208,148 @@ The POST resolves the persisted ContentItem, exact persisted ContentPlan and fro
 
 ## Error / near-miss record
 
-See `mk1/build/slices/S3/ERROR_LEDGER.md`.
+The complete preserved history is in `mk1/build/slices/S3/ERROR_LEDGER.md`. Superseded candidates are diagnostic only and are never mixed into certification evidence.
 
-Notable historical candidates/runs are diagnostic only unless explicitly named by the final certification receipt. Important discoveries include:
+Key historical findings included:
 
-- generic CI green at `3ebe0a66f3711c0f01301095b77163d908e59998` while the new production router was not mounted;
-- first dedicated S3-CERT at `862f3760fe5be4c7580b4b0ed16b5b91f0e03d05` failed on a brittle API-route introspection assertion and also failed to preserve its own receipt artifact;
-- subsequent pre-freeze audit found attempt ordinal, failed-attempt durability, semantic-failure terminalization and lifecycle-readiness ordering defects; all were repaired before freeze.
+- `3ebe0a66f3711c0f01301095b77163d908e59998`: generic CI green while the production router was not mounted;
+- `862f3760fe5be4c7580b4b0ed16b5b91f0e03d05`: first S3-CERT false-negative API assertion and missing red-run artifact;
+- `bbe4a1f555d626d6e9a1a11420d8bf8d5a8823dc`: S3-CERT green before the later pre-freeze lineage/lifecycle audit exposed additional defects;
+- `dd3c88425c4734d5e126d98d12941189cf103e88`: implementation/test fixes present before final documentation reconciliation.
 
-None of those superseded SHAs may be used as S3 certification evidence.
+## Certification lineage
 
-## Test/certification gates
-
-Canonical gates remain mandatory:
-
-```text
-backend-test
-frontend-test
-UI-01-CERT browser
-DOCKER-COMPOSE-LOCAL smoke
-```
-
-S3 adds:
+### Frozen implementation candidate
 
 ```text
-S3-CERT structured-agent-cell
+9d5db5bb375af0522c4d14c946abb70805147d64
 ```
 
-The dedicated gate covers:
+Exact-candidate consensus: **5/5 GREEN**.
 
-- canonical OpenAPI API surface;
-- fail-closed feature flag behavior;
-- strict contract validation and extra-field rejection;
-- claim provenance enforcement;
-- bounded structured repair/revision;
-- accurate attempt ordinals;
-- failed-attempt persistence;
-- semantic-failure terminalization;
-- ContentItem lifecycle transitions/readiness ordering;
-- real Mongo lineage persistence and restart/reopen reads.
+Canonical CI run `34245422425`:
 
-The S3 workflow records exact run identity before the first fallible gate so red runs remain auditable evidence rather than disappearing.
+```text
+frontend-test       102126042931  SUCCESS
+backend-test        102126043234  SUCCESS
+UI-01-CERT browser  102126970775  SUCCESS
+```
 
-## Candidate freeze law
+UI artifact:
 
-The certification candidate must be one exact SHA after implementation/documentation reconciliation. No source/test/workflow changes are allowed after freeze. If any such file changes, the candidate is invalidated and a new candidate SHA is required.
+```text
+10063952055
+sha256:84a80445b004423500452ddf36e6afca03f09a4c4db5e3f32d16eda424d5bb77
+```
 
-A later certification-receipt-only commit may reference the frozen product candidate; that receipt head must itself pass the required gates before merge.
+Docker run `34245422470`:
 
-The exact candidate SHA is intentionally not self-recorded in this pre-freeze file because a commit cannot truthfully contain its own final SHA. Freeze identity is recorded externally on PR #43 immediately after this reconciliation commit and then immutably in `mk1/test/evidence/S3/CERTIFICATION.md` after exact-candidate gates pass.
+```text
+DOCKER-COMPOSE-LOCAL smoke  102126352360  SUCCESS
+artifact 10063863411
+sha256:c88ba2033879874b725dfb696d2a78c2ee07e2893fb915a2276a36c4ab6aaad4
+```
+
+S3-CERT run `34245422434`:
+
+```text
+S3-CERT structured-agent-cell  102126042190  SUCCESS
+artifact 10063858139
+sha256:f418236bf9b992efa56e51e1b1c95cdd1ffd67fc7541e2bf89ecb4df552cf92e
+```
+
+### Receipt-only head
+
+```text
+53fc5ae804bcbcd4e85ae0f0c02f8fb5b3000d2e
+```
+
+Candidate -> receipt-head diff: exactly one added file, `mk1/test/evidence/S3/CERTIFICATION.md`; no source/test/workflow/contract changes.
+
+Receipt-head consensus: **5/5 GREEN**.
+
+Canonical CI run `34246081563`:
+
+```text
+frontend-test       102128292395  SUCCESS
+backend-test        102128292618  SUCCESS
+UI-01-CERT browser  102129096094  SUCCESS
+```
+
+UI artifact:
+
+```text
+10064189303
+sha256:e20d19bc4ea04bf546900e9d9b7e0e87f40df122f39d1cf9383e0ceda7164455
+```
+
+Docker run `34246081967`:
+
+```text
+DOCKER-COMPOSE-LOCAL smoke  102128294508  SUCCESS
+artifact 10064097405
+sha256:836b7594cafa6b71e5e04bd5a5df332ff6428dc4260e15aab15f39344300e87e
+```
+
+S3-CERT run `34246081710`:
+
+```text
+S3-CERT structured-agent-cell  102128293097  SUCCESS
+artifact 10064054295
+sha256:48ad9307188a1921f3dd3f907ed19ff8e39d18f76f70006727b3d6c7c1fc585c
+```
+
+### Exact-head protected merge
+
+PR #43 was merged using expected head `53fc5ae804bcbcd4e85ae0f0c02f8fb5b3000d2e`.
+
+S3 merge/product certificate boundary:
+
+```text
+a10dfec7f5851ae3f8c850fcc934009951f7d422
+```
+
+Merge parents:
+
+```text
+37292e17cfcbc50588aa248e1b14577637b3f68d
+53fc5ae804bcbcd4e85ae0f0c02f8fb5b3000d2e
+```
+
+### Post-merge verification on exact merge SHA
+
+Post-merge consensus: **5/5 GREEN**.
+
+Canonical CI run `34246650579`:
+
+```text
+frontend-test       102130244987  SUCCESS
+backend-test        102130245276  SUCCESS
+UI-01-CERT browser  102131255966  SUCCESS
+```
+
+UI artifact:
+
+```text
+10064443584
+sha256:89f1641e25f024ea6f105bc6554965a993fffd495735fc0a0ebe857332782d3a
+```
+
+Docker run `34246650596`:
+
+```text
+DOCKER-COMPOSE-LOCAL smoke  102130244212  SUCCESS
+artifact 10064320322
+sha256:365179a226b5d751e6a9c93791eb87d5e2e5fd4dcb5bdaa10ed24a36ebb6e907
+```
+
+S3-CERT run `34246650642`:
+
+```text
+S3-CERT structured-agent-cell  102130243417  SUCCESS
+artifact 10064282259
+sha256:afa6e47483a582dde62b9ef5e6cde34f251fea1ee2c5a4e8230606ed0f3286f7
+```
 
 ## Known limitations / explicit non-claims
 
@@ -271,8 +357,8 @@ The exact candidate SHA is intentionally not self-recorded in this pre-freeze fi
 - no S5 renderer/AssetStore authority;
 - no S6 QA/recovery authority;
 - no S7 review/ApprovalBundleV2 authority;
-- no S3 production UI is claimed/certified;
-- no external research browsing capability is claimed merely because `ResearchAgent` exists; evidence quality is constrained by configured adapters/tools;
+- no S3-specific production UI is claimed/certified;
+- no unrestricted external research browsing capability is claimed;
 - no publication/scheduling authority is transferred in S3;
 - PR #42 remains outside this lineage.
 
@@ -280,6 +366,14 @@ The exact candidate SHA is intentionally not self-recorded in this pre-freeze fi
 
 Disable `MK1_STRUCTURED_AGENT_CELL` or revert the S3 merge. Existing S0-S2 user behavior remains available because S3 is additive and fail-closed by default.
 
-## Certification evidence
+## Final decision
 
-Pending exact candidate freeze and green exact-SHA runs. No S3 certification claim is valid until `mk1/test/evidence/S3/CERTIFICATION.md` records the exact frozen candidate and required run/job/artifact identities.
+```text
+FROZEN CANDIDATE        9d5db5bb375af0522c4d14c946abb70805147d64
+RECEIPT HEAD            53fc5ae804bcbcd4e85ae0f0c02f8fb5b3000d2e
+S3 MERGE SHA            a10dfec7f5851ae3f8c850fcc934009951f7d422
+CANDIDATE GATES         5/5 GREEN
+RECEIPT-HEAD GATES      5/5 GREEN
+POST-MERGE GATES        5/5 GREEN
+S3                      CERTIFIED / MERGED
+```
