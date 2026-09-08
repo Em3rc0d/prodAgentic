@@ -68,7 +68,18 @@ class ProductionRepositoryPort(Protocol):
 
     async def update_run(self, run: GenerationRunV1) -> None: ...
 
-    async def append_agent_attempt(self, tenant_id: str, run_id: str, attempt: AgentAttemptEvidenceV1) -> None: ...
+    async def append_agent_attempt(
+        self,
+        tenant_id: str,
+        run_id: str,
+        attempt: AgentAttemptEvidenceV1,
+    ) -> None: ...
+
+    async def list_agent_attempts(
+        self,
+        tenant_id: str,
+        run_id: str,
+    ) -> list[AgentAttemptEvidenceV1]: ...
 
     async def save_artifact(
         self,
@@ -81,4 +92,8 @@ class ProductionRepositoryPort(Protocol):
         payload: dict,
     ) -> None: ...
 
+    async def get_artifact(self, tenant_id: str, artifact_id: str) -> dict | None: ...
+
     async def save_revision(self, revision: ContentRevisionV1) -> None: ...
+
+    async def get_revision(self, tenant_id: str, revision_id: str) -> ContentRevisionV1 | None: ...
