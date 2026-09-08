@@ -1,0 +1,96 @@
+name: S3 Structured Agent Cell Cert
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  s3-cert:
+    name: S3-CERT structured-agent-cell
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_DEFAULT_LANGUAGE: es
+      LANGUAGE_MIN_CONFIDENCE: "0.6"
+      LANGUAGE_MIN_MARGIN: "0.2"
+      IMAGE_RENDER_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEPLOYMENT_KEY: s3-cert-installation
+      MK1_ENABLED: "true"
+      MK1_PROFILE_V2: "true"
+      MK1_BATCH_PLANNING: "true"
+      MK1_STRUCTURED_AGENT_CELL: "true"
+      MONGO_URI: mongodb://127.0.0.1:27017/prodagentic_s3_cert
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record exact run identity before gates
+        run: |
+          mkdir -p s3-cert-evidence
+          printf 'github_sha=%s\n' "$GITHUB_SHA" > s3-cert-evidence/receipt.txt
+          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" >> s3-cert-evidence/receipt.txt
+          printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> s3-cert-evidence/receipt.txt
+          printf 'event=%s\n' "$GITHUB_EVENT_NAME" >> s3-cert-evidence/receipt.txt
+          git rev-parse HEAD | sed 's/^/checkout_sha=/' >> s3-cert-evidence/receipt.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> s3-cert-evidence/receipt.txt
+            printf 'pr_base_sha=%s\n' "${{ github.event.pull_request.base.sha }}" >> s3-cert-evidence/receipt.txt
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install locked production dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+
+      - name: Install test dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Compile S3 modules
+        working-directory: backend
+        run: |
+          python -m compileall domain/production application/production infrastructure/agents infrastructure/mongo/production.py routes/production.py
+
+      - name: Verify canonical API mount and fail-closed feature gate
+        working-directory: backend
+        run: python -m pytest -q tests/test_s3_api_surface.py
+
+      - name: Run S3 contract orchestration and lifecycle gates
+        working-directory: backend
+        run: |
+          python -m pytest -q \
+            tests/test_s3_structured_agent_cell.py \
+            tests/test_s3_structured_router_adapter.py \
+            tests/test_s3_content_lifecycle.py
+
+      - name: Run S3 real Mongo lineage and restart gates
+        working-directory: backend
+        run: python -m pytest -q tests/test_mk1_s3_mongo.py
+
+      - name: Upload S3 certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-structured-agent-cell-evidence
+          path: s3-cert-evidence
+          if-no-files-found: error
+          retention-days: 30

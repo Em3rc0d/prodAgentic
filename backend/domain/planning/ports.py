@@ -6,6 +6,7 @@ from typing import Protocol
 from domain.planning.models import (
     Batch,
     BatchRequestConstraints,
+    ContentEditorialState,
     ContentItem,
     EditorialMemoryEntry,
     IdeaCandidateV1,
@@ -53,6 +54,20 @@ class PlanningRepositoryPort(Protocol):
     ) -> None: ...
 
     async def get_batch(self, batch_id: str) -> Batch | None: ...
+
+    async def get_content_item(self, content_id: str) -> ContentItem | None: ...
+
+    async def get_plan_for_content(self, content_id: str) -> PersistedContentPlan | None: ...
+
+    async def transition_content_item(
+        self,
+        content_id: str,
+        *,
+        expected_state: ContentEditorialState,
+        new_state: ContentEditorialState,
+        current_revision_id: str | None = None,
+        now: datetime,
+    ) -> bool: ...
 
     async def list_batch_items(self, batch_id: str) -> list[ContentItem]: ...
 

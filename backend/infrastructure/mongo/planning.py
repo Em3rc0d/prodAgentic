@@ -4,20 +4,20 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from domain.planning.models import Batch, ContentItem, EditorialMemoryEntry, PersistedContentPlan
+from domain.planning.models import (
+    Batch,
+    ContentEditorialState,
+    ContentItem,
+    EditorialMemoryEntry,
+    PersistedContentPlan,
+)
 from domain.planning.trace import BatchPlanningTraceV1
 from domain.tenants.models import TenantContext
 from infrastructure.mongo.scoped_repository import TenantScopedMongoRepository
 
 
 def _hydrate_mongo_utc(value: Any) -> Any:
-    """Restore timezone awareness lost by PyMongo's default BSON hydration.
-
-    BSON datetimes are stored as UTC milliseconds. Motor/PyMongo returns them as
-    naive ``datetime`` objects unless the client is configured with ``tz_aware``.
-    Repositories are a domain boundary, so planning models must not inherit that
-    adapter-specific ambiguity. Nested planning payloads are normalized as well.
-    """
+    """Restore timezone awareness lost by PyMongo's default BSON hydration."""
     if isinstance(value, datetime):
         if value.tzinfo is None or value.utcoffset() is None:
             return value.replace(tzinfo=timezone.utc)
@@ -91,9 +91,6 @@ class MongoPlanningRepository:
         trace_inserted = False
         batch_inserted = False
         try:
-            # Batch is the visibility/commit marker. Evidence is written first so
-            # a visible Batch never points at missing selected-plan evidence after
-            # an ordinary adapter failure.
             await self.traces.insert_one(trace.model_dump())
             trace_inserted = True
             for plan in plans:
@@ -105,10 +102,6 @@ class MongoPlanningRepository:
             await self.batches.insert_one(batch.model_dump())
             batch_inserted = True
         except Exception:
-            # Normal failures are compensated. A hard process death may leave
-            # orphan pre-commit evidence, but because Batch is written last it
-            # cannot masquerade as a committed Batch. Cleanup/rebuild remains
-            # safe because these artifacts carry tenant + batch identity.
             if batch_inserted:
                 await self.batches.delete_one({"batch_id": batch.batch_id})
             for content_id in inserted_items:
@@ -122,6 +115,35 @@ class MongoPlanningRepository:
     async def get_batch(self, batch_id: str) -> Batch | None:
         document = _clean(await self.batches.find_one({"batch_id": batch_id}))
         return Batch.model_validate(document) if document else None
+
+    async def get_content_item(self, content_id: str) -> ContentItem | None:
+        document = _clean(await self.items.find_one({"content_id": content_id}))
+        return ContentItem.model_validate(document) if document else None
+
+    async def get_plan_for_content(self, content_id: str) -> PersistedContentPlan | None:
+        document = _clean(await self.plans.find_one({"content_id": content_id}))
+        return PersistedContentPlan.model_validate(document) if document else None
+
+    async def transition_content_item(
+        self,
+        content_id: str,
+        *,
+        expected_state: ContentEditorialState,
+        new_state: ContentEditorialState,
+        current_revision_id: str | None = None,
+        now: datetime,
+    ) -> bool:
+        update = {
+            "editorial_state": new_state.value,
+            "updated_at": now,
+        }
+        if current_revision_id is not None:
+            update["current_revision_id"] = current_revision_id
+        result = await self.items.update_one(
+            {"content_id": content_id, "editorial_state": expected_state.value},
+            {"$set": update},
+        )
+        return result.matched_count == 1
 
     async def list_batch_items(self, batch_id: str) -> list[ContentItem]:
         documents = await self.items.find_many({"batch_id": batch_id}, sort=[("created_at", 1)])
