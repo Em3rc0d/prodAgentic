@@ -25,6 +25,7 @@ from routes.scheduling import router as scheduling_router
 from routes.linkedin_oauth import router as linkedin_oauth_router
 from routes.profiles import router as profiles_router
 from routes.batches import router as batches_router
+from routes.production import router as production_router
 
 
 load_dotenv()
@@ -96,6 +97,7 @@ app.include_router(scheduling_router, prefix="/api")
 app.include_router(linkedin_oauth_router, prefix="/api")
 app.include_router(profiles_router, prefix="/api")
 app.include_router(batches_router, prefix="/api")
+app.include_router(production_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 
 
