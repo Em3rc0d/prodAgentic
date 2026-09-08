@@ -26,6 +26,7 @@ from routes.linkedin_oauth import router as linkedin_oauth_router
 from routes.profiles import router as profiles_router
 from routes.batches import router as batches_router
 from routes.production import router as production_router
+from routes.visual import router as visual_router
 
 
 load_dotenv()
@@ -98,6 +99,7 @@ app.include_router(linkedin_oauth_router, prefix="/api")
 app.include_router(profiles_router, prefix="/api")
 app.include_router(batches_router, prefix="/api")
 app.include_router(production_router, prefix="/api")
+app.include_router(visual_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 
 
