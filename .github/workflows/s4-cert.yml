@@ -1,0 +1,147 @@
+name: S4 VisualSpec V1 Cert
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  s4-cert:
+    name: S4-CERT visualspec-v1
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_DEFAULT_LANGUAGE: es
+      LANGUAGE_MIN_CONFIDENCE: "0.6"
+      LANGUAGE_MIN_MARGIN: "0.2"
+      IMAGE_RENDER_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEPLOYMENT_KEY: s4-cert-installation
+      MK1_ENABLED: "true"
+      MK1_PROFILE_V2: "true"
+      MK1_BATCH_PLANNING: "true"
+      MK1_STRUCTURED_AGENT_CELL: "true"
+      MK1_VISUALSPEC: "true"
+      MK1_RENDER_WORKER: "false"
+      MONGO_URI: mongodb://127.0.0.1:27017/prodagentic_s4_cert
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record exact run identity before gates
+        run: |
+          mkdir -p s4-cert-evidence
+          printf 'github_sha=%s\n' "$GITHUB_SHA" > s4-cert-evidence/receipt.txt
+          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" >> s4-cert-evidence/receipt.txt
+          printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> s4-cert-evidence/receipt.txt
+          printf 'event=%s\n' "$GITHUB_EVENT_NAME" >> s4-cert-evidence/receipt.txt
+          git rev-parse HEAD | sed 's/^/checkout_sha=/' >> s4-cert-evidence/receipt.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> s4-cert-evidence/receipt.txt
+            printf 'pr_base_sha=%s\n' "${{ github.event.pull_request.base.sha }}" >> s4-cert-evidence/receipt.txt
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install locked production dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+
+      - name: Install test dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Compile S4 modules
+        working-directory: backend
+        run: |
+          python -m compileall domain/visual application/visual infrastructure/mongo/visual.py routes/visual.py
+
+      - name: Prove S4 has no renderer or AssetStore execution dependency
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          paths = [
+              *Path("domain/visual").glob("*.py"),
+              *Path("application/visual").glob("*.py"),
+              Path("infrastructure/mongo/visual.py"),
+              Path("routes/visual.py"),
+          ]
+          forbidden_import_fragments = (
+              "renderer",
+              "asset_store",
+              "visual_artifact",
+          )
+          violations = []
+          for path in paths:
+              tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Import):
+                      for alias in node.names:
+                          if any(fragment in alias.name.lower() for fragment in forbidden_import_fragments):
+                              violations.append(f"{path}: import {alias.name}")
+                  elif isinstance(node, ast.ImportFrom):
+                      module = (node.module or "").lower()
+                      if any(fragment in module for fragment in forbidden_import_fragments):
+                          violations.append(f"{path}: from {node.module} import ...")
+                  elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                      if node.func.attr in {"render", "write_asset", "publish", "schedule"}:
+                          violations.append(f"{path}: execution call .{node.func.attr}()")
+          if violations:
+              raise SystemExit("S4 side-effect boundary violation:\n" + "\n".join(violations))
+          print("S4 renderer/AssetStore/publication execution boundary: PASS")
+          PY
+
+      - name: Verify canonical S4 API and fail-closed feature gate
+        working-directory: backend
+        run: python -m pytest -q tests/test_s4_api_surface.py | tee ../s4-cert-evidence/api-gate.txt
+
+      - name: Run S4 contract copy-ref DesignProfile and service gates
+        working-directory: backend
+        run: python -m pytest -q tests/test_s4_visualspec.py | tee ../s4-cert-evidence/semantic-gate.txt
+
+      - name: Run S4 real Mongo restart tenant and CAS gates
+        working-directory: backend
+        run: python -m pytest -q tests/test_mk1_s4_mongo.py | tee ../s4-cert-evidence/mongo-gate.txt
+
+      - name: Capture S4 source boundary inventory
+        if: always()
+        run: |
+          git status --short > s4-cert-evidence/git-status.txt
+          git ls-files \
+            backend/domain/visual \
+            backend/application/visual \
+            backend/infrastructure/mongo/visual.py \
+            backend/routes/visual.py \
+            backend/tests/test_s4_api_surface.py \
+            backend/tests/test_s4_visualspec.py \
+            backend/tests/test_mk1_s4_mongo.py \
+            .github/workflows/s4-cert.yml \
+            > s4-cert-evidence/s4-files.txt
+
+      - name: Upload S4 certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4-visualspec-v1-evidence
+          path: s4-cert-evidence
+          if-no-files-found: error
+          retention-days: 30
