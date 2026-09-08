@@ -88,13 +88,15 @@ async def produce_text(
     if profile is None:
         raise HTTPException(status_code=409, detail="Frozen ProfileVersion is unavailable")
 
+    # Verify provider/router construction before changing ContentItem authority.
+    # A missing provider configuration must not strand a PLANNED item in PRODUCING.
+    service = _build_service(request, production)
     lifecycle = ContentProductionLifecycle(planning)
     try:
         await lifecycle.begin(item.content_id)
     except ContentProductionConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    service = _build_service(request, production)
     try:
         result = await service.produce_text(
             tenant_id=context.tenant_id,
