@@ -1,6 +1,6 @@
 # MK1 S3 — Structured Four-Agent Text Cell — Build Record
 
-Status: **IN PROGRESS — NOT CERTIFIED**
+Status: **IMPLEMENTATION CLOSED — CANDIDATE FREEZE PENDING**
 
 ## Slice ID
 
@@ -15,7 +15,8 @@ ContentPlanV1
   -> ResearchPackV1
   -> ContentSpecV1
   -> EditorialReviewV1
-  -> ContentRevision
+  -> ContentRevisionV1
+  -> VISUAL_PLANNING handoff
 ```
 
 S3 intentionally stops before `VisualSpecV1`; visual planning remains S4 authority.
@@ -24,7 +25,8 @@ S3 intentionally stops before `VisualSpecV1`; visual planning remains S4 authori
 
 - certified `main`: `37292e17cfcbc50588aa248e1b14577637b3f68d`
 - branch: `mk1/s3-structured-agent-cell`
-- S2 quality-hardening PR #42 is deliberately **not** a dependency of this branch; S3 starts from the last certified main and must not silently inherit an uncertified S2 candidate.
+- PR: `#43`
+- S2 quality-hardening PR `#42` is deliberately not inherited; S3 started from the last certified main.
 
 ## Accepted design dependencies
 
@@ -40,76 +42,219 @@ S3 intentionally stops before `VisualSpecV1`; visual planning remains S4 authori
 
 ## Existing runtime inspected
 
-Legacy generation already contains `ResearchAgent`, `ContentWriterAgent`, `EditorAgent`, `VisualAgent`, `ModelRouter` and `PipelineOrchestrator`. That path streams opaque strings and persists MK0-style `content_runs`/`posts`; it is **not** treated as satisfying the MK1 typed contracts.
+The legacy runtime already contained `ResearchAgent`, `ContentWriterAgent`, `EditorAgent`, `VisualAgent`, `ModelRouter` and `PipelineOrchestrator`. Those stage boundaries stream opaque prose and persist MK0-style records; they are not treated as satisfying MK1 contracts.
 
-S3 will adapt/reuse provider routing capabilities only behind new typed ports. Agents never write MK1 authoritative state directly.
+S3 reuses provider/model routing only behind typed S3 adapters. Agents never receive authoritative Mongo collection access.
 
-## New module boundary
+## Implemented module boundary
 
 ```text
 backend/domain/production/
+  __init__.py
   models.py
   ports.py
 
 backend/application/production/
+  __init__.py
   service.py
+  lifecycle.py
+
+backend/infrastructure/agents/
+  __init__.py
+  structured_text.py
+
+backend/infrastructure/mongo/
+  production.py
+  planning.py                 # S3 read + lifecycle transition support
+
+backend/routes/
+  production.py
+
+backend/main.py               # canonical router mount
+backend/db/mongo.py           # S3 indexes
+
+backend/tests/
+  test_s3_structured_agent_cell.py
+  test_s3_structured_router_adapter.py
+  test_s3_content_lifecycle.py
+  test_s3_api_surface.py
+  test_mk1_s3_mongo.py
+
+.github/workflows/
+  s3-cert.yml
 ```
 
-Later commits in the same slice may add model-backed adapters and an API boundary, but the domain/application authority is defined first.
+## Typed authority implemented
 
-## Core invariants for this slice
+Registered/versioned Pydantic-compatible contracts include:
 
-1. Every new persisted business record carries `tenant_id`.
-2. Every authoritative agent output is a registered/versioned typed contract.
-3. Research `NO_GO` stops production; it is not blindly retried as a transport failure.
-4. Writer `claims_used` must reference claims in the exact ResearchPack and may not reference forbidden claims.
-5. Editor revisions may not introduce claim IDs outside the exact ResearchPack.
-6. `REVISE` is bounded; no infinite writer/editor loop.
-7. Regeneration creates a new `GenerationRun`; prior provenance is immutable.
-8. S3 produces a DRAFT text revision and leaves visual planning to S4.
-9. Provider/model/attempt/latency/token-cost metadata and input/output digests are persisted as safe lineage evidence.
-10. Secrets and raw provider credentials never enter typed artifacts or lineage metadata.
+- `EvidenceRefV1`
+- `ClaimV1`
+- `ResearchPackV1`
+- `ContentSpecV1`
+- `EditorialReviewV1`
+- `AgentAttemptEvidenceV1`
+- `GenerationRunV1`
+- `GenerationFailureV1`
+- `ContentRevisionV1`
+
+Format-specific text contracts cover:
+
+- text;
+- single image copy semantics;
+- carousel slide semantics;
+- infographic section semantics.
+
+All authoritative S3 models reject unexpected fields.
+
+## Agent production flow
+
+```text
+PLANNED ContentItem
+  -> application lifecycle claim
+  -> PRODUCING
+  -> GenerationRun.CREATED
+  -> RESEARCHING
+  -> ResearchPackV1
+     -> NO_GO => fail closed
+  -> WRITING
+  -> ContentSpecV1
+  -> EDITING
+  -> EditorialReviewV1
+     -> REVISE => bounded cycle
+     -> REJECT => fail closed
+     -> APPROVE_TEXT
+  -> ContentRevisionV1(DRAFT)
+  -> bind ContentItem.current_revision_id
+  -> GenerationRun.VISUAL_PLANNING
+  -> S4 authority
+```
+
+S3 does not fabricate `READY_FOR_REVIEW`; that requires later visual/QA authority.
+
+## Core invariants
+
+1. New S3 persisted business/evidence records are tenant-scoped.
+2. Every authoritative agent stage ends in a versioned typed contract.
+3. Research `NO_GO` is a domain stop, not a blind retry trigger.
+4. Writer `claims_used` must resolve inside the exact `ResearchPackV1`.
+5. Writer may not reference `forbidden` claims.
+6. Editor may not introduce unknown/forbidden claim IDs.
+7. Structured-output repair is bounded.
+8. Writer/editor revision cycles are bounded.
+9. Regeneration creates new run/revision provenance instead of overwriting history.
+10. Provider/model/attempt/latency/token/cost/input-output digest lineage is persisted safely.
+11. Agents do not mutate domain state directly.
+12. ContentItem lifecycle is application-owned and tenant-scoped.
+13. S3 feature exposure is fail-closed under `MK1_STRUCTURED_AGENT_CELL` and the master `MK1_ENABLED` gate.
+14. S3 stops at `VISUAL_PLANNING`; S4 remains separate authority.
+15. No publication/scheduling/external side-effect authority is introduced by S3.
 
 ## Feature flags
 
-S3 runtime exposure will be guarded by a dedicated MK1 flag before any existing user path is switched. No MK0/MK1 publication authority changes occur in this slice.
+Existing frozen registry authority is reused:
+
+```text
+MK1_ENABLED
+MK1_STRUCTURED_AGENT_CELL
+```
+
+`MK1_STRUCTURED_AGENT_CELL` defaults off and cannot activate while the master MK1 gate is off.
+
+## Persistence
+
+New tenant-scoped Mongo collections:
+
+```text
+generation_runs
+agent_run_attempts
+production_artifacts
+content_revisions
+```
+
+Indexes enforce run/attempt/artifact/revision identity and support per-content lineage reads. `content_items` remains the ContentItem aggregate collection and receives atomic lifecycle/current-revision updates.
+
+## API boundary
+
+Canonical FastAPI app mounts:
+
+```text
+POST /api/content-items/{content_id}/produce-text
+GET  /api/generation-runs/{run_id}
+GET  /api/content-revisions/{revision_id}
+```
+
+The POST resolves the persisted ContentItem, exact persisted ContentPlan and frozen ProfileVersion server-side. The client does not supply arbitrary plan/profile authority.
 
 ## Failure paths
 
-- malformed structured output -> adapter-level bounded contract repair;
-- `ResearchPack.NO_GO` -> domain stop / attention state;
-- unsupported or unknown claim IDs -> fail closed;
-- editor `REJECT` -> run failure / attention state;
-- editor revision budget exhausted -> run failure / attention state;
-- persistence failure -> do not fabricate success;
-- provider/routing failure -> classified failure with safe evidence.
+- malformed structured output -> bounded contract repair, then safe failure;
+- missing/wrong agent lineage -> fail closed;
+- `ResearchPack.NO_GO` -> domain stop;
+- unsupported/forbidden writer claim -> fail closed;
+- editor introduced claim -> fail closed;
+- editor `REJECT` -> run failure;
+- editor revision budget exhausted -> run failure;
+- provider/routing failure -> classified safe failure;
+- persistence failure -> no fabricated success;
+- concurrent/non-PLANNED production claim -> `409`/fail closed;
+- S3 failure after lifecycle claim -> ContentItem `FAILED`;
+- successful S3 text -> ContentItem remains `PRODUCING` and binds the DRAFT revision for S4.
 
-## Tests required
+## Error / near-miss record
 
-- valid/invalid contract fixtures;
-- extra-field rejection;
-- unsupported writer claim rejection;
-- editor-introduced claim rejection;
-- `NO_GO` fail-closed behavior;
-- bounded revision loop;
-- generation lineage preserves provider/model/digests;
-- regeneration creates a distinct run/revision;
-- tenant authority mismatch rejection;
-- prior backend suite remains green.
+See `mk1/build/slices/S3/ERROR_LEDGER.md`.
 
-## Certification evidence
+Notable certification near-miss: generic CI was green at `3ebe0a66f3711c0f01301095b77163d908e59998` while the new production router was not mounted in `backend/main.py`. This SHA is diagnostic only and is not a certification candidate.
 
-Not yet issued. S3 cannot be marked certified until one exact candidate SHA passes the canonical backend/frontend/browser CI gates plus any S3-specific contract/evaluation gates introduced by this branch.
+## Test/certification gates
 
-## Known limitations at slice opening
+Canonical gates remain mandatory:
+
+```text
+backend-test
+frontend-test
+UI-01-CERT browser
+DOCKER-COMPOSE-LOCAL smoke
+```
+
+S3 adds:
+
+```text
+S3-CERT structured-agent-cell
+```
+
+The dedicated gate covers:
+
+- canonical API mount;
+- fail-closed feature flag behavior;
+- contract validation;
+- claim provenance enforcement;
+- bounded repair/revision;
+- ContentItem lifecycle transitions;
+- real Mongo lineage persistence/restart recovery.
+
+## Candidate freeze law
+
+The certification candidate must be one exact SHA after implementation/documentation reconciliation. No source/test/workflow changes are allowed after freeze. If any such file changes, the candidate is invalidated and a new candidate SHA is required.
+
+A later certification-receipt-only commit may reference the frozen product candidate; that receipt head must itself pass the required gates before merge.
+
+## Known limitations / explicit non-claims
 
 - no S4 `VisualSpecV1` authority;
-- no S5 renderer authority;
-- no S6 QA authority;
-- no S7 approval authority;
-- no S3 production UI is certified yet;
-- PR #42 remains outside this branch and is not silently merged/rebased into S3.
+- no S5 renderer/AssetStore authority;
+- no S6 QA/recovery authority;
+- no S7 review/ApprovalBundleV2 authority;
+- no S3 production UI is claimed/certified;
+- no external research browsing capability is claimed merely because `ResearchAgent` exists; evidence quality is constrained by configured adapters/tools;
+- no publication/scheduling authority is transferred in S3;
+- PR #42 remains outside this lineage.
 
 ## Rollback
 
-Disable the S3 feature flag / revert the S3 branch merge. Existing certified S0-S2 behavior remains authoritative because this slice does not replace it until separately certified.
+Disable `MK1_STRUCTURED_AGENT_CELL` or revert the S3 merge. Existing S0-S2 user behavior remains available because S3 is additive and fail-closed by default.
+
+## Certification evidence
+
+Pending exact candidate freeze and green exact-SHA runs. No S3 certification claim is valid until `mk1/test/evidence/S3/CERTIFICATION.md` records the exact candidate and required run IDs.
