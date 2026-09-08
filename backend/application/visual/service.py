@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from uuid import uuid4
 
 from application.visual.design_profile import derive_design_profile
 from application.visual.planner import UnsupportedVisualFormat, build_visual_spec
@@ -45,11 +44,25 @@ class VisualSpecService:
     """
 
     contract_versions = ("DesignProfileV1@1", "VisualSpecV1@1")
+    planner_version = "mk1-visual-planner-v1"
 
-    def __init__(self, *, production_repository: VisualProductionAuthorityPort, profile_repository: ProfileVersionReaderPort, visual_repository: VisualRepositoryPort):
+    def __init__(
+        self,
+        *,
+        production_repository: VisualProductionAuthorityPort,
+        profile_repository: ProfileVersionReaderPort,
+        visual_repository: VisualRepositoryPort,
+    ):
         self.production_repository = production_repository
         self.profile_repository = profile_repository
         self.visual_repository = visual_repository
+
+    def _bind_contract_versions(self, run: GenerationRunV1) -> GenerationRunV1:
+        versions = list(run.contract_versions)
+        for contract in self.contract_versions:
+            if contract not in versions:
+                versions.append(contract)
+        return run.model_copy(update={"contract_versions": tuple(versions)})
 
     async def plan_revision(self, *, tenant_id: str, revision_id: str) -> VisualPlanningResult:
         revision = await self.production_repository.get_revision(tenant_id, revision_id)
@@ -108,15 +121,48 @@ class VisualSpecService:
                 raise VisualAuthorityError("current revision VisualSpec lineage is unavailable")
             if previous.revision_id != revision.revision_id or previous.content_spec_id != content.content_spec_id:
                 raise VisualAuthorityError("current revision VisualSpec lineage is inconsistent")
+            if previous.style.design_profile_digest != design_profile.digest:
+                raise VisualAuthorityError("current revision VisualSpec DesignProfile lineage is inconsistent")
+
+            # Revision is the durable S4 pointer. If a process died after its CAS
+            # update but before mirroring the ref into GenerationRun, complete the
+            # interrupted operation and return the already-bound immutable spec.
             if run.visual_spec_ref != previous_visual_spec_id:
-                run = run.model_copy(update={"visual_spec_ref": previous_visual_spec_id})
-                await self.production_repository.update_run(run)
+                if run.visual_spec_ref is not None and previous.supersedes_visual_spec_id != run.visual_spec_ref:
+                    raise VisualAuthorityError("GenerationRun/VisualSpec recovery lineage is inconsistent")
+                recovered_run = self._bind_contract_versions(
+                    run.model_copy(update={"visual_spec_ref": previous_visual_spec_id})
+                )
+                await self.production_repository.update_run(recovered_run)
+                return VisualPlanningResult(
+                    run=recovered_run,
+                    revision=revision,
+                    content=content,
+                    design_profile=design_profile,
+                    visual_spec=previous,
+                    visual_spec_digest=canonical_visual_sha256(previous),
+                )
         elif run.visual_spec_ref is not None:
             raise VisualAuthorityError("GenerationRun has an unbound VisualSpec reference")
 
+        # The identity is deterministic for one planning attempt lineage. If a
+        # crash occurs after the immutable spec insert but before revision CAS,
+        # a retry reuses the same ID/bytes instead of creating orphan duplicates.
+        identity_digest = canonical_visual_sha256(
+            {
+                "planner_version": self.planner_version,
+                "revision_id": revision.revision_id,
+                "content_spec_id": content.content_spec_id,
+                "content_spec_digest": content_digest,
+                "design_profile_digest": design_profile.digest,
+                "supersedes_visual_spec_id": previous_visual_spec_id,
+            }
+        )
+        visual_spec_id = f"vs-{identity_digest}"
+
         try:
             visual_spec = build_visual_spec(
-                visual_spec_id=f"vs-{uuid4().hex}",
+                visual_spec_id=visual_spec_id,
                 revision_id=revision.revision_id,
                 content=content,
                 design_profile=design_profile,
@@ -143,15 +189,8 @@ class VisualSpecService:
                 "ContentRevision visual pointer changed during planning; immutable spec was retained as lineage"
             )
 
-        versions = list(run.contract_versions)
-        for contract in self.contract_versions:
-            if contract not in versions:
-                versions.append(contract)
-        updated_run = run.model_copy(
-            update={
-                "visual_spec_ref": visual_spec.visual_spec_id,
-                "contract_versions": tuple(versions),
-            }
+        updated_run = self._bind_contract_versions(
+            run.model_copy(update={"visual_spec_ref": visual_spec.visual_spec_id})
         )
         await self.production_repository.update_run(updated_run)
 
