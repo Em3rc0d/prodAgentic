@@ -48,6 +48,10 @@ class DeterministicCandidateSource:
     S2 proves planning policy rather than creative model quality. A later candidate
     adapter may use a model behind CandidateSourcePort, but it must still return
     IdeaCandidateV1 and remain bounded by the planner pool contract.
+
+    Topic authority is deliberately fail-closed. Explicit per-Batch topics and
+    accepted Profile topic families may drive planning; audience descriptions and
+    Profile display names are context, never editorial topics.
     """
 
     def generate(
@@ -61,10 +65,12 @@ class DeterministicCandidateSource:
             raise ValueError("target_pool_size must be between 1 and 24")
 
         topics = list(constraints.include_topics) + list(profile.editorial_strategy.topic_families)
-        if not topics:
-            topics = list(profile.audience) or [profile.identity.name]
         avoid = {canonicalize_topic(value) for value in (*constraints.avoid_topics, *profile.editorial_strategy.excluded_topics)}
-        topics = [value for value in dict.fromkeys(item.strip() for item in topics if item.strip()) if canonicalize_topic(value) not in avoid]
+        topics = [
+            value
+            for value in dict.fromkeys(item.strip() for item in topics if item.strip())
+            if canonicalize_topic(value) not in avoid
+        ]
         if not topics:
             return []
 
