@@ -94,9 +94,13 @@ class ResolvedRenderPageV1(FrozenModel):
 
 class RendererRequestV1(FrozenModel):
     schema_version: Literal[1] = 1
+    contract_version: Literal["RendererRequestV1@1"] = "RendererRequestV1@1"
     render_id: str = Field(min_length=1, max_length=128)
     revision_id: str = Field(min_length=1, max_length=128)
     visual_spec_id: str = Field(min_length=1, max_length=128)
+    visual_spec_digest: str = Field(pattern=_SHA256_PATTERN)
+    content_spec_digest: str = Field(pattern=_SHA256_PATTERN)
+    design_profile_digest: str = Field(pattern=_SHA256_PATTERN)
     visual_pattern: str = Field(pattern=_TOKEN_PATTERN)
     format: Literal["single_image", "carousel", "infographic"]
     canvas_width: int = Field(ge=320, le=4096)

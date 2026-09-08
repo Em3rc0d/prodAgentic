@@ -7,6 +7,18 @@ from domain.production.models import ContentRevisionV1, GenerationFailureV1, Gen
 from domain.rendering.models import AssetV1, RendererRequestV1, RenderResultV1
 
 
+class RendererPortError(RuntimeError):
+    def __init__(self, message: str, *, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
+
+
+class AssetStorePortError(RuntimeError):
+    def __init__(self, message: str, *, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
+
+
 @dataclass(frozen=True)
 class RenderedPageBytes:
     page_id: str
