@@ -134,6 +134,100 @@ S3 stops at `GenerationRun.state = VISUAL_PLANNING` with a `DRAFT` ContentRevisi
 Prevention rule:
 Do not broaden a slice to make a certificate sound more complete. Preserve frozen slice boundaries.
 
+## S3-E009 — First dedicated S3-CERT API-surface assertion produced a false negative
+
+Observed SHA: `862f3760fe5be4c7580b4b0ed16b5b91f0e03d05`
+
+Observed run/job:
+- workflow run: `34243390549`
+- job: `102119043598`
+
+What happened:
+The canonical source at the tested head already imported and mounted `production_router`, but the first route-introspection test filtered `app.routes` through an `APIRoute` assumption and reported only root/health routes. The gate failed even though the source mount was present.
+
+Why this mattered:
+A certification gate must fail on a missing runtime contract, not on a brittle test representation of that contract.
+
+Correction:
+The API-surface test was changed to validate the canonical FastAPI OpenAPI path/method contract, while source mounting remains independently inspectable. The next S3-CERT passed the API-surface step.
+
+Prevention rule:
+For externally exposed HTTP authority, certify the framework's emitted API contract rather than relying solely on internal route-class identity.
+
+## S3-E010 — Failed S3-CERT initially lost its own receipt artifact
+
+Observed run/job:
+- workflow run: `34243390549`
+- job: `102119043598`
+
+What happened:
+`Record exact candidate evidence` was placed after blocking test steps. When the API-surface gate failed, the receipt directory was never created and the `always()` artifact upload failed with `No files were found`.
+
+Risk:
+A red candidate is diagnostic evidence too. Losing its run identity makes failure history harder to audit.
+
+Correction:
+The workflow now creates the run identity receipt immediately after checkout, before any gate can fail, and the artifact upload remains `if: always()`.
+
+Prevention rule:
+Certification workflows must persist immutable run identity before executing the first fallible gate.
+
+## S3-E011 — Agent attempt ordinal was initially hard-coded to `1`
+
+What happened:
+The structured router adapter emitted separate attempt IDs for provider retries/contract repairs but `AgentAttemptEvidenceV1.attempt` was always written as `1`.
+
+Risk:
+Lineage had distinct identities but an inaccurate attempt sequence, weakening replay/audit semantics.
+
+Correction:
+Attempt evidence now records the real invocation ordinal across the structured adapter path, and tests assert distinct ordered lineage.
+
+Prevention rule:
+Lineage fields are evidence, not decoration. Every recorded ordinal/digest/status must reflect the actual execution path.
+
+## S3-E012 — Failed structured attempts were carried by exceptions but could escape durable lineage
+
+What happened:
+`StructuredAgentAdapterError` preserved failed/contract-repair attempts in memory, but the application service originally handled the exception generically and could fail the `GenerationRun` without persisting those attempt records.
+
+Risk:
+The most important diagnostic attempts — malformed output, exhausted routing or contract repair — could disappear from Mongo while successful attempts remained auditable.
+
+Correction:
+The service now persists safe attempt evidence carried by structured-agent failures before terminalizing the run. `test_s3_failure_lineage.py` covers this fail-closed path.
+
+Prevention rule:
+Failure evidence must be at least as durable as success evidence.
+
+## S3-E013 — Typed-but-semantically-invalid artifacts could leave a non-terminal run
+
+What happened:
+A provider could return JSON that validated against the Pydantic schema and therefore generated a `SUCCESS` attempt, while later domain verification rejected it (for example wrong authority/claim semantics). The earlier path could raise without reliably terminalizing the run.
+
+Risk:
+Mongo could contain a run apparently stuck in `RESEARCHING`, `WRITING`, or `EDITING` even though execution had already failed.
+
+Correction:
+Semantic contract failures preserve the attempt that produced the typed artifact and terminalize the `GenerationRun` as `FAILED` with bounded safe failure metadata and completion time. Regression coverage was added.
+
+Prevention rule:
+Every post-run-creation exit path must result in either the exact successful handoff state or an explicit terminal failure state.
+
+## S3-E014 — Lifecycle claim could occur before runtime service readiness was known
+
+What happened:
+The API initially claimed `ContentItem: PLANNED -> PRODUCING` before constructing/validating the S3 service/model-router dependency.
+
+Risk:
+If the model router was unavailable before generation actually began, the ContentItem could be stranded in `PRODUCING` despite no valid agent-cell execution having started.
+
+Correction:
+The route now resolves ContentItem, persisted ContentPlan, frozen ProfileVersion and the S3 service/runtime dependency first; only then does it atomically claim `PLANNED -> PRODUCING` and execute the cell.
+
+Prevention rule:
+Do not mutate aggregate lifecycle until all non-mutating authority/readiness prerequisites for the transition have been satisfied.
+
 ## Ledger closure rule
 
 This file may be marked `FROZEN` only after:
