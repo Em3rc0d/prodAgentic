@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from application.production.lifecycle import ContentProductionConflict, ContentProductionLifecycle
 from application.production.service import (
     ProductionAuthorityError,
     ProductionContractViolation,
@@ -87,6 +88,12 @@ async def produce_text(
     if profile is None:
         raise HTTPException(status_code=409, detail="Frozen ProfileVersion is unavailable")
 
+    lifecycle = ContentProductionLifecycle(planning)
+    try:
+        await lifecycle.begin(item.content_id)
+    except ContentProductionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     service = _build_service(request, production)
     try:
         result = await service.produce_text(
@@ -97,17 +104,27 @@ async def produce_text(
             profile=profile,
             parent_revision_id=body.parent_revision_id,
         )
+        await lifecycle.bind_text_revision(item.content_id, result.revision.revision_id)
     except ProductionAuthorityError as exc:
+        await lifecycle.fail(item.content_id)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ProductionDomainStop as exc:
+        await lifecycle.fail(item.content_id)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RevisionBudgetExhausted as exc:
+        await lifecycle.fail(item.content_id)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ProductionContractViolation as exc:
+        await lifecycle.fail(item.content_id)
         raise HTTPException(
             status_code=502,
             detail="Structured production failed before a valid text revision was produced",
         ) from exc
+    except ContentProductionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception:
+        await lifecycle.fail(item.content_id)
+        raise
 
     return {
         "run": _serialize(result.run),
