@@ -55,6 +55,7 @@ class _AttemptBuffer:
     attempt_id: str
     provider: str
     model: str
+    ordinal: int
     started_at: float
     text: str = ""
     finalized: bool = False
@@ -99,6 +100,7 @@ class StructuredRouterExecutor(Generic[ArtifactT]):
         evidence: list[AgentAttemptEvidenceV1] = []
         repair_feedback = ""
         last_error = ""
+        attempt_ordinal = 0
 
         for repair_cycle in range(self.max_contract_repairs + 1):
             prompt = base_prompt
@@ -126,11 +128,13 @@ class StructuredRouterExecutor(Generic[ArtifactT]):
 
             async for event in self.router.stream_generation(request):
                 if isinstance(event, AttemptStarted):
+                    attempt_ordinal += 1
                     active_attempt_id = event.attempt_id
                     buffers[event.attempt_id] = _AttemptBuffer(
                         attempt_id=event.attempt_id,
                         provider=event.provider,
                         model=event.model_id,
+                        ordinal=attempt_ordinal,
                         started_at=time.perf_counter(),
                     )
                     continue
@@ -294,7 +298,7 @@ class StructuredRouterExecutor(Generic[ArtifactT]):
             prompt_version=prompt_version,
             provider=buffer.provider,
             model=buffer.model,
-            attempt=1,
+            attempt=buffer.ordinal,
             latency_ms=max(0, int((time.perf_counter() - buffer.started_at) * 1000)),
             input_digest=input_digest,
             output_digest=output_digest or raw_digest,
