@@ -32,6 +32,10 @@ function list(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 12);
 }
 
+function displayTopic(value: string): string {
+  return value.replaceAll(".", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 const FORMATS: Array<["auto" | PlannedFormat, string]> = [
   ["auto", "Auto"],
   ["text", "Text"],
@@ -98,7 +102,7 @@ export function Mk1BatchCreate() {
         <div>
           <span className={styles.kicker}>Planning intelligence</span>
           <h1>Create for {profile?.name || "your Profile"}</h1>
-          <p>Ask for the outcome. prodAgentic checks recent memory, finds fresh angles and freezes the exact Profile version before production.</p>
+          <p>Choose the outcome. prodAgentic checks recent memory, selects fresh content directions and freezes the exact Profile version before production.</p>
         </div>
         <div className={styles.signal}><span aria-hidden="true" />Memory-aware</div>
       </header>
@@ -131,6 +135,15 @@ export function Mk1BatchCreate() {
           </div>
         </div>
 
+        <label className={styles.topicPrompt}>
+          <span>Topic for this batch <small>optional when your Profile already has content territories</small></span>
+          <input
+            value={includeTopic}
+            onChange={(event) => setIncludeTopic(event.target.value)}
+            placeholder="e.g. wheel bearings, OBD-II, brake fluid"
+          />
+        </label>
+
         <button className={styles.advancedToggle} aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}>
           {advanced ? "Hide constraints" : "Add optional constraints"}
           <span aria-hidden="true">{advanced ? "−" : "+"}</span>
@@ -139,14 +152,13 @@ export function Mk1BatchCreate() {
         {advanced && (
           <div className={styles.advanced}>
             <label>Goal<input value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="e.g. teach one useful concept" /></label>
-            <label>Include topic<input value={includeTopic} onChange={(event) => setIncludeTopic(event.target.value)} placeholder="topic, optional" /></label>
             <label>Avoid for this batch<input value={avoidTopic} onChange={(event) => setAvoidTopic(event.target.value)} placeholder="topic, optional" /></label>
             <label>Format<select value={format} onChange={(event) => setFormat(event.target.value as "auto" | PlannedFormat)}>{FORMATS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           </div>
         )}
 
         <button className={styles.primary} disabled={busy || !profileId} onClick={generate}>
-          {busy ? "Finding fresh angles…" : "Generate next batch"}
+          {busy ? "Finding fresh directions…" : "Plan next batch"}
         </button>
         {error && <p role="alert" className={styles.error}>{error}</p>}
       </section>
@@ -156,30 +168,33 @@ export function Mk1BatchCreate() {
           <div className={styles.resultHeader}>
             <div>
               <span className={styles.kicker}>Batch planned</span>
-              <h2>{result.batch.selected_size} of {result.batch.requested_size} ideas committed</h2>
+              <h2>{result.batch.selected_size} of {result.batch.requested_size} content directions selected</h2>
               <p>{result.batch.selected_size < result.batch.requested_size
-                ? "We returned fewer ideas instead of repeating recent content."
-                : "Freshness and current-batch diversity gates passed."}</p>
+                ? "prodAgentic returned fewer directions instead of inventing topics or repeating recent content."
+                : "These are production briefs: topic, direction, opening pattern and format. Final content is produced in the next stage."}</p>
             </div>
             <div className={styles.metrics}>
-              <div><small>Memory</small><strong>{result.memory_count}</strong></div>
-              <div><small>Pool</small><strong>{result.batch.summary_counts.candidates_generated}</strong></div>
-              <div><small>Blocked</small><strong>{result.batch.summary_counts.candidates_blocked + result.batch.summary_counts.candidates_rewrite}</strong></div>
+              <div><small>Recent memory</small><strong>{result.memory_count}</strong></div>
+              <div><small>Candidates</small><strong>{result.batch.summary_counts.candidates_generated}</strong></div>
+              <div><small>Filtered</small><strong>{result.batch.summary_counts.candidates_blocked + result.batch.summary_counts.candidates_rewrite}</strong></div>
             </div>
           </div>
 
           {result.batch.shortfall_reason && <div className={styles.shortfall}>{result.batch.shortfall_reason}</div>}
 
           <div className={styles.cards}>
-            {result.content_items.map((item) => {
+            {result.content_items.map((item, index) => {
               const plan = result.plans.find((entry) => entry.content_id === item.content_id);
               const evaluation = selectedEvaluations.find((entry) => entry.candidate.candidate_id === plan?.plan.candidate_id);
               return (
                 <article key={item.content_id} className={styles.card}>
-                  <div className={styles.cardMeta}><span>{item.role}</span><span>{item.format.replace("_", " ")}</span></div>
-                  <h3>{item.canonical_topic.replaceAll(".", " ")}</h3>
-                  <p>{item.angle}</p>
-                  <footer><span>{item.hook_pattern}</span><span>{evaluation?.novelty.verdict === "PASS_WITH_WARNING" ? "Fresh · review note" : "Fresh"}</span></footer>
+                  <div className={styles.cardMeta}><span>Direction {index + 1} · {item.role}</span><span>{item.format.replace("_", " ")}</span></div>
+                  <dl className={styles.briefFields}>
+                    <div><dt>Topic</dt><dd>{displayTopic(item.canonical_topic)}</dd></div>
+                    <div><dt>Direction</dt><dd>{item.angle}</dd></div>
+                    <div><dt>Opening</dt><dd>{item.hook_pattern.replaceAll("_", " ")}</dd></div>
+                  </dl>
+                  <footer><span>Production brief · not final copy</span><span>{evaluation?.novelty.verdict === "PASS_WITH_WARNING" ? "Fresh · review note" : "Fresh"}</span></footer>
                 </article>
               );
             })}
