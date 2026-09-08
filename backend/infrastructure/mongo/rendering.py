@@ -16,6 +16,9 @@ from domain.tenants.models import TenantContext
 from infrastructure.mongo.scoped_repository import TenantScopedMongoRepository
 
 
+_S5_CONTRACTS = ("RendererRequestV1@1", "AssetV1@1", "RenderResultV1@1")
+
+
 def _hydrate_utc(value: Any) -> Any:
     if isinstance(value, datetime):
         if value.tzinfo is None or value.utcoffset() is None:
@@ -98,6 +101,13 @@ class MongoRenderingRepository:
         document = _clean(await self.runs.find_one({"run_id": run_id}))
         return GenerationRunV1.model_validate(document) if document else None
 
+    async def _ensure_contracts(self, run_id: str, visual_spec_ref: str) -> GenerationRunV1 | None:
+        await self.runs.update_one(
+            {"run_id": run_id, "visual_spec_ref": visual_spec_ref},
+            {"$addToSet": {"contract_versions": {"$each": list(_S5_CONTRACTS)}}},
+        )
+        return await self._get_run(run_id)
+
     async def claim_run_rendering(self, *, run_id: str, visual_spec_ref: str) -> GenerationRunV1 | None:
         result = await self.runs.update_one(
             {
@@ -105,7 +115,10 @@ class MongoRenderingRepository:
                 "state": GenerationRunState.VISUAL_PLANNING.value,
                 "visual_spec_ref": visual_spec_ref,
             },
-            {"$set": {"state": GenerationRunState.RENDERING.value, "failure": None, "completed_at": None}},
+            {
+                "$set": {"state": GenerationRunState.RENDERING.value, "failure": None, "completed_at": None},
+                "$addToSet": {"contract_versions": {"$each": list(_S5_CONTRACTS)}},
+            },
         )
         if result.matched_count == 1:
             return await self._get_run(run_id)
@@ -115,7 +128,7 @@ class MongoRenderingRepository:
             and existing.visual_spec_ref == visual_spec_ref
             and existing.state in {GenerationRunState.RENDERING, GenerationRunState.QA}
         ):
-            return existing
+            return await self._ensure_contracts(run_id, visual_spec_ref)
         return None
 
     async def finish_run_qa(self, *, run_id: str, visual_spec_ref: str) -> GenerationRunV1 | None:
@@ -128,10 +141,10 @@ class MongoRenderingRepository:
             {"$set": {"state": GenerationRunState.QA.value, "failure": None}},
         )
         if result.matched_count == 1:
-            return await self._get_run(run_id)
+            return await self._ensure_contracts(run_id, visual_spec_ref)
         existing = await self._get_run(run_id)
         if existing is not None and existing.visual_spec_ref == visual_spec_ref and existing.state == GenerationRunState.QA:
-            return existing
+            return await self._ensure_contracts(run_id, visual_spec_ref)
         return None
 
     async def mark_run_failed(
