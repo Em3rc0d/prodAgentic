@@ -80,6 +80,7 @@ async def test_structured_executor_accepts_only_valid_typed_json_and_records_dig
     assert result.artifact.research_id == "research-1"
     assert len(result.attempts) == 1
     assert result.attempts[0].status == AgentAttemptStatus.SUCCESS
+    assert result.attempts[0].attempt == 1
     assert result.attempts[0].input_digest == input_digest
     assert result.attempts[0].output_digest == canonical_sha256(result.artifact)
     assert "Return exactly one JSON object" in router.requests[0].user_prompt
@@ -109,6 +110,7 @@ async def test_structured_executor_repairs_once_then_succeeds_with_separate_line
         AgentAttemptStatus.CONTRACT_REPAIR,
         AgentAttemptStatus.SUCCESS,
     ]
+    assert [item.attempt for item in result.attempts] == [1, 2]
     assert result.attempts[0].agent_run_id != result.attempts[1].agent_run_id
     assert "CONTRACT REPAIR" in router.requests[1].user_prompt
 
@@ -133,4 +135,5 @@ async def test_structured_executor_fails_closed_when_repair_budget_is_exhausted(
 
     assert captured.value.code == "STRUCTURED_REPAIR_EXHAUSTED"
     assert len(captured.value.attempts) == 2
+    assert [item.attempt for item in captured.value.attempts] == [1, 2]
     assert all(item.status == AgentAttemptStatus.CONTRACT_REPAIR for item in captured.value.attempts)
