@@ -26,7 +26,16 @@ class BatchState(str, Enum):
 
 
 class ContentEditorialState(str, Enum):
+    CANDIDATE = "CANDIDATE"
     PLANNED = "PLANNED"
+    PRODUCING = "PRODUCING"
+    READY_FOR_REVIEW = "READY_FOR_REVIEW"
+    APPROVED = "APPROVED"
+    REVISION_REQUIRED = "REVISION_REQUIRED"
+    REJECTED = "REJECTED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    ARCHIVED = "ARCHIVED"
 
 
 class LifecycleSource(str, Enum):
@@ -232,8 +241,8 @@ class ContentItem(FrozenModel):
     hook_pattern: str
     visual_pattern: str | None = None
     editorial_state: ContentEditorialState = ContentEditorialState.PLANNED
-    current_revision_id: None = None
-    latest_approval_id: None = None
+    current_revision_id: str | None = Field(default=None, max_length=128)
+    latest_approval_id: str | None = Field(default=None, max_length=128)
     distribution_summary: DistributionSummary = DistributionSummary()
     created_at: datetime
     updated_at: datetime
