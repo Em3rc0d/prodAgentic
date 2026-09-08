@@ -37,6 +37,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Record exact run identity before gates
+        run: |
+          mkdir -p s3-cert-evidence
+          printf 'github_sha=%s\n' "$GITHUB_SHA" > s3-cert-evidence/receipt.txt
+          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" >> s3-cert-evidence/receipt.txt
+          printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> s3-cert-evidence/receipt.txt
+          printf 'event=%s\n' "$GITHUB_EVENT_NAME" >> s3-cert-evidence/receipt.txt
+          git rev-parse HEAD | sed 's/^/checkout_sha=/' >> s3-cert-evidence/receipt.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> s3-cert-evidence/receipt.txt
+            printf 'pr_base_sha=%s\n' "${{ github.event.pull_request.base.sha }}" >> s3-cert-evidence/receipt.txt
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -72,14 +85,6 @@ jobs:
       - name: Run S3 real Mongo lineage and restart gates
         working-directory: backend
         run: python -m pytest -q tests/test_mk1_s3_mongo.py
-
-      - name: Record exact candidate evidence
-        run: |
-          mkdir -p s3-cert-evidence
-          printf 'head_sha=%s\n' "$GITHUB_SHA" > s3-cert-evidence/receipt.txt
-          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" >> s3-cert-evidence/receipt.txt
-          printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> s3-cert-evidence/receipt.txt
-          printf 'event=%s\n' "$GITHUB_EVENT_NAME" >> s3-cert-evidence/receipt.txt
 
       - name: Upload S3 certification evidence
         if: always()
