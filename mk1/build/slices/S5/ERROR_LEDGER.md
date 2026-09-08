@@ -123,3 +123,78 @@ Correction:
 S5 will preserve separate identities for candidate, receipt-head, product merge and later documentation descendant. Product certificate remains exact and immutable.
 
 Status: PROCESS GUARDRAIL.
+
+## E013 — Accidental unreferenced empty commit during tree assembly
+
+Observed:
+Commit `bbe4ca98beaebc5a8de240e97c10a9db87e37623` was created during low-level tree assembly but did not introduce product changes and was never moved onto `mk1/s5-renderer-assetstore`.
+
+Risk:
+Unreferenced commits can confuse lineage analysis if later mistaken for a reviewed candidate.
+
+Correction:
+The commit remains outside the branch/certification chain and is recorded here explicitly. Only commits reachable from the exact S5 branch head may become certification evidence.
+
+Status: DOCUMENTED / NO PRODUCT EFFECT.
+
+## E014 — Real-Mongo test commit created before advancing the branch ref
+
+Observed:
+`1ae6a5af0a4b3ccb25c2888e24feede14ebdc77a` added the S5 real-Mongo render-lineage tests, but the branch temporarily remained at `9b9ff7092f0ad1407133e78fd59799cefa7347ce`.
+
+Risk:
+Reporting a commit as branch state when the remote ref does not actually point to it creates a false evidence boundary.
+
+Correction:
+The ancestry was verified (`9b9ff709... -> 1ae6a5af...`, one fast-forward commit) and the branch was advanced with a non-forced fast-forward before subsequent S5 work.
+
+Status: RECOVERED / HISTORY PRESERVED.
+
+## E015 — Retryable renderer failure was incorrectly terminalized
+
+Observed:
+The initial `MongoRenderingRepository.mark_run_failed` moved every render failure to `GenerationRun.FAILED`, including `RendererPortError(retryable=True)` and retryable AssetStore failures.
+
+Risk:
+A transient Chromium/transport outage would become a terminal domain failure even though the deterministic render operation is safe to retry, contradicting the S5 recovery contract.
+
+Correction:
+Commit `c798a8db69f33d371f1af8ae26a98f29ff7f9004` changed persistence semantics: retryable failures remain in `RENDERING`, retain durable `GenerationFailureV1` evidence and `completed_at = null`; non-retryable integrity failures still transition to `FAILED`. Successful completion to `QA` clears the transient failure. Real-Mongo recovery tests were added.
+
+Status: REPAIRED / MUST PASS S5-CERT.
+
+## E016 — First retryable-recovery fixture leaked its temporary Mongo database on success
+
+Observed:
+The first version of `test_retryable_s5_failure_stays_recoverable_and_success_clears_failure` lacked the `finally` cleanup block that its sibling terminal-failure test already used.
+
+Risk:
+Repeated certification runs could leave temporary databases behind and make test-environment hygiene non-deterministic.
+
+Correction:
+Commit `9c5df81b6676638a68508077424e8a60b2e29afa` added unconditional database drop/client close to the first recovery test.
+
+Status: REPAIRED.
+
+## E017 — Golden evidence must use real Chromium bytes, not fake PNG headers
+
+Observed:
+Unit tests intentionally use minimal fake PNG headers to exercise lifecycle/integrity logic quickly. Those bytes are not visual-quality evidence.
+
+Risk:
+Treating unit-test PNG stubs as golden renders would create a false green for the S5 quality exit criterion.
+
+Correction:
+`backend/scripts/s5_generate_goldens.py` now calls the real `ChromiumRendererAdapter`, stores the returned bytes through the real `FilesystemAssetStore`, verifies read-back hashes/dimensions and emits Content Seller, Logan and Tech PNGs plus a manifest. `S5-CERT` runs this path twice against the same owned root and carries the PNGs as evidence.
+
+Status: PREVENTED BY DEDICATED S5-CERT.
+
+## E018 — Preview certification must use the owned golden bytes, not decorative mocks
+
+Risk:
+A UI test could pass with arbitrary placeholder images while the actual renderer output is unusable.
+
+Correction:
+The S5 browser test reads the real golden manifest, serves the exact generated Logan PNG bytes to the Review preview, checks natural image dimensions, desktop/mobile usability, page navigation, QA-pending wording and absence of approval authority.
+
+Status: PREVENTED BY DEDICATED S5 REVIEW GATE.
