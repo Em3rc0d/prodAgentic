@@ -193,7 +193,7 @@ test.describe("S2 memory-aware Batch planning", () => {
       response.request().method() === "POST" &&
       response.url().includes(`/api/profiles/${accepted.profile.profile_id}/batches`)
     );
-    await page.getByRole("button", { name: "Generate next batch" }).click();
+    await page.getByRole("button", { name: "Plan next batch" }).click();
     const batchResponse = await responsePromise;
     expect(batchResponse.ok()).toBeTruthy();
     const batchPayload = await batchResponse.json();
@@ -208,7 +208,8 @@ test.describe("S2 memory-aware Batch planning", () => {
     expect(batchPayload.plans).toHaveLength(4);
     expect(batchPayload.planning_trace.evaluations.length).toBeGreaterThanOrEqual(8);
 
-    await expect(page.getByRole("heading", { name: "4 of 4 ideas committed" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "4 of 4 content directions selected" })).toBeVisible();
+    await expect(page.getByText(/Final content is produced in the next stage/i)).toBeVisible();
     await page.getByText("Planning evidence").click();
     const evidence = page.getByText(/candidates evaluated/i);
     await expect(evidence).toBeVisible();
