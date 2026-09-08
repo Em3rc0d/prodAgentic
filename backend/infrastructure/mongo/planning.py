@@ -11,13 +11,7 @@ from infrastructure.mongo.scoped_repository import TenantScopedMongoRepository
 
 
 def _hydrate_mongo_utc(value: Any) -> Any:
-    """Restore timezone awareness lost by PyMongo's default BSON hydration.
-
-    BSON datetimes are stored as UTC milliseconds. Motor/PyMongo returns them as
-    naive ``datetime`` objects unless the client is configured with ``tz_aware``.
-    Repositories are a domain boundary, so planning models must not inherit that
-    adapter-specific ambiguity. Nested planning payloads are normalized as well.
-    """
+    """Restore timezone awareness lost by PyMongo's default BSON hydration."""
     if isinstance(value, datetime):
         if value.tzinfo is None or value.utcoffset() is None:
             return value.replace(tzinfo=timezone.utc)
@@ -105,10 +99,6 @@ class MongoPlanningRepository:
             await self.batches.insert_one(batch.model_dump())
             batch_inserted = True
         except Exception:
-            # Normal failures are compensated. A hard process death may leave
-            # orphan pre-commit evidence, but because Batch is written last it
-            # cannot masquerade as a committed Batch. Cleanup/rebuild remains
-            # safe because these artifacts carry tenant + batch identity.
             if batch_inserted:
                 await self.batches.delete_one({"batch_id": batch.batch_id})
             for content_id in inserted_items:
@@ -122,6 +112,14 @@ class MongoPlanningRepository:
     async def get_batch(self, batch_id: str) -> Batch | None:
         document = _clean(await self.batches.find_one({"batch_id": batch_id}))
         return Batch.model_validate(document) if document else None
+
+    async def get_content_item(self, content_id: str) -> ContentItem | None:
+        document = _clean(await self.items.find_one({"content_id": content_id}))
+        return ContentItem.model_validate(document) if document else None
+
+    async def get_plan_for_content(self, content_id: str) -> PersistedContentPlan | None:
+        document = _clean(await self.plans.find_one({"content_id": content_id}))
+        return PersistedContentPlan.model_validate(document) if document else None
 
     async def list_batch_items(self, batch_id: str) -> list[ContentItem]:
         documents = await self.items.find_many({"batch_id": batch_id}, sort=[("created_at", 1)])
