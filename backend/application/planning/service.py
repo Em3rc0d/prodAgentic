@@ -236,10 +236,16 @@ class BatchPlannerService:
         state = BatchState.PLANNED if selected_size == requested_size else BatchState.PARTIAL
         shortfall = None
         if selected_size < requested_size:
-            shortfall = (
-                f"Selected {selected_size} of {requested_size}; hard novelty/diversity gates "
-                "were not relaxed to fill the batch."
-            )
+            if not candidates:
+                shortfall = (
+                    "No usable editorial topic is available. Add a Batch topic or update the Profile "
+                    "with explicit topic families; audience text is never promoted to a topic."
+                )
+            else:
+                shortfall = (
+                    f"Selected {selected_size} of {requested_size}; hard novelty/diversity gates "
+                    "were not relaxed to fill the batch."
+                )
         strategy = PlannerStrategySnapshot(
             memory_window_days=self.memory_window_days,
             memory_cutoff_at=clock,
