@@ -154,6 +154,41 @@ class MongoRenderingRepository:
         visual_spec_ref: str,
         failure: GenerationFailureV1,
     ) -> GenerationRunV1 | None:
+        """Record S5 failure without falsely terminalizing retryable work.
+
+        Retryable renderer/AssetStore failures remain in RENDERING so the same
+        deterministic render identity can be safely retried. Integrity or other
+        non-retryable failures transition to FAILED. Both retain durable failure
+        evidence on GenerationRun; successful retry clears it in finish_run_qa.
+        """
+        if failure.retryable:
+            result = await self.runs.update_one(
+                {
+                    "run_id": run_id,
+                    "state": GenerationRunState.RENDERING.value,
+                    "visual_spec_ref": visual_spec_ref,
+                },
+                {
+                    "$set": {
+                        "failure": failure.model_dump(),
+                        "completed_at": None,
+                    }
+                },
+            )
+            if result.matched_count == 1:
+                return await self._get_run(run_id)
+            existing = await self._get_run(run_id)
+            if (
+                existing is not None
+                and existing.visual_spec_ref == visual_spec_ref
+                and existing.state == GenerationRunState.RENDERING
+                and existing.failure is not None
+                and existing.failure.code == failure.code
+                and existing.failure.retryable
+            ):
+                return existing
+            return None
+
         result = await self.runs.update_one(
             {
                 "run_id": run_id,
