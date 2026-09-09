@@ -30,6 +30,7 @@ from routes.visual import router as visual_router
 from routes.rendering import router as rendering_router
 from routes.quality import router as quality_router
 from routes.approval import router as approval_router
+from routes.manual_export import router as manual_export_router
 
 
 load_dotenv()
@@ -106,6 +107,7 @@ app.include_router(visual_router, prefix="/api")
 app.include_router(rendering_router, prefix="/api")
 app.include_router(quality_router, prefix="/api")
 app.include_router(approval_router, prefix="/api")
+app.include_router(manual_export_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 
 

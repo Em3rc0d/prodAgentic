@@ -82,3 +82,25 @@ export async function editRevision(
     invalidated: string[];
   };
 }
+
+export async function downloadManualExport(approvalId: string): Promise<void> {
+  const res = await secureFetch(`${API}/api/approvals/${encodeURIComponent(approvalId)}/manual-export`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    throw new Error(payload?.detail || `Manual export failed: ${res.status}`);
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const safeApprovalId = approvalId.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 96) || "approved";
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `prodagentic-manual-${safeApprovalId}.zip`;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}

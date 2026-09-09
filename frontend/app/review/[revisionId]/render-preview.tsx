@@ -9,6 +9,7 @@ import {
 } from "../../../lib/rendering";
 import {
   approveRevision,
+  downloadManualExport,
   editRevision,
   fetchReviewAuthority,
   type ApprovalBundleV2,
@@ -100,6 +101,19 @@ export default function RenderPreview({ revisionId }: { revisionId: string }) {
     }
   }
 
+  async function onManualExport(approvalId: string) {
+    if (actionBusy) return;
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      await downloadManualExport(approvalId);
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : "Manual export failed");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   if (error) {
     return <main className={styles.shell}><section className={styles.stateCard}><p className={styles.eyebrow}>Review</p><h1>Preview unavailable</h1><p>{error}</p></section></main>;
   }
@@ -111,10 +125,19 @@ export default function RenderPreview({ revisionId }: { revisionId: string }) {
   const ready = qa?.readiness === "READY_FOR_REVIEW" || preview.status === "REVIEWABLE";
   const needsAttention = qa?.readiness === "NEEDS_ATTENTION";
   const approved = Boolean(approval || authority?.existing_approval_id);
+  const manualExportEnabled = process.env.NEXT_PUBLIC_MK1_MANUAL_EXPORT === "true";
+  const exportApprovalId = approval?.approval_id || authority?.existing_approval_id || null;
+  const exportAvailable = approved && manualExportEnabled && Boolean(exportApprovalId);
   const statusLabel = approved ? "Approved · package frozen" : ready ? "Ready for review" : needsAttention ? "QA · needs attention" : "Rendered · QA pending";
 
   return (
-    <main className={styles.shell} data-testid="s5-review-preview" data-qa-readiness={qa?.readiness || "QA_PENDING"} data-s7-approval={approved ? "APPROVED" : authority?.approval_available ? "AVAILABLE" : "UNAVAILABLE"}>
+    <main
+      className={styles.shell}
+      data-testid="s5-review-preview"
+      data-qa-readiness={qa?.readiness || "QA_PENDING"}
+      data-s7-approval={approved ? "APPROVED" : authority?.approval_available ? "AVAILABLE" : "UNAVAILABLE"}
+      data-s8-export={exportAvailable ? "AVAILABLE" : "UNAVAILABLE"}
+    >
       <header className={styles.header}>
         <div>
           <p className={styles.eyebrow}>Review · governed decision</p>
@@ -195,6 +218,16 @@ export default function RenderPreview({ revisionId }: { revisionId: string }) {
                 {actionBusy ? "Approving…" : "Approve"}
               </button>
             )}
+            {exportAvailable && exportApprovalId && !editing && (
+              <button
+                className={styles.primaryAction}
+                type="button"
+                onClick={() => onManualExport(exportApprovalId)}
+                disabled={actionBusy}
+              >
+                {actionBusy ? "Preparing package…" : "Download manual package"}
+              </button>
+            )}
             {authority && !editing && !forkedRevisionId && (
               <button className={styles.secondaryAction} type="button" onClick={() => setEditing(true)} disabled={actionBusy}>
                 {approved ? "Create revision" : "Edit"}
@@ -249,11 +282,13 @@ export default function RenderPreview({ revisionId }: { revisionId: string }) {
           <div className={styles.notice}>
             {qaError
               ? "QA evidence is temporarily unavailable; Review does not infer readiness from the preview alone."
-              : authority
-                ? "Approve freezes this exact revision, QA evidence and owned asset hashes. Edit always creates a new revision."
-                : ready
-                  ? "S6 has made this revision reviewable. S7 approval authority is unavailable or disabled."
-                  : "S6 must complete QA before this revision can become reviewable."}
+              : exportAvailable
+                ? "Manual package uses this exact Approval and re-verifies owned asset bytes before download. Scheduling and publication remain separate."
+                : authority
+                  ? "Approve freezes this exact revision, QA evidence and owned asset hashes. Edit always creates a new revision."
+                  : ready
+                    ? "S6 has made this revision reviewable. S7 approval authority is unavailable or disabled."
+                    : "S6 must complete QA before this revision can become reviewable."}
           </div>
         </aside>
       </section>
