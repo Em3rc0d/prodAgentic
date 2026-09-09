@@ -327,7 +327,7 @@ async def test_render_service_attaches_complete_owned_set_and_stops_at_qa_pendin
     assert len(result.revision.asset_refs) == len(spec.pages) == 2
     assert len(result.render_result.assets) == 2
     assert all(asset.width == 1080 and asset.height == 1350 for asset in result.render_result.assets)
-    assert all(await service.asset_store.verify(asset.storage_key, asset.sha256) for asset in result.render_result.assets)
+    assert all([await service.asset_store.verify(asset.storage_key, asset.sha256) for asset in result.render_result.assets])
     assert "RendererRequestV1@1" in result.run.contract_versions
 
     # Retry/restart semantics reuse the immutable result and bytes instead of rendering again.
