@@ -1,0 +1,182 @@
+name: S8 Manual Export Package Cert
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  s8-cert:
+    name: S8-CERT manual-export
+    runs-on: ubuntu-latest
+    env:
+      APP_DEFAULT_LANGUAGE: es
+      LANGUAGE_MIN_CONFIDENCE: "0.6"
+      LANGUAGE_MIN_MARGIN: "0.2"
+      IMAGE_RENDER_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEPLOYMENT_KEY: s8-cert-installation
+      PRODAGENTIC_ASSET_ROOT: /tmp/prodagentic-s8-assets
+      MK1_ENABLED: "true"
+      MK1_PROFILE_V2: "true"
+      MK1_BATCH_PLANNING: "true"
+      MK1_STRUCTURED_AGENT_CELL: "true"
+      MK1_VISUALSPEC: "true"
+      MK1_RENDER_WORKER: "true"
+      MK1_REVIEW_APPROVAL: "true"
+      MK1_MANUAL_EXPORT: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Record exact S8 candidate identity
+        run: |
+          mkdir -p s8-cert-evidence
+          printf 'github_sha=%s\n' "$GITHUB_SHA" > s8-cert-evidence/receipt.txt
+          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" >> s8-cert-evidence/receipt.txt
+          printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> s8-cert-evidence/receipt.txt
+          git rev-parse HEAD | sed 's/^/checkout_sha=/' >> s8-cert-evidence/receipt.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> s8-cert-evidence/receipt.txt
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install -r requirements-dev.txt
+
+      - name: Compile S8 authority surface
+        working-directory: backend
+        run: |
+          python -m compileall domain/exporting application/exporting routes/manual_export.py
+
+      - name: Certify exact deterministic package and fresh asset rehash
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s8_manual_export.py | tee ../s8-cert-evidence/export-gate.txt
+
+      - name: Prove S8 is projection-only and stops before transport/publication
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          paths = [
+              *Path("domain/exporting").glob("*.py"),
+              *Path("application/exporting").glob("*.py"),
+              Path("routes/manual_export.py"),
+          ]
+          forbidden_modules = ("publishing", "scheduling", "redis", "outbox", "linkedin")
+          forbidden_calls = {
+              "insert_one", "update_one", "delete_one", "replace_one",
+              "save", "save_bundle", "save_asset", "publish", "schedule",
+              "dispatch", "enqueue", "xadd", "ack",
+          }
+          violations = []
+          for path in paths:
+              tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.ImportFrom):
+                      module = (node.module or "").lower()
+                      if any(token in module for token in forbidden_modules):
+                          violations.append(f"{path}: forbidden downstream import {module}")
+                  elif isinstance(node, ast.Import):
+                      for alias in node.names:
+                          module = alias.name.lower()
+                          if any(token in module for token in forbidden_modules):
+                              violations.append(f"{path}: forbidden downstream import {module}")
+                  elif isinstance(node, ast.Call):
+                      name = (
+                          node.func.id
+                          if isinstance(node.func, ast.Name)
+                          else node.func.attr
+                          if isinstance(node.func, ast.Attribute)
+                          else ""
+                      ).lower()
+                      if name in forbidden_calls:
+                          violations.append(f"{path}: forbidden mutation/downstream call {name}()")
+          if violations:
+              raise SystemExit("S8 crossed projection boundary:\n" + "\n".join(violations))
+          print("S8 boundary PASS: read-only exact Approval projection; no transport/publish authority")
+          PY
+
+      - name: Set up Node and Chromium for manual fallback UX
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend and browser
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Build and start Review UI with S8 rollout
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+          NEXT_PUBLIC_MK1_SHELL: "true"
+          NEXT_PUBLIC_MK1_PROFILE_V2: "true"
+          NEXT_PUBLIC_MK1_BATCH_PLANNING: "true"
+          NEXT_PUBLIC_MK1_MANUAL_EXPORT: "true"
+        run: |
+          npm run build
+          nohup npm start -- --hostname 127.0.0.1 --port 3000 > ../s8-cert-evidence/frontend.log 2>&1 &
+          echo $! > ../s8-cert-evidence/frontend.pid
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          cat ../s8-cert-evidence/frontend.log || true
+          exit 1
+
+      - name: Certify desktop and mobile manual fallback UX
+        working-directory: frontend
+        run: |
+          set -o pipefail
+          npx playwright test e2e/s8-manual-export.spec.ts --reporter=line | tee ../s8-cert-evidence/review-gate.txt
+
+      - name: Verify tracked checkout remained clean
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Record S8 source inventory
+        if: always()
+        run: |
+          git status --short > s8-cert-evidence/git-status.txt
+          git ls-files \
+            backend/domain/exporting \
+            backend/application/exporting \
+            backend/routes/manual_export.py \
+            backend/tests/test_s8_manual_export.py \
+            frontend/lib/approval.ts \
+            frontend/app/review \
+            frontend/e2e/s8-manual-export.spec.ts \
+            .github/workflows/s8-cert.yml \
+            mk1/build/slices/S8 \
+            > s8-cert-evidence/s8-files.txt
+
+      - name: Upload S8 certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s8-manual-export-evidence
+          path: s8-cert-evidence
+          if-no-files-found: error
+          retention-days: 30
