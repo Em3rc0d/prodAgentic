@@ -11,6 +11,10 @@ class QualityRepositoryPort(Protocol):
 
     async def get_report(self, tenant_id: str, qa_report_id: str) -> QAReportV1 | None: ...
 
+    async def get_latest_report_by_revision(
+        self, tenant_id: str, revision_id: str
+    ) -> QAReportV1 | None: ...
+
     async def mark_revision_reviewable(
         self,
         *,

@@ -69,6 +69,18 @@ class MongoQualityRepository:
     async def get_report(self, tenant_id: str, qa_report_id: str) -> QAReportV1 | None:
         self._require_tenant(tenant_id)
         raw = await self.reports.find_one({"qa_report_id": qa_report_id})
+        return self._validate_persisted_report(raw)
+
+    async def get_latest_report_by_revision(
+        self, tenant_id: str, revision_id: str
+    ) -> QAReportV1 | None:
+        self._require_tenant(tenant_id)
+        documents = await self.reports.find_many(
+            {"revision_id": revision_id}, sort=[("created_at", -1), ("qa_report_id", -1)]
+        )
+        return self._validate_persisted_report(documents[0]) if documents else None
+
+    def _validate_persisted_report(self, raw: dict | None) -> QAReportV1 | None:
         if raw is None:
             return None
         stored_digest = raw.get("metadata_digest")

@@ -28,6 +28,7 @@ from routes.batches import router as batches_router
 from routes.production import router as production_router
 from routes.visual import router as visual_router
 from routes.rendering import router as rendering_router
+from routes.quality import router as quality_router
 
 
 load_dotenv()
@@ -102,6 +103,7 @@ app.include_router(batches_router, prefix="/api")
 app.include_router(production_router, prefix="/api")
 app.include_router(visual_router, prefix="/api")
 app.include_router(rendering_router, prefix="/api")
+app.include_router(quality_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 
 

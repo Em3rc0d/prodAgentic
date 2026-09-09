@@ -10,7 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from application.quality.integrity import evaluate_owned_asset_bytes
 from application.quality.policy import build_qa_report
-from db.mongo import _ensure_mk1_production_indexes
+from db.mongo import _ensure_mk1_production_indexes, _ensure_mk1_quality_indexes
 from domain.production.models import (
     ContentRevisionV1,
     GenerationRunState,
@@ -26,15 +26,6 @@ from infrastructure.mongo.quality import MongoQualityRepository
 
 
 NOW = datetime(2026, 9, 9, 4, 30, tzinfo=timezone.utc)
-
-
-async def _ensure_quality_indexes(db):
-    await db["qa_reports"].create_index(
-        [("tenant_id", 1), ("qa_report_id", 1)], unique=True, name="tenant_qa_report_unique"
-    )
-    await db["qa_reports"].create_index(
-        [("tenant_id", 1), ("revision_id", 1), ("created_at", -1)], name="tenant_revision_qa_reports"
-    )
 
 
 def make_run_revision():
@@ -98,7 +89,7 @@ async def test_real_mongodb_s6_qa_authority_survives_restart_is_tenant_scoped_an
     try:
         await client.admin.command("ping")
         await _ensure_mk1_production_indexes(db)
-        await _ensure_quality_indexes(db)
+        await _ensure_mk1_quality_indexes(db)
         context = TenantContext(tenant_id="tenant-s6-a", actor_id="operator-s6-a")
         production = MongoProductionRepository(db, context)
         quality = MongoQualityRepository(db, context)
@@ -109,6 +100,7 @@ async def test_real_mongodb_s6_qa_authority_survives_restart_is_tenant_scoped_an
         report = make_report()
         assert report.verdict == QAVerdict.PASS
         await quality.save_report(report)
+        assert await quality.get_latest_report_by_revision(context.tenant_id, revision.revision_id) == report
 
         # First half of the transition: a process may die after revision becomes REVIEWABLE.
         reviewable = await quality.mark_revision_reviewable(
@@ -142,6 +134,7 @@ async def test_real_mongodb_s6_qa_authority_survives_restart_is_tenant_scoped_an
 
         other = MongoQualityRepository(db, TenantContext(tenant_id="tenant-s6-b", actor_id="operator-s6-b"))
         assert await other.get_report("tenant-s6-b", report.qa_report_id) is None
+        assert await other.get_latest_report_by_revision("tenant-s6-b", revision.revision_id) is None
     finally:
         await client.drop_database(database_name)
         client.close()
@@ -159,7 +152,7 @@ async def test_real_mongodb_s6_cas_rejects_stale_assets_and_fail_verdict():
     try:
         await client.admin.command("ping")
         await _ensure_mk1_production_indexes(db)
-        await _ensure_quality_indexes(db)
+        await _ensure_mk1_quality_indexes(db)
         context = TenantContext(tenant_id="tenant-s6-a", actor_id="operator-s6-a")
         production = MongoProductionRepository(db, context)
         quality = MongoQualityRepository(db, context)
@@ -188,6 +181,7 @@ async def test_real_mongodb_s6_cas_rejects_stale_assets_and_fail_verdict():
             visual_checks=failing.visual_checks, created_at=NOW,
         )
         await quality.save_report(failing)
+        assert await quality.get_latest_report_by_revision(context.tenant_id, revision.revision_id) == failing
         with pytest.raises(ValueError, match="failing QAReportV1"):
             await quality.mark_revision_reviewable(
                 revision_id=revision.revision_id, qa_report=failing,
