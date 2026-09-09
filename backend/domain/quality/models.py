@@ -128,7 +128,8 @@ def canonical_qa_sha256(payload: BaseModel | dict) -> str:
 
 def _json_default(value):
     if isinstance(value, datetime):
-        return value.isoformat()
+        serialized = value.isoformat()
+        return serialized[:-6] + "Z" if serialized.endswith("+00:00") else serialized
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, BaseModel):
