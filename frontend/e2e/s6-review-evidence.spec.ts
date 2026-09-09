@@ -68,6 +68,16 @@ async function installS6Routes(page: import("@playwright/test").Page) {
       }),
     });
   });
+  // S6 must remain certifiable independently from the downstream S7 authority.
+  // Explicitly disable the S7 read boundary instead of inferring approval from QA state.
+  await page.route("**/api/content-revisions/revision-s6-reviewable/review-authority", async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      headers: corsHeaders,
+      body: JSON.stringify({ detail: "S7 review authority unavailable in S6 certification" }),
+    });
+  });
   await page.route("**/api/render-assets/asset-s6-reviewable/content", async (route) => {
     await route.fulfill({ status: 200, contentType: "image/png", headers: corsHeaders, body: tinyPng });
   });
@@ -81,9 +91,12 @@ test("S6 Review consumes QA evidence and exposes reviewability without approval 
   const preview = page.getByTestId("s5-review-preview");
   await expect(preview).toBeVisible();
   await expect(preview).toHaveAttribute("data-qa-readiness", "READY_FOR_REVIEW");
+  await expect(preview).toHaveAttribute("data-s7-approval", "UNAVAILABLE");
   await expect(page.getByText("Ready for review")).toBeVisible();
+
+  await page.getByText("Why / Details", { exact: true }).click();
   await expect(page.getByText("PASS", { exact: true })).toBeVisible();
-  await page.getByText("QA evidence", { exact: true }).last().click();
+  await expect(page.getByText("QA evidence", { exact: true })).toBeVisible();
   await expect(page.getByText("qa-s6-reviewable")).toBeVisible();
   await expect(page.getByRole("button", { name: /Approve/i })).toHaveCount(0);
 });
