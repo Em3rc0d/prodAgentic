@@ -2,6 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 
+const frontendOrigin = "http://127.0.0.1:3000";
+const corsHeaders = {
+  "Access-Control-Allow-Origin": frontendOrigin,
+  "Access-Control-Allow-Credentials": "true",
+};
+
 const goldenRoot = path.resolve(process.env.S5_GOLDEN_OUTPUT_ROOT || "../s5-cert-evidence/goldens");
 const manifest = JSON.parse(fs.readFileSync(path.join(goldenRoot, "manifest.json"), "utf8"));
 const logan = manifest.goldens.find((item: { line: string }) => item.line === "logan");
@@ -12,6 +18,7 @@ async function installPreviewRoutes(page: Page) {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
+      headers: corsHeaders,
       body: JSON.stringify({
         revision_id: "revision-s5-golden",
         status: "QA_PENDING",
@@ -34,14 +41,19 @@ async function installPreviewRoutes(page: Page) {
   for (const item of logan.pages) {
     await page.route(`**/api/render-assets/asset-s5-golden-${item.page_index}/content`, async (route) => {
       const file = path.join(goldenRoot, "logan", `page-${String(item.page_index).padStart(2, "0")}.png`);
-      await route.fulfill({ status: 200, contentType: "image/png", body: fs.readFileSync(file) });
+      await route.fulfill({
+        status: 200,
+        contentType: "image/png",
+        headers: corsHeaders,
+        body: fs.readFileSync(file),
+      });
     });
   }
 }
 
 async function assertPreview(page: Page, screenshotName: string) {
   await installPreviewRoutes(page);
-  await page.goto("http://127.0.0.1:3000/review/revision-s5-golden", { waitUntil: "networkidle" });
+  await page.goto(`${frontendOrigin}/review/revision-s5-golden`, { waitUntil: "networkidle" });
 
   await expect(page.getByTestId("s5-review-preview")).toBeVisible();
   await expect(page.getByText("Rendered · QA pending")).toBeVisible();
