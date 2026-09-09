@@ -112,18 +112,27 @@ jobs:
           import ast
           from pathlib import Path
 
-          paths = [
+          authority_paths = [
               *Path("domain/rendering").glob("*.py"),
               *Path("application/rendering").glob("*.py"),
               Path("infrastructure/mongo/rendering.py"),
-              Path("routes/rendering.py"),
           ]
+          surface_paths = [*authority_paths, Path("routes/rendering.py")]
           violations = []
-          for path in paths:
+
+          # S5 mutation authority must never reference downstream review/approval states.
+          # Presentation/read routes may recognize REVIEWABLE so S6-promoted assets remain
+          # previewable, but they do not own that transition.
+          for path in authority_paths:
               tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
               for node in ast.walk(tree):
                   if isinstance(node, ast.Attribute) and node.attr in {"REVIEWABLE", "APPROVED"}:
                       violations.append(f"{path}: authority state {node.attr}")
+
+          # No S5 code path, including HTTP routes, may invoke downstream authority actions.
+          for path in surface_paths:
+              tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+              for node in ast.walk(tree):
                   if isinstance(node, ast.Call):
                       name = ""
                       if isinstance(node.func, ast.Name):
@@ -132,9 +141,10 @@ jobs:
                           name = node.func.attr
                       if name.lower() in {"approve", "publish", "schedule"}:
                           violations.append(f"{path}: downstream authority call {name}()")
+
           if violations:
               raise SystemExit("S5 crossed S6/S7+ authority boundary:\n" + "\n".join(violations))
-          print("S5 boundary PASS: render success stops at QA_PENDING / QA")
+          print("S5 boundary PASS: mutation authority stops at QA_PENDING / QA; preview reads may observe S6 state")
           PY
 
       - name: Build isolated Playwright renderer image
