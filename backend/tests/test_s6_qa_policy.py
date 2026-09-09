@@ -16,7 +16,7 @@ from domain.production.models import (
     ResearchVerdict,
     SingleImageSpecV1,
 )
-from domain.quality.models import QAVerdict, RecoveryAction, VisualQAObservationV1
+from domain.quality.models import QAVerdict, RecoveryAction, VisualQAObservationV1, canonical_qa_sha256
 
 DIGEST = "a" * 64
 
@@ -46,6 +46,11 @@ def _report(*, semantic=(), visual=()):
         deterministic_checks=(), semantic_checks=semantic, visual_checks=visual,
         created_at=datetime(2026, 9, 9, tzinfo=timezone.utc),
     )
+
+
+def test_qa_digest_is_stable_after_json_round_trip():
+    report = _report()
+    assert report.digest == canonical_qa_sha256(report.model_dump(mode="json", exclude={"digest"}))
 
 
 def test_claim_mismatch_blocks_reviewable_boundary():
