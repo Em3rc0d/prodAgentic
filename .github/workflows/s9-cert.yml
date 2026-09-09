@@ -1,0 +1,198 @@
+name: S9 Redis Streams + Mongo Outbox Cert
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  s9-cert:
+    name: S9-CERT redis-outbox
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      APP_DEFAULT_LANGUAGE: es
+      LANGUAGE_MIN_CONFIDENCE: "0.6"
+      LANGUAGE_MIN_MARGIN: "0.2"
+      IMAGE_RENDER_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_AUTH_ENABLED: "false"
+      MK1_ENABLED: "true"
+      MK1_REDIS_TRANSPORT: "true"
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017
+      REDIS_URL: redis://127.0.0.1:6379/0
+      S9_REDIS_INTEGRATION: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Record exact S9 candidate identity
+        run: |
+          mkdir -p s9-cert-evidence
+          printf 'github_sha=%s\n' "$GITHUB_SHA" > s9-cert-evidence/receipt.txt
+          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" >> s9-cert-evidence/receipt.txt
+          printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> s9-cert-evidence/receipt.txt
+          git rev-parse HEAD | sed 's/^/checkout_sha=/' >> s9-cert-evidence/receipt.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> s9-cert-evidence/receipt.txt
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install -r requirements-dev.txt
+
+      - name: Compile S9 authority surface
+        working-directory: backend
+        run: |
+          python -m compileall domain/jobs application/jobs infrastructure/mongo/jobs.py infrastructure/redis
+
+      - name: Certify durable outbox claims Redis loss duplicates PEL DLQ and lag
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s9_jobs.py | tee ../s9-cert-evidence/s9-gates.txt
+
+      - name: Certify command-scoped reconnect after real Redis restart
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import asyncio
+          from infrastructure.redis.streams import RedisStreamsSettings, RedisStreamsTransport
+
+          async def main():
+              transport = RedisStreamsTransport(RedisStreamsSettings.from_env())
+              assert await transport.ping()
+          asyncio.run(main())
+          PY
+          redis_id="$(docker ps --filter ancestor=redis:7-alpine --format '{{.ID}}' | head -n1)"
+          test -n "$redis_id"
+          docker restart "$redis_id"
+          for attempt in $(seq 1 30); do
+            if redis-cli -h 127.0.0.1 ping | grep -q PONG; then break; fi
+            sleep 1
+          done
+          python - <<'PY'
+          import asyncio
+          from infrastructure.redis.streams import RedisStreamsSettings, RedisStreamsTransport
+
+          async def main():
+              transport = RedisStreamsTransport(RedisStreamsSettings.from_env())
+              assert await transport.ping()
+              print("Redis reconnect PASS")
+          asyncio.run(main())
+          PY
+
+      - name: Prove Mongo authority and S9 stops before S10 publication
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          paths = [
+              *Path("domain/jobs").glob("*.py"),
+              *Path("application/jobs").glob("*.py"),
+              Path("infrastructure/mongo/jobs.py"),
+              *Path("infrastructure/redis").glob("*.py"),
+          ]
+          downstream_tokens = ("linkedin", "publishing", "scheduling")
+          forbidden_calls = {"publish_post", "create_schedule", "mark_published"}
+          violations = []
+          for path in paths:
+              tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.ImportFrom):
+                      module = (node.module or "").lower()
+                      if any(token in module for token in downstream_tokens):
+                          violations.append(f"{path}: downstream authority import {module}")
+                  elif isinstance(node, ast.Import):
+                      for alias in node.names:
+                          module = alias.name.lower()
+                          if any(token in module for token in downstream_tokens):
+                              violations.append(f"{path}: downstream authority import {module}")
+                  elif isinstance(node, ast.Call):
+                      name = (
+                          node.func.id
+                          if isinstance(node.func, ast.Name)
+                          else node.func.attr
+                          if isinstance(node.func, ast.Attribute)
+                          else ""
+                      ).lower()
+                      if name in forbidden_calls:
+                          violations.append(f"{path}: forbidden S10 call {name}()")
+          if violations:
+              raise SystemExit("S9 crossed S10 boundary:\n" + "\n".join(violations))
+
+          redis_source = Path("infrastructure/redis/streams.py").read_text(encoding="utf-8")
+          if '"payload"' in redis_source or "'payload'" in redis_source:
+              raise SystemExit("Redis adapter must carry identity/digest only, not business payload")
+          mongo_source = Path("infrastructure/mongo/jobs.py").read_text(encoding="utf-8")
+          if 'db["job_outbox"]' not in mongo_source:
+              raise SystemExit("Mongo job_outbox authority missing")
+          print("S9 boundary PASS: Mongo authority, Redis transport, no S10 publication authority")
+          PY
+
+      - name: Validate S9 compose overlay
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.s9.yml config > s9-cert-evidence/compose-s9.txt
+          grep -q 'redis:' s9-cert-evidence/compose-s9.txt
+          grep -q 'REDIS_URL:' s9-cert-evidence/compose-s9.txt
+
+      - name: Verify tracked checkout remained clean
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Record S9 source inventory
+        if: always()
+        run: |
+          git status --short > s9-cert-evidence/git-status.txt
+          git ls-files \
+            backend/domain/jobs \
+            backend/application/jobs \
+            backend/infrastructure/mongo/jobs.py \
+            backend/infrastructure/redis \
+            backend/tests/test_s9_jobs.py \
+            docker-compose.s9.yml \
+            .github/workflows/s9-cert.yml \
+            mk1/build/slices/S9 \
+            > s9-cert-evidence/s9-files.txt
+
+      - name: Upload S9 certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s9-redis-outbox-evidence
+          path: s9-cert-evidence
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,29 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - prodagentic_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  backend:
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MK1_REDIS_TRANSPORT: "true"
+      PRODAGENTIC_JOB_STREAM: prodagentic:jobs:v1
+      PRODAGENTIC_JOB_GROUP: prodagentic-workers-v1
+      PRODAGENTIC_JOB_DLQ_STREAM: prodagentic:jobs:dlq:v1
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  prodagentic_redis_data:
