@@ -136,8 +136,8 @@ async def get_render_preview(
     revision = await production.get_revision(context.tenant_id, revision_id)
     if revision is None:
         raise HTTPException(status_code=404, detail="ContentRevision not found")
-    if revision.status != RevisionStatus.QA_PENDING or not revision.asset_refs:
-        raise HTTPException(status_code=409, detail="Revision does not own a complete QA-pending render set")
+    if revision.status not in {RevisionStatus.QA_PENDING, RevisionStatus.REVIEWABLE} or not revision.asset_refs:
+        raise HTTPException(status_code=409, detail="Revision does not own a complete rendered asset set")
     if revision.visual_spec_ref is None:
         raise HTTPException(status_code=409, detail="Revision VisualSpec lineage is unavailable")
     visual_spec = await visual.get_visual_spec(revision.visual_spec_ref)
@@ -159,7 +159,7 @@ async def get_render_preview(
     return {
         "revision_id": revision.revision_id,
         "status": revision.status.value,
-        "qa_state": "QA_PENDING",
+        "qa_state": revision.status.value,
         "format": visual_spec.format.value,
         "alt_text": visual_spec.alt_text_plan,
         "assets": [
@@ -181,7 +181,7 @@ def _preview_payload(revision, result):
     return {
         "revision_id": revision.revision_id,
         "status": revision.status.value,
-        "qa_state": "QA_PENDING",
+        "qa_state": revision.status.value,
         "assets": [
             {
                 "asset_id": asset.asset_id,

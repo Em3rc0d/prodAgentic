@@ -1,0 +1,187 @@
+name: S6 QA + Recovery Cert
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  s6-cert:
+    name: S6-CERT qa-recovery
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_DEFAULT_LANGUAGE: es
+      LANGUAGE_MIN_CONFIDENCE: "0.6"
+      LANGUAGE_MIN_MARGIN: "0.2"
+      IMAGE_RENDER_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEPLOYMENT_KEY: s6-cert-installation
+      MK1_ENABLED: "true"
+      MK1_PROFILE_V2: "true"
+      MK1_BATCH_PLANNING: "true"
+      MK1_STRUCTURED_AGENT_CELL: "true"
+      MK1_VISUALSPEC: "true"
+      MK1_RENDER_WORKER: "true"
+      MONGO_URI: mongodb://127.0.0.1:27017/prodagentic_s6_cert
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Record exact S6 candidate identity
+        run: |
+          mkdir -p s6-cert-evidence
+          printf 'github_sha=%s\n' "$GITHUB_SHA" > s6-cert-evidence/receipt.txt
+          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" >> s6-cert-evidence/receipt.txt
+          printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> s6-cert-evidence/receipt.txt
+          git rev-parse HEAD | sed 's/^/checkout_sha=/' >> s6-cert-evidence/receipt.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> s6-cert-evidence/receipt.txt
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install -r requirements-dev.txt
+
+      - name: Compile S6 authority surface
+        working-directory: backend
+        run: |
+          python -m compileall domain/quality application/quality infrastructure/mongo/quality.py routes/quality.py
+
+      - name: Certify S6 policy and bounded recovery semantics
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s6_qa_policy.py | tee ../s6-cert-evidence/policy-gate.txt
+
+      - name: Certify exact AssetStore byte authority and reviewable transitions
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s6_quality_authority.py | tee ../s6-cert-evidence/authority-gate.txt
+
+      - name: Certify real Mongo restart tenant CAS and durable QA evidence
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_mk1_s6_quality_mongo.py | tee ../s6-cert-evidence/mongo-gate.txt
+
+      - name: Prove S6 does not own approval publishing or scheduling authority
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          paths = [
+              *Path("domain/quality").glob("*.py"),
+              *Path("application/quality").glob("*.py"),
+              Path("infrastructure/mongo/quality.py"),
+              Path("routes/quality.py"),
+          ]
+          forbidden_calls = {"approve", "publish", "schedule"}
+          violations = []
+          for path in paths:
+              tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Attribute) and node.attr == "APPROVED":
+                      violations.append(f"{path}: downstream authority state APPROVED")
+                  if isinstance(node, ast.Call):
+                      name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else ""
+                      if name.lower() in forbidden_calls:
+                          violations.append(f"{path}: downstream authority call {name}()")
+          if violations:
+              raise SystemExit("S6 crossed S7+ authority boundary:\n" + "\n".join(violations))
+          print("S6 boundary PASS: authority ends at REVIEWABLE")
+          PY
+
+      - name: Set up Node and Chromium for Review evidence gate
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend and browser
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Build and start Review UI
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+          NEXT_PUBLIC_MK1_SHELL: "true"
+          NEXT_PUBLIC_MK1_PROFILE_V2: "true"
+          NEXT_PUBLIC_MK1_BATCH_PLANNING: "true"
+        run: |
+          npm run build
+          nohup npm start -- --hostname 127.0.0.1 --port 3000 > ../s6-cert-evidence/frontend.log 2>&1 &
+          echo $! > ../s6-cert-evidence/frontend.pid
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          cat ../s6-cert-evidence/frontend.log || true
+          exit 1
+
+      - name: Certify Review consumes QA evidence without exposing approval
+        working-directory: frontend
+        run: |
+          set -o pipefail
+          npx playwright test e2e/s6-review-evidence.spec.ts --reporter=line | tee ../s6-cert-evidence/review-gate.txt
+
+      - name: Verify tracked checkout remained clean
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Record S6 source inventory
+        if: always()
+        run: |
+          git status --short > s6-cert-evidence/git-status.txt
+          git ls-files \
+            backend/domain/quality \
+            backend/application/quality \
+            backend/infrastructure/mongo/quality.py \
+            backend/routes/quality.py \
+            backend/tests/test_s6_qa_policy.py \
+            backend/tests/test_s6_quality_authority.py \
+            backend/tests/test_mk1_s6_quality_mongo.py \
+            frontend/app/review \
+            frontend/lib/rendering.ts \
+            frontend/e2e/s6-review-evidence.spec.ts \
+            .github/workflows/s6-cert.yml \
+            > s6-cert-evidence/s6-files.txt
+
+      - name: Upload S6 certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s6-qa-recovery-evidence
+          path: s6-cert-evidence
+          if-no-files-found: error
+          retention-days: 30
