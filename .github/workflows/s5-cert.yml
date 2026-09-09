@@ -1,0 +1,268 @@
+name: S5 Renderer + AssetStore Cert
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  s5-cert:
+    name: S5-CERT renderer-assetstore
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_DEFAULT_LANGUAGE: es
+      LANGUAGE_MIN_CONFIDENCE: "0.6"
+      LANGUAGE_MIN_MARGIN: "0.2"
+      IMAGE_RENDER_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEPLOYMENT_KEY: s5-cert-installation
+      MK1_ENABLED: "true"
+      MK1_PROFILE_V2: "true"
+      MK1_BATCH_PLANNING: "true"
+      MK1_STRUCTURED_AGENT_CELL: "true"
+      MK1_VISUALSPEC: "true"
+      MK1_RENDER_WORKER: "true"
+      MONGO_URI: mongodb://127.0.0.1:27017/prodagentic_s5_cert
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017
+      PRODAGENTIC_RENDERER_URL: http://127.0.0.1:4100
+      PRODAGENTIC_RENDERER_TIMEOUT_SECONDS: "30"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Record exact S5 run identity before gates
+        run: |
+          mkdir -p s5-cert-evidence
+          printf 'github_sha=%s\n' "$GITHUB_SHA" > s5-cert-evidence/receipt.txt
+          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" >> s5-cert-evidence/receipt.txt
+          printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> s5-cert-evidence/receipt.txt
+          printf 'event=%s\n' "$GITHUB_EVENT_NAME" >> s5-cert-evidence/receipt.txt
+          git rev-parse HEAD | sed 's/^/checkout_sha=/' >> s5-cert-evidence/receipt.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> s5-cert-evidence/receipt.txt
+            printf 'pr_base_sha=%s\n' "${{ github.event.pull_request.base.sha }}" >> s5-cert-evidence/receipt.txt
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install -r requirements-dev.txt
+
+      - name: Compile S5 modules
+        working-directory: backend
+        run: |
+          python -m compileall \
+            domain/rendering \
+            application/rendering \
+            infrastructure/assets/filesystem.py \
+            infrastructure/rendering/chromium.py \
+            infrastructure/mongo/rendering.py \
+            routes/rendering.py \
+            scripts/s5_generate_goldens.py
+
+      - name: Verify canonical S5 API and fail-closed feature gate
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s5_api_surface.py | tee ../s5-cert-evidence/api-gate.txt
+
+      - name: Run S5 contracts AssetStore authority and lifecycle gates
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s5_rendering.py | tee ../s5-cert-evidence/semantic-gate.txt
+
+      - name: Run S5 real Mongo restart tenant and CAS gates
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_mk1_s5_mongo.py | tee ../s5-cert-evidence/mongo-gate.txt
+
+      - name: Run S5 retryable recovery semantics gates
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s5_retryable_recovery.py | tee ../s5-cert-evidence/recovery-gate.txt
+
+      - name: Prove S5 stops before S6 approval authority
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          paths = [
+              *Path("domain/rendering").glob("*.py"),
+              *Path("application/rendering").glob("*.py"),
+              Path("infrastructure/mongo/rendering.py"),
+              Path("routes/rendering.py"),
+          ]
+          violations = []
+          for path in paths:
+              tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Attribute) and node.attr in {"REVIEWABLE", "APPROVED"}:
+                      violations.append(f"{path}: authority state {node.attr}")
+                  if isinstance(node, ast.Call):
+                      name = ""
+                      if isinstance(node.func, ast.Name):
+                          name = node.func.id
+                      elif isinstance(node.func, ast.Attribute):
+                          name = node.func.attr
+                      if name.lower() in {"approve", "publish", "schedule"}:
+                          violations.append(f"{path}: downstream authority call {name}()")
+          if violations:
+              raise SystemExit("S5 crossed S6/S7+ authority boundary:\n" + "\n".join(violations))
+          print("S5 boundary PASS: render success stops at QA_PENDING / QA")
+          PY
+
+      - name: Build isolated Playwright renderer image
+        run: docker build -f renderer/Dockerfile -t prodagentic-s5-renderer:${GITHUB_SHA} .
+
+      - name: Start and health-check real Chromium renderer
+        run: |
+          docker run -d --name prodagentic-s5-renderer -p 127.0.0.1:4100:4100 prodagentic-s5-renderer:${GITHUB_SHA}
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:4100/health > s5-cert-evidence/renderer-health.json; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs prodagentic-s5-renderer || true
+          exit 1
+
+      - name: Generate Content Seller Logan and Tech real Chromium goldens twice
+        working-directory: backend
+        env:
+          S5_GOLDEN_OUTPUT_ROOT: ${{ github.workspace }}/s5-cert-evidence/goldens
+          PYTHONPATH: ${{ github.workspace }}/backend
+        run: |
+          set -o pipefail
+          python scripts/s5_generate_goldens.py | tee ../s5-cert-evidence/golden-run-1.txt
+          python scripts/s5_generate_goldens.py | tee ../s5-cert-evidence/golden-run-2.txt
+
+      - name: Verify golden manifest dimensions page counts and owned hashes
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          root = Path("s5-cert-evidence/goldens")
+          data = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+          expected = {"content-seller": 1, "logan": 2, "tech": 1}
+          actual = {item["line"]: item for item in data["goldens"]}
+          if set(actual) != set(expected):
+              raise SystemExit(f"golden lines mismatch: {sorted(actual)}")
+          for line, page_count in expected.items():
+              item = actual[line]
+              assert item["page_count"] == page_count, (line, item["page_count"])
+              assert len(item["pages"]) == page_count
+              for page in item["pages"]:
+                  assert (page["width"], page["height"]) == (1080, 1350)
+                  assert re.fullmatch(r"[0-9a-f]{64}", page["sha256"])
+                  evidence = root / page["evidence_file"]
+                  assert evidence.is_file() and evidence.stat().st_size == page["byte_size"]
+          print("S5 real Chromium goldens: PASS")
+          PY
+
+      - name: Set up Node for Review preview certification
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend and host Chromium
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Build and start Review UI
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+          NEXT_PUBLIC_MK1_SHELL: "true"
+          NEXT_PUBLIC_MK1_PROFILE_V2: "true"
+          NEXT_PUBLIC_MK1_BATCH_PLANNING: "true"
+        run: |
+          npm run build
+          nohup npm start -- --hostname 127.0.0.1 --port 3000 > ../s5-cert-evidence/frontend.log 2>&1 &
+          echo $! > ../s5-cert-evidence/frontend.pid
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat ../s5-cert-evidence/frontend.log || true
+          exit 1
+
+      - name: Certify real golden Review preview on desktop and mobile
+        working-directory: frontend
+        env:
+          S5_GOLDEN_OUTPUT_ROOT: ${{ github.workspace }}/s5-cert-evidence/goldens
+        run: |
+          set -o pipefail
+          npx playwright test e2e/s5-review-preview.spec.ts --reporter=line | tee ../s5-cert-evidence/review-browser-gate.txt
+
+      - name: Verify tracked checkout remained clean
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Record renderer and source boundary inventory
+        if: always()
+        run: |
+          docker logs prodagentic-s5-renderer > s5-cert-evidence/renderer.log 2>&1 || true
+          docker rm -f prodagentic-s5-renderer >/dev/null 2>&1 || true
+          git status --short > s5-cert-evidence/git-status.txt
+          git ls-files \
+            backend/domain/rendering \
+            backend/application/rendering \
+            backend/infrastructure/assets/filesystem.py \
+            backend/infrastructure/rendering/chromium.py \
+            backend/infrastructure/mongo/rendering.py \
+            backend/routes/rendering.py \
+            backend/tests/test_s5_api_surface.py \
+            backend/tests/test_s5_rendering.py \
+            backend/tests/test_mk1_s5_mongo.py \
+            backend/tests/test_s5_retryable_recovery.py \
+            backend/scripts/s5_generate_goldens.py \
+            renderer \
+            frontend/app/review \
+            frontend/lib/rendering.ts \
+            frontend/e2e/s5-review-preview.spec.ts \
+            .github/workflows/s5-cert.yml \
+            > s5-cert-evidence/s5-files.txt
+
+      - name: Upload S5 certification evidence and real golden PNGs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s5-renderer-assetstore-evidence
+          path: s5-cert-evidence
+          if-no-files-found: error
+          retention-days: 30

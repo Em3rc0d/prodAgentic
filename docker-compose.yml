@@ -15,6 +15,27 @@ services:
       retries: 20
       start_period: 10s
 
+  renderer:
+    build:
+      context: .
+      dockerfile: renderer/Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      PORT: "4100"
+    expose:
+      - "4100"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4100/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
   backend:
     build:
       context: ./backend
@@ -32,10 +53,15 @@ services:
       MONGO_DB: prodagentic_local
       PRODAGENTIC_ASSET_ROOT: /app/assets
       PRODAGENTIC_DEPLOYMENT_KEY: ${PRODAGENTIC_DEPLOYMENT_KEY:-local-docker-installation}
+      PRODAGENTIC_RENDERER_URL: http://renderer:4100
+      PRODAGENTIC_RENDERER_TIMEOUT_SECONDS: ${PRODAGENTIC_RENDERER_TIMEOUT_SECONDS:-30}
 
       MK1_ENABLED: "true"
       MK1_PROFILE_V2: "true"
       MK1_BATCH_PLANNING: "true"
+      MK1_STRUCTURED_AGENT_CELL: "true"
+      MK1_VISUALSPEC: "true"
+      MK1_RENDER_WORKER: "true"
       IMAGE_RENDER_ENABLED: "false"
       SCHEDULER_ENABLED: "false"
 
@@ -65,6 +91,8 @@ services:
       - prodagentic_assets:/app/assets
     depends_on:
       mongo:
+        condition: service_healthy
+      renderer:
         condition: service_healthy
     healthcheck:
       test:
