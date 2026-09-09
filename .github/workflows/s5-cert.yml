@@ -40,6 +40,8 @@ jobs:
       PRODAGENTIC_RENDERER_TIMEOUT_SECONDS: "30"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
       - name: Record exact S5 run identity before gates
         run: |
@@ -52,6 +54,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> s5-cert-evidence/receipt.txt
             printf 'pr_base_sha=%s\n' "${{ github.event.pull_request.base.sha }}" >> s5-cert-evidence/receipt.txt
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
           fi
 
       - name: Set up Python
@@ -80,19 +83,27 @@ jobs:
 
       - name: Verify canonical S5 API and fail-closed feature gate
         working-directory: backend
-        run: python -m pytest -q tests/test_s5_api_surface.py | tee ../s5-cert-evidence/api-gate.txt
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s5_api_surface.py | tee ../s5-cert-evidence/api-gate.txt
 
       - name: Run S5 contracts AssetStore authority and lifecycle gates
         working-directory: backend
-        run: python -m pytest -q tests/test_s5_rendering.py | tee ../s5-cert-evidence/semantic-gate.txt
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s5_rendering.py | tee ../s5-cert-evidence/semantic-gate.txt
 
       - name: Run S5 real Mongo restart tenant and CAS gates
         working-directory: backend
-        run: python -m pytest -q tests/test_mk1_s5_mongo.py | tee ../s5-cert-evidence/mongo-gate.txt
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_mk1_s5_mongo.py | tee ../s5-cert-evidence/mongo-gate.txt
 
       - name: Run S5 retryable recovery semantics gates
         working-directory: backend
-        run: python -m pytest -q tests/test_s5_retryable_recovery.py | tee ../s5-cert-evidence/recovery-gate.txt
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s5_retryable_recovery.py | tee ../s5-cert-evidence/recovery-gate.txt
 
       - name: Prove S5 stops before S6 approval authority
         working-directory: backend
@@ -216,6 +227,11 @@ jobs:
         run: |
           set -o pipefail
           npx playwright test e2e/s5-review-preview.spec.ts --reporter=line | tee ../s5-cert-evidence/review-browser-gate.txt
+
+      - name: Verify tracked checkout remained clean
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
 
       - name: Record renderer and source boundary inventory
         if: always()
