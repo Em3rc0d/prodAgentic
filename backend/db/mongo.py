@@ -161,6 +161,19 @@ async def _ensure_mk1_quality_indexes(db):
     )
 
 
+async def _ensure_mk1_approval_indexes(db):
+    """Install S7 immutable ApprovalBundleV2 and restart-safe reservation invariants."""
+    await db["approval_bundles"].create_index(
+        [("tenant_id", 1), ("approval_id", 1)], unique=True, name="tenant_approval_id_unique"
+    )
+    await db["approval_bundles"].create_index(
+        [("tenant_id", 1), ("revision_id", 1)], unique=True, name="tenant_revision_approval_unique"
+    )
+    await db["approval_reservations"].create_index(
+        [("tenant_id", 1), ("revision_id", 1)], unique=True, name="tenant_revision_approval_reservation_unique"
+    )
+
+
 async def connect_db(*, run_bootstrap_migration: bool = True, run_profile_bridge: bool | None = None):
     global _client, _db, _bootstrap_migration_report
     mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
@@ -175,6 +188,7 @@ async def connect_db(*, run_bootstrap_migration: bool = True, run_profile_bridge
         await _ensure_mk1_visual_indexes(_db)
         await _ensure_mk1_rendering_indexes(_db)
         await _ensure_mk1_quality_indexes(_db)
+        await _ensure_mk1_approval_indexes(_db)
         if run_bootstrap_migration:
             from application.tenancy.bootstrap import migrate_bootstrap_tenant
             report = await migrate_bootstrap_tenant(_db)
