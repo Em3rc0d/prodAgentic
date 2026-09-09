@@ -207,13 +207,31 @@ class ApprovalService:
         if snapshot.review_digest != expected_review_digest:
             raise ApprovalConflict("Review authority changed; refresh before approving")
 
+        clock = now or utc_now()
         existing = await self.approvals.get_by_revision(tenant_id, revision_id)
         if existing is not None:
+            # Crash recovery boundary: an immutable bundle can already exist while the
+            # mutable ContentItem pointer still says READY_FOR_REVIEW. Replaying the same
+            # exact review must finish that CAS rather than fabricate a second approval.
+            ready = await self.approvals.ensure_ready_for_review(
+                content_id=existing.content_id,
+                revision_id=existing.revision_id,
+                now=clock,
+            )
+            if not ready:
+                raise ApprovalConflict("ContentItem changed before durable Approval recovery")
+            bound = await self.approvals.bind_approval(
+                content_id=existing.content_id,
+                revision_id=existing.revision_id,
+                approval_id=existing.approval_id,
+                now=clock,
+            )
+            if not bound:
+                raise ApprovalConflict("ContentItem changed before durable Approval recovery")
             return existing
         if not snapshot.approval_available:
             raise ApprovalConflict("Revision is not currently available for approval")
 
-        clock = now or utc_now()
         ready = await self.approvals.ensure_ready_for_review(
             content_id=snapshot.content_id,
             revision_id=revision_id,
@@ -236,6 +254,10 @@ class ApprovalService:
             approved_by=approved_by,
             approved_at=clock,
         )
+        persisted_revision = await self.production.get_revision(tenant_id, revision_id)
+        persisted_report = await self.quality.get_report(tenant_id, persisted_revision.qa_report_id)
+        if persisted_revision is None or persisted_report is None:
+            raise ApprovalAuthorityError("Approval authority disappeared before bundle construction")
         bundle_payload = {
             "schema_version": 2,
             "approval_id": reservation.approval_id,
@@ -250,15 +272,13 @@ class ApprovalService:
             "assets": [
                 ApprovalAssetV2(asset_id=asset_id, sha256=digest)
                 for asset_id, digest in zip(
-                    (await self.production.get_revision(tenant_id, revision_id)).asset_refs,
+                    persisted_revision.asset_refs,
                     refreshed.asset_digests,
                     strict=True,
                 )
             ],
             "qa_digest": refreshed.qa_digest,
-            "policy_version": (await self.quality.get_report(
-                tenant_id, (await self.production.get_revision(tenant_id, revision_id)).qa_report_id
-            )).policy_version,
+            "policy_version": persisted_report.policy_version,
             "approved_by": reservation.approved_by,
             "approved_at": reservation.approved_at,
         }
@@ -318,10 +338,12 @@ class ApprovalService:
         clock = now or utc_now()
         new_revision_id = str(uuid4())
         new_run_id = str(uuid4())
+        source_payload = source_content.model_dump(mode="json")
+        edited_payload = edited_content.model_dump(mode="json")
         changed_roots = {
             key
-            for key in source_content.model_fields
-            if source_content.model_dump(mode="json").get(key) != edited_content.model_dump(mode="json").get(key)
+            for key in type(source_content).model_fields
+            if source_payload.get(key) != edited_payload.get(key)
         }
         changed_roots.discard("content_spec_id")
 
@@ -349,7 +371,7 @@ class ApprovalService:
                         "supersedes_visual_spec_id": source_visual.visual_spec_id,
                     }
                 )
-                invalidated.extend(["Assets", "QAReport"])
+                invalidated.append("Assets")
 
         visual_digest = canonical_visual_sha256(cloned_visual) if cloned_visual else None
         run = GenerationRunV1(
@@ -394,25 +416,20 @@ class ApprovalService:
             digest=revision.content_spec_digest,
             payload=edited_content.model_dump(mode="json"),
         )
+        invalidation_payload = {
+            "source_revision_id": revision_id,
+            "new_revision_id": new_revision_id,
+            "changed_roots": sorted(changed_roots),
+            "invalidated": list(dict.fromkeys(invalidated)),
+            "visual_reused": cloned_visual is not None,
+        }
         await self.production.save_artifact(
             tenant_id=tenant_id,
             run_id=new_run_id,
             artifact_type="HumanEditInvalidationV1",
             artifact_id=f"edit-invalidation-{new_revision_id}",
-            digest=canonical_approval_sha256({
-                "source_revision_id": revision_id,
-                "new_revision_id": new_revision_id,
-                "changed_roots": sorted(changed_roots),
-                "invalidated": invalidated,
-                "visual_reused": cloned_visual is not None,
-            }),
-            payload={
-                "source_revision_id": revision_id,
-                "new_revision_id": new_revision_id,
-                "changed_roots": sorted(changed_roots),
-                "invalidated": invalidated,
-                "visual_reused": cloned_visual is not None,
-            },
+            digest=canonical_approval_sha256(invalidation_payload),
+            payload=invalidation_payload,
         )
         await self.production.save_revision(revision)
         if cloned_visual is not None:
