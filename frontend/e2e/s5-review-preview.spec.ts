@@ -14,6 +14,20 @@ const logan = manifest.goldens.find((item: { line: string }) => item.line === "l
 if (!logan) throw new Error("S5 Logan golden manifest is missing");
 
 async function installPreviewRoutes(page: Page) {
+  await page.route("**/api/auth/session", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: corsHeaders,
+      body: JSON.stringify({
+        authenticated: true,
+        auth_enabled: true,
+        csrf_token: "s5-cert-csrf-token",
+        expires_at: 4102444800,
+      }),
+    });
+  });
+
   await page.route("**/api/content-revisions/revision-s5-golden/render-preview", async (route) => {
     await route.fulfill({
       status: 200,
@@ -57,8 +71,8 @@ async function assertPreview(page: Page, screenshotName: string) {
   page.on("pageerror", (error) => events.push(`pageerror: ${error.message}`));
   page.on("requestfailed", (request) => events.push(`requestfailed: ${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`));
   page.on("response", (response) => {
-    if (response.url().includes("render-preview")) {
-      events.push(`render-preview-response: ${response.status()} ${response.url()}`);
+    if (response.url().includes("render-preview") || response.url().includes("/api/auth/session")) {
+      events.push(`response: ${response.status()} ${response.url()}`);
     }
   });
 
