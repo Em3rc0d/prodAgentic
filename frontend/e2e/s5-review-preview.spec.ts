@@ -52,10 +52,34 @@ async function installPreviewRoutes(page: Page) {
 }
 
 async function assertPreview(page: Page, screenshotName: string) {
+  const events: string[] = [];
+  page.on("console", (message) => events.push(`console:${message.type()}: ${message.text()}`));
+  page.on("pageerror", (error) => events.push(`pageerror: ${error.message}`));
+  page.on("requestfailed", (request) => events.push(`requestfailed: ${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`));
+  page.on("response", (response) => {
+    if (response.url().includes("render-preview")) {
+      events.push(`render-preview-response: ${response.status()} ${response.url()}`);
+    }
+  });
+
   await installPreviewRoutes(page);
   await page.goto(`${frontendOrigin}/review/revision-s5-golden`, { waitUntil: "networkidle" });
 
-  await expect(page.getByTestId("s5-review-preview")).toBeVisible();
+  const preview = page.getByTestId("s5-review-preview");
+  if ((await preview.count()) === 0) {
+    const body = await page.locator("body").innerText().catch(() => "<body unavailable>");
+    const html = await page.content().catch(() => "<html unavailable>");
+    const suffix = screenshotName.replace(/\.png$/i, "");
+    const evidenceRoot = path.resolve("../s5-cert-evidence");
+    fs.writeFileSync(
+      path.join(evidenceRoot, `${suffix}-diagnostics.txt`),
+      [`url=${page.url()}`, "", "EVENTS", ...events, "", "BODY", body, "", "HTML", html].join("\n"),
+      "utf8",
+    );
+    await page.screenshot({ path: path.join(evidenceRoot, `${suffix}-failure.png`), fullPage: true }).catch(() => undefined);
+  }
+
+  await expect(preview).toBeVisible();
   await expect(page.getByText("Rendered · QA pending")).toBeVisible();
   await expect(page.getByText("Page 1 of 2 · 1080×1350")).toBeVisible();
   await expect(page.getByRole("button", { name: "Show rendered page 2 of 2" })).toBeVisible();
