@@ -150,6 +150,17 @@ async def _ensure_mk1_rendering_indexes(db):
     )
 
 
+async def _ensure_mk1_quality_indexes(db):
+    """Install S6 immutable QA-report and revision-quality lookup invariants."""
+    await db["qa_reports"].create_index(
+        [("tenant_id", 1), ("qa_report_id", 1)], unique=True, name="tenant_qa_report_unique"
+    )
+    await db["qa_reports"].create_index(
+        [("tenant_id", 1), ("revision_id", 1), ("created_at", -1)],
+        name="tenant_revision_qa_reports",
+    )
+
+
 async def connect_db(*, run_bootstrap_migration: bool = True, run_profile_bridge: bool | None = None):
     global _client, _db, _bootstrap_migration_report
     mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
@@ -163,6 +174,7 @@ async def connect_db(*, run_bootstrap_migration: bool = True, run_profile_bridge
         await _ensure_mk1_production_indexes(_db)
         await _ensure_mk1_visual_indexes(_db)
         await _ensure_mk1_rendering_indexes(_db)
+        await _ensure_mk1_quality_indexes(_db)
         if run_bootstrap_migration:
             from application.tenancy.bootstrap import migrate_bootstrap_tenant
             report = await migrate_bootstrap_tenant(_db)
