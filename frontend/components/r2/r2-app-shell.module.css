@@ -1,4 +1,4 @@
-.shell { min-height: 100dvh; color: var(--pa-text-1); background: var(--pa-canvas); }
+.shell { height: 100dvh; min-height: 100dvh; overflow: hidden; color: var(--pa-text-1); background: var(--pa-canvas); }
 .rail { position: fixed; inset: 0 auto 0 0; z-index: 100; width: 216px; display: flex; flex-direction: column; padding: var(--pa-space-4); border-right: 1px solid var(--pa-line-subtle); background: var(--pa-surface-1); }
 .brand { display: flex; align-items: center; gap: var(--pa-space-3); color: var(--pa-text-1); text-decoration: none; }
 .mark { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 auto; border-radius: var(--pa-radius-control); background: var(--pa-signal); color: var(--pa-on-signal); font-weight: 800; }
@@ -18,7 +18,7 @@
 .runtimeDot { width: 8px; height: 8px; border-radius: 50%; background: var(--pa-warning); }
 .runtime[data-state="READY"] .runtimeDot { background: var(--pa-success); }
 .runtime[data-state="UNREACHABLE"] .runtimeDot { background: var(--pa-danger); }
-.content { min-height: 100dvh; margin-left: 216px; overflow-x: hidden; }
+.content { height: 100dvh; min-height: 0; margin-left: 216px; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
 @media (max-width: 1023px) {
   .rail { width: 76px; padding-inline: var(--pa-space-2); }
   .brand { justify-content: center; }
@@ -34,5 +34,5 @@
   .navigation a { min-height: 54px; grid-template-columns: 1fr; grid-template-rows: auto auto; justify-items: center; align-content: center; gap: 1px; font-size: 10px; }
   .navLabel { display: block; }
   .index { font-size: 9px; line-height: 12px; }
-  .content { min-height: calc(100dvh - 68px); margin: 0 0 68px; }
+  .content { height: calc(100dvh - 68px); margin: 0 0 68px; scrollbar-gutter: auto; }
 }
