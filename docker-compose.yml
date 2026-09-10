@@ -62,6 +62,8 @@ services:
       MK1_STRUCTURED_AGENT_CELL: "true"
       MK1_VISUALSPEC: "true"
       MK1_RENDER_WORKER: "true"
+      MK1_REVIEW_APPROVAL: "true"
+      MK1_MANUAL_EXPORT: "true"
       IMAGE_RENDER_ENABLED: "false"
       SCHEDULER_ENABLED: "false"
 
@@ -114,6 +116,7 @@ services:
         NEXT_PUBLIC_MK1_SHELL: "true"
         NEXT_PUBLIC_MK1_PROFILE_V2: "true"
         NEXT_PUBLIC_MK1_BATCH_PLANNING: "true"
+        NEXT_PUBLIC_MK1_MANUAL_EXPORT: "true"
         PRODAGENTIC_ALLOW_PRIVATE_HTTP_API: "${PRODAGENTIC_ALLOW_PRIVATE_HTTP_API:-false}"
     restart: unless-stopped
     init: true
