@@ -59,14 +59,61 @@ class QualityAuthorityService:
             raise QualityAuthorityError("S6 requires QA_PENDING or idempotent REVIEWABLE revision")
         if report.content_spec_digest != revision.content_spec_digest:
             raise QualityAuthorityError("QAReport ContentSpec digest mismatch")
-        if not revision.asset_refs:
-            raise QualityAuthorityError("S6 requires owned render assets")
 
         run = await self.production_repository.get_run(tenant_id, revision.run_id)
         if run is None or run.content_id != revision.content_id:
             raise QualityAuthorityError("GenerationRun/ContentRevision authority mismatch")
         if run.state not in {GenerationRunState.QA, GenerationRunState.COMPLETED}:
             raise QualityAuthorityError("GenerationRun is outside the S6 QA boundary")
+
+        if revision.asset_refs:
+            await self._verify_visual_report(
+                tenant_id=tenant_id,
+                revision_id=revision_id,
+                revision=revision,
+                report=report,
+            )
+        else:
+            if revision.visual_spec_ref is not None or revision.visual_spec_digest is not None:
+                raise QualityAuthorityError("Text-only QA cannot own VisualSpec lineage without render assets")
+            if report.asset_digests or report.render_input_digest is not None:
+                raise QualityAuthorityError("Text-only QAReport cannot claim render or asset evidence")
+
+        await self.quality_repository.save_report(report)
+
+        if report.verdict == QAVerdict.FAIL:
+            return QualityAuthorityResult(report=report, revision=revision, run=run, reviewable=False)
+
+        reviewable = await self.quality_repository.mark_revision_reviewable(
+            revision_id=revision_id,
+            qa_report=report,
+            expected_asset_refs=revision.asset_refs,
+            expected_content_spec_digest=revision.content_spec_digest,
+            expected_visual_spec_digest=revision.visual_spec_digest,
+        )
+        if reviewable is None:
+            raise QualityConflict("ContentRevision changed before REVIEWABLE CAS")
+
+        completed = await self.quality_repository.finish_run_completed(
+            run_id=run.run_id,
+            revision_id=revision_id,
+            qa_report_id=report.qa_report_id,
+        )
+        if completed is None:
+            raise QualityConflict("GenerationRun changed before S6 completion")
+
+        return QualityAuthorityResult(report=report, revision=reviewable, run=completed, reviewable=True)
+
+    async def _verify_visual_report(
+        self,
+        *,
+        tenant_id: str,
+        revision_id: str,
+        revision: ContentRevisionV1,
+        report: QAReportV1,
+    ) -> None:
+        if revision.visual_spec_ref is None or revision.visual_spec_digest is None:
+            raise QualityAuthorityError("Rendered QA requires VisualSpec lineage")
 
         assets = []
         render_ids = set()
@@ -98,34 +145,10 @@ class QualityAuthorityService:
             raise QualityAuthorityError("RenderResultV1 is unavailable")
         if tuple(asset.asset_id for asset in render_result.assets) != revision.asset_refs:
             raise QualityAuthorityError("RenderResult asset set differs from ContentRevision")
+
         expected_asset_digests = tuple(asset.sha256 for asset in render_result.assets)
         expected_render_input_digest = next(iter(render_input_digests))
         if report.asset_digests != expected_asset_digests:
             raise QualityAuthorityError("QAReport asset digest set mismatch")
         if report.render_input_digest != expected_render_input_digest:
             raise QualityAuthorityError("QAReport render input digest mismatch")
-
-        await self.quality_repository.save_report(report)
-
-        if report.verdict == QAVerdict.FAIL:
-            return QualityAuthorityResult(report=report, revision=revision, run=run, reviewable=False)
-
-        reviewable = await self.quality_repository.mark_revision_reviewable(
-            revision_id=revision_id,
-            qa_report=report,
-            expected_asset_refs=revision.asset_refs,
-            expected_content_spec_digest=revision.content_spec_digest,
-            expected_visual_spec_digest=revision.visual_spec_digest,
-        )
-        if reviewable is None:
-            raise QualityConflict("ContentRevision changed before REVIEWABLE CAS")
-
-        completed = await self.quality_repository.finish_run_completed(
-            run_id=run.run_id,
-            revision_id=revision_id,
-            qa_report_id=report.qa_report_id,
-        )
-        if completed is None:
-            raise QualityConflict("GenerationRun changed before S6 completion")
-
-        return QualityAuthorityResult(report=report, revision=reviewable, run=completed, reviewable=True)

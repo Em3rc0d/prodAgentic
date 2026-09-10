@@ -15,6 +15,9 @@ from domain.tenants.models import TenantContext
 from infrastructure.mongo.scoped_repository import TenantScopedMongoRepository
 
 
+_S6_CONTRACTS = ("QAReportV1@1", "qa-policy-v1")
+
+
 def _hydrate_utc(value: Any) -> Any:
     if isinstance(value, datetime):
         if value.tzinfo is None or value.utcoffset() is None:
@@ -79,6 +82,93 @@ class MongoQualityRepository:
             {"revision_id": revision_id}, sort=[("created_at", -1), ("qa_report_id", -1)]
         )
         return self._validate_persisted_report(documents[0]) if documents else None
+
+    async def claim_text_revision_qa(
+        self,
+        *,
+        revision_id: str,
+        run_id: str,
+        expected_content_spec_digest: str,
+    ) -> tuple[ContentRevisionV1, GenerationRunV1] | None:
+        """Move a text-only S3 revision into S6 without inventing S4/S5 authority.
+
+        The method is retry-safe across the two Mongo CAS writes. A process death
+        after either write is completed by the next invocation when the remaining
+        object still matches the frozen text-only lineage.
+        """
+        revision_document = await self.revisions.find_one({"revision_id": revision_id})
+        run_document = await self.runs.find_one({"run_id": run_id})
+        if revision_document is None or run_document is None:
+            return None
+
+        revision = ContentRevisionV1.model_validate(_clean(revision_document))
+        run = GenerationRunV1.model_validate(_clean(run_document))
+        if (
+            revision.run_id != run_id
+            or run.content_id != revision.content_id
+            or revision.content_spec_digest != expected_content_spec_digest
+            or revision.visual_spec_ref is not None
+            or revision.visual_spec_digest is not None
+            or revision.asset_refs
+            or revision.qa_report_id is not None
+            or run.visual_spec_ref is not None
+        ):
+            return None
+        if revision.status not in {RevisionStatus.DRAFT, RevisionStatus.QA_PENDING}:
+            return None
+        if run.state not in {GenerationRunState.VISUAL_PLANNING, GenerationRunState.QA}:
+            return None
+
+        if revision.status == RevisionStatus.DRAFT:
+            result = await self.revisions.update_one(
+                {
+                    "revision_id": revision_id,
+                    "status": RevisionStatus.DRAFT.value,
+                    "content_spec_digest": expected_content_spec_digest,
+                    "visual_spec_ref": None,
+                    "visual_spec_digest": None,
+                    "asset_refs": [],
+                    "qa_report_id": None,
+                },
+                {"$set": {"status": RevisionStatus.QA_PENDING.value}},
+            )
+            if result.matched_count != 1:
+                current = await self.revisions.find_one({"revision_id": revision_id})
+                if current is None or ContentRevisionV1.model_validate(_clean(current)).status != RevisionStatus.QA_PENDING:
+                    return None
+
+        if run.state == GenerationRunState.VISUAL_PLANNING:
+            result = await self.runs.update_one(
+                {
+                    "run_id": run_id,
+                    "state": GenerationRunState.VISUAL_PLANNING.value,
+                    "visual_spec_ref": None,
+                    "content_spec_ref": revision.content_spec_ref,
+                },
+                {
+                    "$set": {"state": GenerationRunState.QA.value, "failure": None},
+                    "$addToSet": {"contract_versions": {"$each": list(_S6_CONTRACTS)}},
+                },
+            )
+            if result.matched_count != 1:
+                current = await self.runs.find_one({"run_id": run_id})
+                if current is None or GenerationRunV1.model_validate(_clean(current)).state != GenerationRunState.QA:
+                    return None
+        else:
+            await self.runs.update_one(
+                {"run_id": run_id, "state": GenerationRunState.QA.value},
+                {"$addToSet": {"contract_versions": {"$each": list(_S6_CONTRACTS)}}},
+            )
+
+        final_revision = await self.revisions.find_one({"revision_id": revision_id})
+        final_run = await self.runs.find_one({"run_id": run_id})
+        if final_revision is None or final_run is None:
+            return None
+        hydrated_revision = ContentRevisionV1.model_validate(_clean(final_revision))
+        hydrated_run = GenerationRunV1.model_validate(_clean(final_run))
+        if hydrated_revision.status != RevisionStatus.QA_PENDING or hydrated_run.state != GenerationRunState.QA:
+            return None
+        return hydrated_revision, hydrated_run
 
     def _validate_persisted_report(self, raw: dict | None) -> QAReportV1 | None:
         if raw is None:
@@ -156,7 +246,10 @@ class MongoQualityRepository:
             {"run_id": run_id, "state": GenerationRunState.QA.value},
             {
                 "$set": {"state": GenerationRunState.COMPLETED.value, "failure": None, "completed_at": utc_now()},
-                "$addToSet": {"qa_report_refs": qa_report_id},
+                "$addToSet": {
+                    "qa_report_refs": qa_report_id,
+                    "contract_versions": {"$each": list(_S6_CONTRACTS)},
+                },
             },
         )
         document = await self.runs.find_one({"run_id": run_id})
