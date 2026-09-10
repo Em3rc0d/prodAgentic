@@ -1,0 +1,175 @@
+name: S12 PerformanceSummary + Planner Learning Cert
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  s12-cert:
+    name: S12-CERT performance-summary-planner-learning
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_DEFAULT_LANGUAGE: es
+      LANGUAGE_MIN_CONFIDENCE: "0.6"
+      LANGUAGE_MIN_MARGIN: "0.2"
+      IMAGE_RENDER_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEPLOYMENT_KEY: s12-cert-installation
+      PRODAGENTIC_ASSET_ROOT: /tmp/prodagentic-s12-assets
+      MK1_ENABLED: "true"
+      MK1_PROFILE_V2: "true"
+      MK1_BATCH_PLANNING: "true"
+      MK1_STRUCTURED_AGENT_CELL: "true"
+      MK1_VISUALSPEC: "true"
+      MK1_RENDER_WORKER: "true"
+      MK1_REVIEW_APPROVAL: "true"
+      MK1_MANUAL_EXPORT: "true"
+      MK1_REDIS_TRANSPORT: "true"
+      MK1_PUBLISH_WORKER: "true"
+      MK1_ANALYTICS_WORKER: "true"
+      MK1_PLANNER_LEARNING: "true"
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Record exact S12 candidate identity
+        run: |
+          mkdir -p s12-cert-evidence
+          printf 'github_sha=%s\n' "$GITHUB_SHA" > s12-cert-evidence/receipt.txt
+          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" >> s12-cert-evidence/receipt.txt
+          printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> s12-cert-evidence/receipt.txt
+          printf 'external_provider_read=NOT_REQUIRED\n' >> s12-cert-evidence/receipt.txt
+          git rev-parse HEAD | sed 's/^/checkout_sha=/' >> s12-cert-evidence/receipt.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> s12-cert-evidence/receipt.txt
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install -r requirements-dev.txt
+
+      - name: Compile S12 authority surface
+        working-directory: backend
+        run: |
+          python -m compileall \
+            domain/learning \
+            application/learning \
+            infrastructure/mongo/learning.py \
+            application/planning/service.py \
+            domain/planning/models.py \
+            domain/planning/trace.py \
+            routes/batches.py \
+            routes/analytics_v1.py
+
+      - name: Certify S12 summary Mongo confidence and planner guardrails
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s12_learning.py | tee ../s12-cert-evidence/backend-s12.txt
+
+      - name: Regress S2 planning authority with learning code present
+        working-directory: backend
+        env:
+          MK1_PLANNER_LEARNING: "false"
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_mk1_s2_planning.py | tee ../s12-cert-evidence/backend-s2-regression.txt
+
+      - name: Prove S12 priority and authority boundaries
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          planning = Path("application/planning/service.py").read_text(encoding="utf-8")
+          learning = Path("application/learning/service.py").read_text(encoding="utf-8")
+          models = Path("domain/learning/models.py").read_text(encoding="utf-8")
+          mongo = Path("infrastructure/mongo/learning.py").read_text(encoding="utf-8")
+          batches = Path("routes/batches.py").read_text(encoding="utf-8")
+          analytics = Path("routes/analytics_v1.py").read_text(encoding="utf-8")
+          trace = Path("domain/planning/trace.py").read_text(encoding="utf-8")
+
+          if "ranked.append((diversity, performance.score" not in planning:
+              raise SystemExit("S12 priority proof missing: performance must follow complete diversity/quality tuple")
+          if "ranked.sort(key=lambda value: (value[0], value[1])" not in planning:
+              raise SystemExit("S12 priority ordering is not structurally explicit")
+          if "result.verdict not in (NoveltyVerdict.PASS, NoveltyVerdict.PASS_WITH_WARNING)" not in planning:
+              raise SystemExit("S12 must retain hard novelty eligibility gate before performance")
+          if "MK1_PLANNER_LEARNING" not in batches:
+              raise SystemExit("S12 planner-learning rollout flag missing from route composition")
+          if "MATURE_LEARNING_BUCKETS = (\"t+7d\", \"t+72h\")" not in models:
+              raise SystemExit("S12 mature lifecycle evidence policy missing")
+          for marker in ("INSUFFICIENT", "LOW", "MEDIUM", "HIGH", "planner_weight"):
+              if marker not in models:
+                  raise SystemExit(f"S12 confidence model missing {marker}")
+          for marker in ("Observational association only", "does not claim causality"):
+              if marker not in learning:
+                  raise SystemExit(f"S12 non-causal interpretation marker missing: {marker}")
+          if "update_one" in mongo or "replace_one" in mongo or "delete_one" in mongo:
+              raise SystemExit("S12 summary/evidence repository must not mutate upstream authority")
+          if "raw_available_metrics" in planning or "raw_available_metrics" in trace:
+              raise SystemExit("BatchPlanner/trace must never consume raw S11 provider metric evidence")
+          if "encrypted_access_token" in analytics:
+              raise SystemExit("S12 analytics API must not expose connection secret fields")
+          for forbidden in ("profile_versions", "append_version", "update_profile"):
+              if forbidden in learning or forbidden in mongo:
+                  raise SystemExit(f"S12 learning must not mutate Profile strategy authority: {forbidden}")
+          print("S12 boundary PASS: MetricSnapshot -> immutable PerformanceSummary -> final Planner tie-breaker")
+          PY
+
+      - name: Verify tracked checkout remained clean
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Record S12 source inventory
+        if: always()
+        run: |
+          git status --short > s12-cert-evidence/git-status.txt
+          git ls-files \
+            backend/domain/learning \
+            backend/application/learning \
+            backend/infrastructure/mongo/learning.py \
+            backend/application/planning/service.py \
+            backend/domain/planning/models.py \
+            backend/domain/planning/trace.py \
+            backend/routes/batches.py \
+            backend/routes/analytics_v1.py \
+            backend/tests/test_s12_learning.py \
+            .github/workflows/s12-cert.yml \
+            mk1/build/slices/S12 \
+            > s12-cert-evidence/s12-files.txt
+
+      - name: Upload S12 certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s12-performance-summary-planner-learning-evidence
+          path: s12-cert-evidence
+          if-no-files-found: error
+          retention-days: 30

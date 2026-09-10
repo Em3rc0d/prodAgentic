@@ -4,6 +4,7 @@ from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from application.learning import PerformanceSummaryService, PlannerPerformanceSource
 from application.planning import BatchPlannerService, DeterministicCandidateSource, PlanningConflict
 from application.tenancy.context import require_tenant_context
 from core.feature_flags import FeatureFlag
@@ -11,6 +12,7 @@ from db.mongo import get_db
 from domain.planning.models import BatchRequestConstraints, TargetWindow, utc_now
 from domain.tenants.models import TenantContext
 from infrastructure.mongo.editorial_memory import MongoEditorialMemoryProjector
+from infrastructure.mongo.learning import MongoPerformanceEvidenceRepository, MongoPerformanceSummaryRepository
 from infrastructure.mongo.planning import MongoPlanningRepository
 from infrastructure.mongo.profiles import MongoProfileRepository
 
@@ -45,7 +47,7 @@ def _repositories(request: Request, context: TenantContext):
     planning = MongoPlanningRepository(db, context)
     profiles = MongoProfileRepository(db, context)
     projector = MongoEditorialMemoryProjector(db, context, planning)
-    return profiles, planning, projector
+    return registry, db, profiles, planning, projector
 
 
 @router.post("/profiles/{profile_id}/batches", status_code=201)
@@ -55,12 +57,21 @@ async def create_batch(
     request: Request,
     context: TenantContext = Depends(require_tenant_context),
 ):
-    profiles, planning, projector = _repositories(request, context)
+    registry, db, profiles, planning, projector = _repositories(request, context)
+    performance_source = None
+    if registry.enabled(FeatureFlag.MK1_PLANNER_LEARNING):
+        performance_source = PlannerPerformanceSource(
+            PerformanceSummaryService(
+                evidence=MongoPerformanceEvidenceRepository(db, context),
+                summaries=MongoPerformanceSummaryRepository(db, context),
+            )
+        )
     service = BatchPlannerService(
         profiles,
         planning,
         DeterministicCandidateSource(),
         projector,
+        performance_source=performance_source,
     )
     try:
         result = await service.create_batch(
@@ -89,7 +100,7 @@ async def get_batch(
     request: Request,
     context: TenantContext = Depends(require_tenant_context),
 ):
-    _, planning, _ = _repositories(request, context)
+    _, _, _, planning, _ = _repositories(request, context)
     batch = await planning.get_batch(batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -113,7 +124,7 @@ async def get_editorial_memory(
     days: int = 30,
     context: TenantContext = Depends(require_tenant_context),
 ):
-    profiles, planning, projector = _repositories(request, context)
+    _, _, profiles, planning, projector = _repositories(request, context)
     profile = await profiles.get_profile(profile_id)
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")

@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import uuid4
 
+from application.learning import PerformanceLearningUnavailable
 from application.planning.novelty import NoveltyEngine
+from domain.learning.models import PlannerPerformanceScoreV1
 from domain.planning.models import (
     Batch,
     BatchRequestConstraints,
@@ -39,6 +41,18 @@ class PlannedBatchResult:
     memory_count: int
 
 
+def _visual_hint(format_name: str) -> str | None:
+    return {
+        "single_image": "single_focus",
+        "carousel": "sequence",
+        "infographic": "structured_diagram",
+    }.get(format_name)
+
+
+def _zero_performance(note: str) -> PlannerPerformanceScoreV1:
+    return PlannerPerformanceScoreV1(score=0.0, matched_signal_ids=(), note=note)
+
+
 class BatchPlannerService:
     memory_window_days = 30
     candidate_cap = 24
@@ -50,12 +64,14 @@ class BatchPlannerService:
         candidate_source: CandidateSourcePort,
         memory_projector: MemoryProjectorPort,
         novelty_engine: NoveltyEngine | None = None,
+        performance_source=None,
     ):
         self.profile_repository = profile_repository
         self.planning_repository = planning_repository
         self.candidate_source = candidate_source
         self.memory_projector = memory_projector
         self.novelty_engine = novelty_engine or NoveltyEngine()
+        self.performance_source = performance_source
 
     async def create_batch(
         self,
@@ -83,6 +99,16 @@ class BatchPlannerService:
         if profile_version.tenant_id != tenant_id:
             raise PlanningConflict("ProfileVersion tenant authority mismatch")
 
+        performance_summary = None
+        performance_degraded_reason = None
+        if self.performance_source is not None:
+            try:
+                performance_summary = await self.performance_source.get_for_planning(profile_id)
+            except PerformanceLearningUnavailable as exc:
+                # S12 is a bounded final tie-breaker. Failure of derived learning
+                # evidence must never make the core governed planning path unavailable.
+                performance_degraded_reason = str(exc)
+
         # Memory refresh is required. A failure propagates rather than silently
         # planning with an empty/stateless memory set.
         await self.memory_projector.refresh(profile_id, clock)
@@ -102,12 +128,27 @@ class BatchPlannerService:
         if len(candidate_ids) != len(set(candidate_ids)):
             raise PlanningConflict("Candidate source returned duplicate candidate IDs")
 
+        def performance_for(candidate, result: NoveltyResultV1) -> PlannerPerformanceScoreV1:
+            if performance_summary is None or self.performance_source is None:
+                if performance_degraded_reason:
+                    return _zero_performance(performance_degraded_reason)
+                return _zero_performance("Planner learning disabled or no current PerformanceSummary; contribution is zero.")
+            return self.performance_source.score_candidate(
+                performance_summary,
+                role=candidate.role,
+                canonical_topic=result.canonical_topic,
+                format=candidate.tentative_format,
+                hook_pattern=candidate.hook_pattern,
+                visual_pattern=_visual_hint(candidate.tentative_format),
+            )
+
         selected = []
         selected_results: dict[str, NoveltyResultV1] = {}
+        selected_performance: dict[str, PlannerPerformanceScoreV1] = {}
         remaining = list(candidates)
 
         while remaining and len(selected) < requested_size:
-            ranked: list[tuple[tuple[int, ...], object, NoveltyResultV1]] = []
+            ranked: list[tuple[tuple[int, ...], float, object, NoveltyResultV1, PlannerPerformanceScoreV1]] = []
             selected_roles = {item.role for item in selected}
             selected_topics = {canonicalize_topic(item.topic) for item in selected}
             selected_hooks = {item.hook_pattern for item in selected}
@@ -125,14 +166,19 @@ class BatchPlannerService:
                     int(result.verdict == NoveltyVerdict.PASS),
                     int(candidate.claim_risk.value == "low"),
                 )
-                ranked.append((diversity, candidate, result))
+                performance = performance_for(candidate, result)
+                # Frozen S12 priority law: performance is compared only after the
+                # complete existing diversity/quality tuple. It cannot make an
+                # ineligible candidate rankable and cannot outrank any prior term.
+                ranked.append((diversity, performance.score, candidate, result, performance))
 
             if not ranked:
                 break
-            ranked.sort(key=lambda value: value[0], reverse=True)
-            _, chosen, chosen_result = ranked[0]
+            ranked.sort(key=lambda value: (value[0], value[1]), reverse=True)
+            _, _, chosen, chosen_result, chosen_performance = ranked[0]
             selected.append(chosen)
             selected_results[chosen.candidate_id] = chosen_result
+            selected_performance[chosen.candidate_id] = chosen_performance
             remaining = [item for item in remaining if item.candidate_id != chosen.candidate_id]
 
         # Re-evaluate all unselected candidates against the final selected set so
@@ -141,11 +187,20 @@ class BatchPlannerService:
         for candidate in candidates:
             if candidate.candidate_id in selected_results:
                 result = selected_results[candidate.candidate_id]
-                reason = "selected after hard novelty gates and diversity preference"
+                performance = selected_performance[candidate.candidate_id]
+                reason = "selected after hard novelty gates and diversity/quality preference"
+                if performance.score:
+                    reason += f"; final bounded performance tie-breaker={performance.score:+.6f}"
                 is_selected = True
             else:
                 result = self.novelty_engine.evaluate(candidate, memory, selected, clock)
                 is_selected = False
+                if result.verdict in (NoveltyVerdict.PASS, NoveltyVerdict.PASS_WITH_WARNING):
+                    performance = performance_for(candidate, result)
+                else:
+                    performance = _zero_performance(
+                        "Performance not evaluated because the candidate failed a stronger novelty gate."
+                    )
                 if len(selected) >= requested_size and result.verdict in (
                     NoveltyVerdict.PASS,
                     NoveltyVerdict.PASS_WITH_WARNING,
@@ -159,6 +214,12 @@ class BatchPlannerService:
                     novelty=result,
                     selected=is_selected,
                     selection_reason=reason,
+                    performance_score=performance.score,
+                    performance_summary_id=(
+                        performance_summary.summary_id if performance_summary is not None else None
+                    ),
+                    performance_signal_ids=performance.matched_signal_ids,
+                    performance_note=performance.note,
                 )
             )
 
@@ -169,14 +230,16 @@ class BatchPlannerService:
             novelty = selected_results[candidate.candidate_id]
             content_id = str(uuid4())
             plan_id = str(uuid4())
-            visual_hint = {
-                "single_image": "single_focus",
-                "carousel": "sequence",
-                "infographic": "structured_diagram",
-            }.get(candidate.tentative_format)
+            visual_hint = _visual_hint(candidate.tentative_format)
             rationale = candidate.rationale
             if novelty.verdict == NoveltyVerdict.PASS_WITH_WARNING and novelty.reasons:
                 rationale = f"{rationale}; novelty warning retained: {novelty.reasons[0]}"
+            performance = selected_performance[candidate.candidate_id]
+            if performance.score:
+                rationale = (
+                    f"{rationale}; bounded observational performance tie-breaker "
+                    f"{performance.score:+.6f} applied only after stronger planning constraints"
+                )
             plan = ContentPlanV1(
                 plan_id=plan_id,
                 candidate_id=candidate.candidate_id,
@@ -244,6 +307,18 @@ class BatchPlannerService:
             memory_window_days=self.memory_window_days,
             memory_cutoff_at=clock,
             candidate_pool_size=len(candidates),
+            performance_summary_version=(
+                performance_summary.policy_version if performance_summary is not None else None
+            ),
+            performance_summary_id=(
+                performance_summary.summary_id if performance_summary is not None else None
+            ),
+            performance_summary_digest=(
+                performance_summary.summary_digest if performance_summary is not None else None
+            ),
+            learning_policy_version=(
+                performance_summary.policy_version if performance_summary is not None else None
+            ),
         )
         summary = BatchSummaryCounts(
             candidates_generated=len(candidates),
