@@ -9,6 +9,7 @@ from application.analytics.service import (
     AnalyticsReadService,
     AnalyticsUnavailable,
 )
+from application.learning import PerformanceSummaryService
 from application.tenancy.context import require_tenant_context
 from core.auth import COOKIE_NAME, SessionValidationError
 from core.feature_flags import FeatureFlag
@@ -20,6 +21,7 @@ from infrastructure.linkedin.oauth import S10LinkedInOAuthError, S10LinkedInOAut
 from infrastructure.mongo.analytics import MongoMetricSnapshotRepository
 from infrastructure.mongo.analytics_jobs import MongoAnalyticsJobOutboxRepository
 from infrastructure.mongo.analytics_publications import MongoPublishedPublicationAnalyticsReader
+from infrastructure.mongo.learning import MongoPerformanceEvidenceRepository, MongoPerformanceSummaryRepository
 from infrastructure.mongo.publishing import MongoConnectionRepository
 
 
@@ -74,6 +76,16 @@ def _components(context: TenantContext):
     return db, publications, connections, snapshots, adapter
 
 
+def _learning_components(context: TenantContext):
+    db = _db()
+    summaries = MongoPerformanceSummaryRepository(db, context)
+    service = PerformanceSummaryService(
+        evidence=MongoPerformanceEvidenceRepository(db, context),
+        summaries=summaries,
+    )
+    return summaries, service
+
+
 @router.get("/analytics/overview")
 async def analytics_overview(
     request: Request,
@@ -99,6 +111,43 @@ async def analytics_overview(
     ]
     payload["automatic_collection_enabled"] = _automatic_enabled(request)
     return payload
+
+
+@router.get("/analytics/performance-summary")
+async def performance_summary(
+    request: Request,
+    profile_id: str = Query(min_length=1, max_length=128),
+    context: TenantContext = Depends(require_tenant_context),
+):
+    registry = _flags(request)
+    summaries, _ = _learning_components(context)
+    summary = await summaries.latest_for_profile(profile_id)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="Performance summary not built for this profile")
+    return {
+        "summary": summary.model_dump(mode="json"),
+        "planner_learning_enabled": registry.enabled(FeatureFlag.MK1_PLANNER_LEARNING),
+        "interpretation": "observational_association_not_causality",
+    }
+
+
+@router.post("/analytics/performance-summary/rebuild")
+async def rebuild_performance_summary(
+    request: Request,
+    profile_id: str = Query(min_length=1, max_length=128),
+    context: TenantContext = Depends(require_tenant_context),
+):
+    registry = _flags(request)
+    _, service = _learning_components(context)
+    try:
+        summary = await service.rebuild(profile_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "summary": summary.model_dump(mode="json"),
+        "planner_learning_enabled": registry.enabled(FeatureFlag.MK1_PLANNER_LEARNING),
+        "interpretation": "observational_association_not_causality",
+    }
 
 
 @router.get("/analytics/publications/{publication_id}/snapshots")

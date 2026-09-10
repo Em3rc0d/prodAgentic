@@ -13,6 +13,10 @@ class CandidateEvaluationV1(FrozenModel):
     novelty: NoveltyResultV1
     selected: bool
     selection_reason: str = Field(min_length=1, max_length=400)
+    performance_score: float = Field(default=0.0, ge=-1, le=1)
+    performance_summary_id: str | None = Field(default=None, max_length=128)
+    performance_signal_ids: tuple[str, ...] = ()
+    performance_note: str | None = Field(default=None, max_length=500)
 
 
 class BatchPlanningTraceV1(FrozenModel):

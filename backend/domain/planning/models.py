@@ -125,7 +125,10 @@ class PlannerStrategySnapshot(FrozenModel):
     memory_window_days: int = Field(default=30, ge=7, le=180)
     memory_cutoff_at: datetime
     candidate_pool_size: int = Field(ge=1, le=24)
-    performance_summary_version: None = None
+    performance_summary_version: str | None = Field(default=None, max_length=120)
+    performance_summary_id: str | None = Field(default=None, max_length=128)
+    performance_summary_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    learning_policy_version: str | None = Field(default=None, max_length=120)
 
 
 class BatchSummaryCounts(FrozenModel):
