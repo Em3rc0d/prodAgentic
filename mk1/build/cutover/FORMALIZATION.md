@@ -153,16 +153,24 @@ H.5  rollback + release runbook                    LOCKED
 H.6  integrated fresh-environment tests            LOCKED
 H.7  Phase-H exact-SHA workflow                    LOCKED
 H.8  exact-SHA pre-merge consensus                 LOCKED
-H.9  protected merge + post-merge consensus        LOCKED
+H.9  exact-head merge + exact-main 13/13 recert    LOCKED
 H.10 external receipt / closure                    LOCKED
 ```
+
+## Merge terminology
+
+Canonical wording for Phase H is **“exact-head merge, followed by exact-main 13/13 recertification.”**
+
+An exact-head merge means that the PR head merged into `main` is the exact candidate SHA that passed the pre-merge certification matrix. A compare-and-swap guard such as `expected_head_sha` should be used when the merge interface supports it.
+
+This term does **not** assert that GitHub Branch Protection or repository rulesets are enabled. The post-certification agnostic audit on 2026-09-10 observed neither on `main`; therefore historical shorthand such as “protected merge” must be interpreted only as an exact-head merge guard, not as GitHub protected-branch enforcement.
 
 ## Closure law
 
 Phase H is `CERTIFIED/CLOSED` only after:
 
 1. one immutable candidate SHA passes all 13 pre-merge workflows;
-2. merge is pinned to that candidate with `expected_head_sha`;
+2. the head merged into `main` is exactly that certified candidate SHA; use an `expected_head_sha`-style compare-and-swap guard when the merge interface supports it;
 3. all 13 workflows pass on the resulting exact `main` SHA;
 4. production/provider gates not exercised are named explicitly rather than assumed;
 5. the final receipt is externalized in the PR so the certified tree is not mutated.
