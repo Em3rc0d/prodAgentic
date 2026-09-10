@@ -56,8 +56,16 @@ class S10LinkedInOAuthService:
             name="tenant_oauth_state_unique",
         )
 
-    async def create_authorization_url(self, session_id: str) -> str:
+    async def create_authorization_url(
+        self,
+        session_id: str,
+        *,
+        extra_scopes: tuple[str, ...] = (),
+    ) -> str:
         await self.ensure_indexes()
+        requested_scopes = sorted(
+            set(self.settings.scopes).union(scope.strip() for scope in extra_scopes if scope.strip())
+        )
         state = secrets.token_urlsafe(32)
         now = datetime.now(timezone.utc)
         await self.states.insert_one(
@@ -65,6 +73,7 @@ class S10LinkedInOAuthService:
                 "tenant_id": self.context.tenant_id,
                 "state_sha256": self._state_digest(state),
                 "session_id": session_id,
+                "requested_scopes": requested_scopes,
                 "created_at": now,
                 "expires_at": now + timedelta(seconds=self.STATE_TTL_SECONDS),
             }
@@ -75,12 +84,12 @@ class S10LinkedInOAuthService:
                 "client_id": self.settings.client_id,
                 "redirect_uri": self.settings.redirect_uri,
                 "state": state,
-                "scope": " ".join(self.settings.scopes),
+                "scope": " ".join(requested_scopes),
             }
         )
         return f"{self.AUTHORIZATION_URL}?{query}"
 
-    async def _consume_state(self, state: str, session_id: str):
+    async def _consume_state(self, state: str, session_id: str) -> dict[str, Any]:
         record = await self.states.find_one_and_delete(
             {
                 "tenant_id": self.context.tenant_id,
@@ -95,11 +104,13 @@ class S10LinkedInOAuthService:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if not isinstance(expires_at, datetime) or expires_at <= datetime.now(timezone.utc):
             raise S10LinkedInOAuthError("LinkedIn OAuth state has expired")
+        return record
 
     async def complete_authorization(self, *, code: str, state: str, session_id: str) -> dict[str, Any]:
         if not code or not state:
             raise S10LinkedInOAuthError("LinkedIn callback is missing code or state")
-        await self._consume_state(state, session_id)
+        state_record = await self._consume_state(state, session_id)
+        requested_scopes = set(state_record.get("requested_scopes") or self.settings.scopes)
 
         token_response = await self._request(
             "POST",
@@ -141,15 +152,14 @@ class S10LinkedInOAuthService:
         if not member_sub:
             raise S10LinkedInOAuthError("LinkedIn member identity is empty")
 
-        raw_scope = token_payload.get("scope") or " ".join(self.settings.scopes)
+        raw_scope = token_payload.get("scope") or " ".join(sorted(requested_scopes))
         scopes = sorted(
             set(raw_scope.replace(",", " ").split())
             if isinstance(raw_scope, str)
-            else set(self.settings.scopes)
+            else requested_scopes
         )
-        required = set(self.settings.scopes)
-        if not required.issubset(scopes):
-            missing = sorted(required - set(scopes))
+        if not requested_scopes.issubset(scopes):
+            missing = sorted(requested_scopes - set(scopes))
             raise S10LinkedInOAuthError(
                 f"LinkedIn did not grant required scopes: {', '.join(missing)}"
             )
