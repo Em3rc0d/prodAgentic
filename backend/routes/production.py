@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from application.production.lifecycle import ContentProductionConflict, ContentProductionLifecycle
 from application.production.service import ProductionAuthorityError, ProductionContractViolation, ProductionDomainStop, RevisionBudgetExhausted, StructuredAgentCellService
 from application.tenancy.context import require_tenant_context
+from core.demo import build_demo_s3_service, demo_mode_enabled
 from core.feature_flags import FeatureFlag
 from db.mongo import get_db
 from domain.production.models import RevisionStatus
@@ -50,6 +51,8 @@ def _build_service(request: Request, repository: MongoProductionRepository) -> S
         if not isinstance(service, StructuredAgentCellService):
             raise RuntimeError("s3_service_factory must return StructuredAgentCellService")
         return service
+    if demo_mode_enabled():
+        return build_demo_s3_service(repository)
     container = getattr(request.app.state, "container", None)
     router_instance = getattr(container, "router", None) if container is not None else None
     if router_instance is None:
