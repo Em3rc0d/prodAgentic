@@ -1,0 +1,281 @@
+name: S10 Calendar + LinkedIn Publication Cert
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  s10-cert:
+    name: S10-CERT calendar-publishing
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      APP_DEFAULT_LANGUAGE: es
+      LANGUAGE_MIN_CONFIDENCE: "0.6"
+      LANGUAGE_MIN_MARGIN: "0.2"
+      IMAGE_RENDER_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEPLOYMENT_KEY: s10-cert-installation
+      PRODAGENTIC_ASSET_ROOT: /tmp/prodagentic-s10-assets
+      MK1_ENABLED: "true"
+      MK1_PROFILE_V2: "true"
+      MK1_BATCH_PLANNING: "true"
+      MK1_STRUCTURED_AGENT_CELL: "true"
+      MK1_VISUALSPEC: "true"
+      MK1_RENDER_WORKER: "true"
+      MK1_REVIEW_APPROVAL: "true"
+      MK1_MANUAL_EXPORT: "true"
+      MK1_REDIS_TRANSPORT: "true"
+      MK1_PUBLISH_WORKER: "true"
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017
+      REDIS_URL: redis://127.0.0.1:6379/0
+      S10_REDIS_INTEGRATION: "true"
+      LINKEDIN_CLIENT_ID: s10-cert-client
+      LINKEDIN_CLIENT_SECRET: s10-cert-client-secret
+      LINKEDIN_REDIRECT_URI: http://localhost:8000/api/integrations/linkedin/callback
+      PRODAGENTIC_LINKEDIN_TOKEN_KEY: s10-cert-token-key-1234567890-abcdefghijklmnopqrstuvwxyz
+      LINKEDIN_API_VERSION: "202608"
+      FRONTEND_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Record exact S10 candidate identity
+        run: |
+          mkdir -p s10-cert-evidence
+          printf 'github_sha=%s\n' "$GITHUB_SHA" > s10-cert-evidence/receipt.txt
+          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" >> s10-cert-evidence/receipt.txt
+          printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> s10-cert-evidence/receipt.txt
+          printf 'linkedin_api_version=%s\n' "$LINKEDIN_API_VERSION" >> s10-cert-evidence/receipt.txt
+          printf 'live_linkedin_publication=NOT_EXERCISED\n' >> s10-cert-evidence/receipt.txt
+          git rev-parse HEAD | sed 's/^/checkout_sha=/' >> s10-cert-evidence/receipt.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> s10-cert-evidence/receipt.txt
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install -r requirements-dev.txt
+
+      - name: Compile S10 authority surface
+        working-directory: backend
+        run: |
+          python -m compileall \
+            domain/publishing \
+            application/publishing \
+            infrastructure/mongo/publishing.py \
+            infrastructure/mongo/publish_jobs.py \
+            infrastructure/mongo/approval_calendar.py \
+            infrastructure/linkedin \
+            workers/publishing.py \
+            routes/publishing_v2.py \
+            routes/linkedin_oauth.py \
+            main.py
+
+      - name: Certify S10 domain Mongo provider crash hash migration and Redis gates
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_s10_publishing.py | tee ../s10-cert-evidence/backend-s10.txt
+
+      - name: Certify real Redis restart reconnect for publish stream
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import asyncio
+          from infrastructure.redis.streams import RedisStreamsSettings, RedisStreamsTransport
+
+          async def main():
+              base = RedisStreamsSettings.from_env()
+              transport = RedisStreamsTransport(RedisStreamsSettings(
+                  url=base.url,
+                  stream="pa:publish:v1:restart-cert",
+                  group="pa-publish-restart-cert",
+                  dead_letter_stream="pa:publish:v1:dead:restart-cert",
+              ))
+              assert await transport.ping()
+          asyncio.run(main())
+          PY
+          redis_id="$(docker ps --filter ancestor=redis:7-alpine --format '{{.ID}}' | head -n1)"
+          test -n "$redis_id"
+          docker restart "$redis_id"
+          for attempt in $(seq 1 30); do
+            if redis-cli -h 127.0.0.1 ping | grep -q PONG; then break; fi
+            sleep 1
+          done
+          python - <<'PY'
+          import asyncio
+          from infrastructure.redis.streams import RedisStreamsSettings, RedisStreamsTransport
+          async def main():
+              base = RedisStreamsSettings.from_env()
+              transport = RedisStreamsTransport(RedisStreamsSettings(
+                  url=base.url,
+                  stream="pa:publish:v1:restart-cert",
+                  group="pa-publish-restart-cert",
+                  dead_letter_stream="pa:publish:v1:dead:restart-cert",
+              ))
+              assert await transport.ping()
+              print("S10 Redis restart reconnect PASS")
+          asyncio.run(main())
+          PY
+
+      - name: Prove S10 authority boundaries and secret safety
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          publishing_paths = [
+              *Path("domain/publishing").glob("*.py"),
+              *Path("application/publishing").glob("*.py"),
+              Path("infrastructure/mongo/publishing.py"),
+              Path("infrastructure/mongo/publish_jobs.py"),
+              *Path("infrastructure/linkedin").glob("*.py"),
+              Path("workers/publishing.py"),
+              Path("routes/publishing_v2.py"),
+          ]
+          forbidden_business_collection = 'db["content_runs"]'
+          violations = []
+          for path in publishing_paths:
+              source = path.read_text(encoding="utf-8")
+              if forbidden_business_collection in source:
+                  violations.append(f"{path}: writes/reads MK0 content_runs authority")
+          if violations:
+              raise SystemExit("S10 authority boundary violation:\n" + "\n".join(violations))
+
+          worker = Path("workers/publishing.py").read_text(encoding="utf-8")
+          if 'pa:publish:v1' not in worker or 'MongoPublishJobOutboxRepository' not in worker:
+              raise SystemExit("S10 dedicated publish stream/outbox specialization missing")
+          main = Path("main.py").read_text(encoding="utf-8")
+          if "if publish_authority:" not in main or "scheduler_task = None" not in main:
+              raise SystemExit("MK0 scheduler authority cutover is not explicit")
+
+          route_source = Path("routes/publishing_v2.py").read_text(encoding="utf-8")
+          if "encrypted_access_token" in route_source:
+              raise SystemExit("S10 API route must not expose encrypted token fields")
+          oauth_route = Path("routes/linkedin_oauth.py").read_text(encoding="utf-8")
+          if 'key not in {"encrypted_access_token", "email"}' not in oauth_route:
+              raise SystemExit("OAuth safe serializer secret boundary missing")
+
+          adapter = Path("infrastructure/linkedin/adapter.py").read_text(encoding="utf-8")
+          for required in ("Linkedin-Version", "X-Restli-Protocol-Version", "/rest/posts", "/rest/images?action=initializeUpload"):
+              if required not in adapter:
+                  raise SystemExit(f"LinkedIn contract marker missing: {required}")
+          print("S10 boundary PASS: Approval -> Schedule/Publication -> S9 transport -> provider receipt")
+          PY
+
+      - name: Validate S10 compose overlays
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.s9.yml -f docker-compose.s10.yml config > s10-cert-evidence/compose-s10.txt
+          grep -q 'redis:' s10-cert-evidence/compose-s10.txt
+          grep -q 'MK1_PUBLISH_WORKER:' s10-cert-evidence/compose-s10.txt
+          grep -q 'pa:publish:v1' s10-cert-evidence/compose-s10.txt
+
+      - name: Set up Node and Chromium for Calendar UX
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend and browser
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Build and start S10 Calendar UI
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+          NEXT_PUBLIC_MK1_SHELL: "true"
+          NEXT_PUBLIC_MK1_PROFILE_V2: "true"
+          NEXT_PUBLIC_MK1_BATCH_PLANNING: "true"
+          NEXT_PUBLIC_MK1_MANUAL_EXPORT: "true"
+          NEXT_PUBLIC_MK1_PUBLISHING: "true"
+        run: |
+          npm run build
+          nohup npm start -- --hostname 127.0.0.1 --port 3000 > ../s10-cert-evidence/frontend.log 2>&1 &
+          echo $! > ../s10-cert-evidence/frontend.pid
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:3000/calendar > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          cat ../s10-cert-evidence/frontend.log || true
+          exit 1
+
+      - name: Certify Calendar desktop mobile and reconciliation UX
+        working-directory: frontend
+        run: |
+          set -o pipefail
+          npx playwright test e2e/s10-calendar.spec.ts --reporter=line | tee ../s10-cert-evidence/browser-s10.txt
+
+      - name: Verify tracked checkout remained clean
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Record S10 source inventory
+        if: always()
+        run: |
+          git status --short > s10-cert-evidence/git-status.txt
+          git ls-files \
+            backend/domain/publishing \
+            backend/application/publishing \
+            backend/infrastructure/mongo/publishing.py \
+            backend/infrastructure/mongo/publish_jobs.py \
+            backend/infrastructure/mongo/approval_calendar.py \
+            backend/infrastructure/linkedin \
+            backend/workers/publishing.py \
+            backend/routes/publishing_v2.py \
+            backend/routes/linkedin_oauth.py \
+            backend/tests/test_s10_publishing.py \
+            frontend/app/calendar \
+            frontend/lib/calendar.ts \
+            frontend/e2e/s10-calendar.spec.ts \
+            docker-compose.s10.yml \
+            .github/workflows/s10-cert.yml \
+            mk1/build/slices/S10 \
+            > s10-cert-evidence/s10-files.txt
+
+      - name: Upload S10 certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s10-calendar-publishing-evidence
+          path: s10-cert-evidence
+          if-no-files-found: error
+          retention-days: 30

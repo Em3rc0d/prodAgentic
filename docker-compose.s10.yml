@@ -1,0 +1,18 @@
+services:
+  backend:
+    environment:
+      MK1_ENABLED: "true"
+      MK1_REDIS_TRANSPORT: "true"
+      MK1_PUBLISH_WORKER: "true"
+      PRODAGENTIC_PUBLISH_STREAM: pa:publish:v1
+      PRODAGENTIC_PUBLISH_GROUP: pa-publish-workers-v1
+      PRODAGENTIC_PUBLISH_DLQ_STREAM: pa:publish:v1:dead
+      S10_PUBLISH_POLL_SECONDS: "2"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    environment:
+      NEXT_PUBLIC_MK1_SHELL: "true"
+      NEXT_PUBLIC_MK1_PUBLISHING: "true"
