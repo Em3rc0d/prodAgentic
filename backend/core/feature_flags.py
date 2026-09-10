@@ -16,10 +16,26 @@ class FeatureFlag(str, Enum):
     MK1_PUBLISH_WORKER = "MK1_PUBLISH_WORKER"
     MK1_ANALYTICS_WORKER = "MK1_ANALYTICS_WORKER"
     MK1_PLANNER_LEARNING = "MK1_PLANNER_LEARNING"
+    MK1_PRODUCTION_CUTOVER = "MK1_PRODUCTION_CUTOVER"
 
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
+
+_CUTOVER_REQUIRED_FLAGS = (
+    FeatureFlag.MK1_ENABLED,
+    FeatureFlag.MK1_PROFILE_V2,
+    FeatureFlag.MK1_BATCH_PLANNING,
+    FeatureFlag.MK1_STRUCTURED_AGENT_CELL,
+    FeatureFlag.MK1_VISUALSPEC,
+    FeatureFlag.MK1_RENDER_WORKER,
+    FeatureFlag.MK1_REVIEW_APPROVAL,
+    FeatureFlag.MK1_MANUAL_EXPORT,
+    FeatureFlag.MK1_REDIS_TRANSPORT,
+    FeatureFlag.MK1_PUBLISH_WORKER,
+    FeatureFlag.MK1_ANALYTICS_WORKER,
+    FeatureFlag.MK1_PLANNER_LEARNING,
+)
 
 
 @dataclass(frozen=True)
@@ -35,9 +51,23 @@ class FeatureFlagRegistry:
                 raise ValueError(f"{flag.value} must be a boolean value")
             values[flag] = raw in _TRUE
 
-        # A child authority cannot activate while the MK1 master gate is off.
+        # The MK1 master gate is authoritative. If it is off, every MK1 child
+        # authority — including the production cutover claim — is off. This
+        # preserves the S0 fail-closed contract and makes rollback one-way safe.
         if not values[FeatureFlag.MK1_ENABLED]:
-            values = {flag: False for flag in FeatureFlag}
+            return cls(values={flag: False for flag in FeatureFlag})
+
+        # Production cutover is an authority claim, not a convenience flag.
+        # Once the master gate is on, it fails closed if any certified V1 child
+        # authority is omitted.
+        if values[FeatureFlag.MK1_PRODUCTION_CUTOVER]:
+            missing = [flag.value for flag in _CUTOVER_REQUIRED_FLAGS if not values[flag]]
+            if missing:
+                raise ValueError(
+                    "MK1_PRODUCTION_CUTOVER requires all certified MK1 V1 authorities; "
+                    f"missing: {', '.join(missing)}"
+                )
+
         return cls(values=values)
 
     def enabled(self, flag: FeatureFlag) -> bool:

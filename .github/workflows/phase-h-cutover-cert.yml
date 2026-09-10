@@ -1,0 +1,339 @@
+name: PHASE-H Production Cutover Cert
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  phase-h-contracts:
+    name: PHASE-H-CERT authority-rollback-contracts
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017
+      REDIS_URL: redis://127.0.0.1:6379/0
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Record exact Phase H candidate identity
+        run: |
+          mkdir -p phase-h-cert-evidence
+          printf 'github_sha=%s\n' "$GITHUB_SHA" > phase-h-cert-evidence/receipt.txt
+          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" >> phase-h-cert-evidence/receipt.txt
+          printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> phase-h-cert-evidence/receipt.txt
+          printf 'live_linkedin_publish=NOT_EXERCISED_OPERATOR_AUTH_REQUIRED\n' >> phase-h-cert-evidence/receipt.txt
+          printf 'live_linkedin_analytics_read=NOT_EXERCISED_CAPABILITY_DEPENDENT\n' >> phase-h-cert-evidence/receipt.txt
+          git rev-parse HEAD | sed 's/^/checkout_sha=/' >> phase-h-cert-evidence/receipt.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> phase-h-cert-evidence/receipt.txt
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install -r requirements-dev.txt
+
+      - name: Compile cutover authority surface
+        working-directory: backend
+        run: |
+          python -m compileall core/cutover.py core/feature_flags.py core/production.py main.py
+
+      - name: Prove Phase H cutover rollback and production config laws
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_phase_h_cutover.py | tee ../phase-h-cert-evidence/phase-h-contracts.txt
+
+      - name: Regress bootstrap profile planning analytics and learning authority
+        working-directory: backend
+        env:
+          MK1_ENABLED: "true"
+          MK1_PROFILE_V2: "true"
+          MK1_BATCH_PLANNING: "true"
+          MK1_STRUCTURED_AGENT_CELL: "true"
+          MK1_VISUALSPEC: "true"
+          MK1_RENDER_WORKER: "true"
+          MK1_REVIEW_APPROVAL: "true"
+          MK1_MANUAL_EXPORT: "true"
+          MK1_REDIS_TRANSPORT: "true"
+          MK1_PUBLISH_WORKER: "true"
+          MK1_ANALYTICS_WORKER: "true"
+          MK1_PLANNER_LEARNING: "true"
+          MK1_PRODUCTION_CUTOVER: "true"
+        run: |
+          set -o pipefail
+          python -m pytest -q \
+            tests/test_mk1_s0_tenancy.py \
+            tests/test_mk1_s1_profiles.py \
+            tests/test_mk1_s2_planning.py \
+            tests/test_mk1_s2_mongo.py \
+            tests/test_s11_analytics.py \
+            tests/test_s12_learning.py \
+            tests/test_release_mongo_restart.py \
+            | tee ../phase-h-cert-evidence/integrated-authority-regression.txt
+
+      - name: Prove no MK1 dual-write to legacy authority
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          roots = [
+              Path('backend/domain'),
+              Path('backend/application'),
+              Path('backend/infrastructure'),
+              Path('backend/workers'),
+              Path('backend/routes/profiles.py'),
+              Path('backend/routes/batches.py'),
+              Path('backend/routes/production.py'),
+              Path('backend/routes/visual.py'),
+              Path('backend/routes/rendering.py'),
+              Path('backend/routes/quality.py'),
+              Path('backend/routes/approval.py'),
+              Path('backend/routes/manual_export.py'),
+              Path('backend/routes/publishing_v2.py'),
+              Path('backend/routes/analytics_v1.py'),
+          ]
+          offenders = []
+          needles = (
+              'db["posts"]', "db['posts']",
+              'db["content_runs"]', "db['content_runs']",
+              'db["content_profiles"]', "db['content_profiles']",
+          )
+          explicit_read_or_migration_bridges = {
+              'backend/application/profiles/legacy_bridge.py',
+              'backend/application/publishing/legacy_bridge.py',
+              'backend/infrastructure/mongo/editorial_memory.py',
+          }
+          for root in roots:
+              files = [root] if root.is_file() else list(root.rglob('*.py'))
+              for path in files:
+                  text = path.read_text(encoding='utf-8')
+                  if any(needle in text for needle in needles):
+                      if str(path) not in explicit_read_or_migration_bridges:
+                          offenders.append(str(path))
+          if offenders:
+              raise SystemExit('MK1 legacy-authority reference outside explicit bridges: ' + ', '.join(offenders))
+
+          main = Path('backend/main.py').read_text(encoding='utf-8')
+          cutover = Path('backend/core/cutover.py').read_text(encoding='utf-8')
+          flags = Path('backend/core/feature_flags.py').read_text(encoding='utf-8')
+          if 'production_cutover_boundary' not in main:
+              raise SystemExit('Phase H cutover middleware is not mounted')
+          if 'MK0_WRITE_AUTHORITY_RETIRED' not in cutover:
+              raise SystemExit('Stable cutover error code missing')
+          if 'MK1_PRODUCTION_CUTOVER requires all certified MK1 V1 authorities' not in flags:
+              raise SystemExit('Fail-closed partial cutover proof missing')
+          print('Phase H authority proof PASS')
+          PY
+
+      - name: Verify tracked checkout remained clean
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Upload Phase H contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-h-contract-evidence
+          path: phase-h-cert-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+  phase-h-production-smoke:
+    name: PHASE-H-CERT fresh-production-smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Record exact production-smoke identity
+        run: |
+          mkdir -p phase-h-smoke-evidence
+          git rev-parse HEAD | sed 's/^/checkout_sha=/' > phase-h-smoke-evidence/identity.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha }}" >> phase-h-smoke-evidence/identity.txt
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Validate production cutover Compose model
+        run: |
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.s9.yml \
+            -f docker-compose.s10.yml \
+            -f docker-compose.s11.yml \
+            -f docker-compose.cutover.yml \
+            config > phase-h-smoke-evidence/compose-config.txt
+          grep -q 'PRODAGENTIC_ENV: production' phase-h-smoke-evidence/compose-config.txt
+          grep -q 'MK1_PRODUCTION_CUTOVER: "true"' phase-h-smoke-evidence/compose-config.txt
+          grep -q 'LINKEDIN_STATIC_FALLBACK_ENABLED: "false"' phase-h-smoke-evidence/compose-config.txt
+
+      - name: Start fresh production-mode stack
+        run: |
+          set -euxo pipefail
+          COMPOSE="docker compose -f docker-compose.yml -f docker-compose.s9.yml -f docker-compose.s10.yml -f docker-compose.s11.yml -f docker-compose.cutover.yml"
+          $COMPOSE down -v --remove-orphans || true
+          $COMPOSE up -d --build
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health/live >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/health/live | tee phase-h-smoke-evidence/health-live.json
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8000/health/cutover > phase-h-smoke-evidence/health-cutover.json; then break; fi
+            sleep 1
+          done
+          python - <<'PY'
+          import json
+          data=json.load(open('phase-h-smoke-evidence/health-cutover.json', encoding='utf-8'))
+          assert data['status']=='READY', data
+          assert data['cutover_active'] is True
+          assert data['mk0_write_authority']=='DISABLED'
+          assert data['mk0_scheduler']=='DISABLED'
+          assert data['mk1_publish_worker']=='RUNNING'
+          assert data['mk1_analytics_worker']=='RUNNING'
+          print('cutover health READY')
+          PY
+          FRONTEND_READY=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/ > phase-h-smoke-evidence/frontend.html; then
+              FRONTEND_READY=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$FRONTEND_READY" != "1" ]; then
+            $COMPOSE ps > phase-h-smoke-evidence/compose-ps-frontend-not-ready.txt || true
+            $COMPOSE logs --no-color frontend > phase-h-smoke-evidence/frontend-not-ready.log || true
+            exit 1
+          fi
+
+      - name: Prove production auth and legacy retirement boundary
+        run: |
+          set -euxo pipefail
+          curl -fsS -D /tmp/phase-h-login.headers \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"phase-h-admin","password":"phase-h-cert-password-2026"}' \
+            http://127.0.0.1:8000/api/auth/login \
+            > /tmp/phase-h-login.json
+          CSRF="$(python -c "import json; print(json.load(open('/tmp/phase-h-login.json'))['csrf_token'])")"
+          SESSION="$(python - <<'PY'
+          from pathlib import Path
+          for line in Path('/tmp/phase-h-login.headers').read_text(encoding='utf-8').splitlines():
+              if line.lower().startswith('set-cookie:') and 'prodagentic_session=' in line:
+                  print(line.split('prodagentic_session=',1)[1].split(';',1)[0].strip())
+                  break
+          else:
+              raise SystemExit('session cookie missing')
+          PY
+          )"
+
+          CODE="$(curl -sS -o phase-h-smoke-evidence/legacy-write.json -w '%{http_code}' \
+            -H "Cookie: prodagentic_session=$SESSION" \
+            -H "X-CSRF-Token: $CSRF" \
+            -H 'Content-Type: application/json' \
+            -d '{}' \
+            http://127.0.0.1:8000/api/ideas)"
+          test "$CODE" = "410"
+          python - <<'PY'
+          import json
+          data=json.load(open('phase-h-smoke-evidence/legacy-write.json', encoding='utf-8'))
+          assert data['code']=='MK0_WRITE_AUTHORITY_RETIRED', data
+          PY
+
+          curl -fsS -H "Cookie: prodagentic_session=$SESSION" \
+            http://127.0.0.1:8000/api/posts \
+            > phase-h-smoke-evidence/legacy-historical-read.json
+          rm -f /tmp/phase-h-login.headers /tmp/phase-h-login.json
+
+      - name: Prove Mongo Redis and cutover readiness survive restart
+        run: |
+          set -euxo pipefail
+          COMPOSE="docker compose -f docker-compose.yml -f docker-compose.s9.yml -f docker-compose.s10.yml -f docker-compose.s11.yml -f docker-compose.cutover.yml"
+          $COMPOSE exec -T mongo mongosh --quiet prodagentic_local --eval \
+            'db.phase_h_probe.updateOne({_id:"cutover"},{$set:{value:"durable"}},{upsert:true})'
+          $COMPOSE exec -T redis redis-cli SET phase-h:durability-probe durable >/dev/null
+          sleep 2
+          $COMPOSE restart mongo redis
+          $COMPOSE up -d --wait mongo redis
+          $COMPOSE restart backend
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health/cutover > phase-h-smoke-evidence/health-cutover-after-restart.json; then break; fi
+            sleep 2
+          done
+          grep -q 'durable' < <($COMPOSE exec -T mongo mongosh --quiet prodagentic_local --eval 'print(db.phase_h_probe.findOne({_id:"cutover"}).value)')
+          test "$($COMPOSE exec -T redis redis-cli GET phase-h:durability-probe | tr -d '\r')" = "durable"
+          python - <<'PY'
+          import json
+          data=json.load(open('phase-h-smoke-evidence/health-cutover-after-restart.json', encoding='utf-8'))
+          assert data['status']=='READY', data
+          PY
+
+      - name: Capture production-mode logs and state
+        if: always()
+        run: |
+          COMPOSE="docker compose -f docker-compose.yml -f docker-compose.s9.yml -f docker-compose.s10.yml -f docker-compose.s11.yml -f docker-compose.cutover.yml"
+          $COMPOSE ps > phase-h-smoke-evidence/compose-ps.txt || true
+          $COMPOSE logs --no-color backend redis mongo > phase-h-smoke-evidence/compose-logs.txt || true
+          printf 'live_linkedin_publish=NOT_EXERCISED_OPERATOR_AUTH_REQUIRED\n' > phase-h-smoke-evidence/external-gates.txt
+          printf 'live_linkedin_analytics_read=NOT_EXERCISED_CAPABILITY_DEPENDENT\n' >> phase-h-smoke-evidence/external-gates.txt
+          printf 'manual_export_distribution=REGRESSION_CERTIFIED_BY_S8\n' >> phase-h-smoke-evidence/external-gates.txt
+
+      - name: Destroy disposable production-mode stack
+        if: always()
+        run: |
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.s9.yml \
+            -f docker-compose.s10.yml \
+            -f docker-compose.s11.yml \
+            -f docker-compose.cutover.yml \
+            down -v --remove-orphans || true
+
+      - name: Verify tracked checkout remained clean
+        if: always()
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Upload fresh production smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-h-production-smoke-evidence
+          path: phase-h-smoke-evidence
+          if-no-files-found: error
+          retention-days: 30
