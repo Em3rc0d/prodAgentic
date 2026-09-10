@@ -227,7 +227,19 @@ jobs:
           assert data['mk1_analytics_worker']=='RUNNING'
           print('cutover health READY')
           PY
-          curl -fsS http://127.0.0.1:3000/ > phase-h-smoke-evidence/frontend.html
+          FRONTEND_READY=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/ > phase-h-smoke-evidence/frontend.html; then
+              FRONTEND_READY=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$FRONTEND_READY" != "1" ]; then
+            $COMPOSE ps > phase-h-smoke-evidence/compose-ps-frontend-not-ready.txt || true
+            $COMPOSE logs --no-color frontend > phase-h-smoke-evidence/frontend-not-ready.log || true
+            exit 1
+          fi
 
       - name: Prove production auth and legacy retirement boundary
         run: |
