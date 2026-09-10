@@ -14,8 +14,8 @@ from core.model_registry import validate_available_models, get_profile_readiness
 from core.scheduler import scheduler_loop
 from core.auth import AuthSettings, SessionManager, security_boundary, router as auth_router
 from core.production import validate_production_environment
-from core.feature_flags import FeatureFlagRegistry
-from db.mongo import connect_db, close_db, database_ready
+from core.feature_flags import FeatureFlag, FeatureFlagRegistry
+from db.mongo import connect_db, close_db, database_ready, get_db
 from routes.pipeline import router as pipeline_router
 from routes.posts import router as posts_router
 from routes.content_runs import router as content_runs_router
@@ -31,6 +31,7 @@ from routes.rendering import router as rendering_router
 from routes.quality import router as quality_router
 from routes.approval import router as approval_router
 from routes.manual_export import router as manual_export_router
+from routes.publishing_v2 import router as publishing_v2_router
 
 
 load_dotenv()
@@ -50,11 +51,27 @@ async def lifespan(app: FastAPI):
 
     if container.client:
         container.preflight_task = asyncio.create_task(validate_available_models(container.client))
-    container.scheduler_task = asyncio.create_task(scheduler_loop())
+
+    publish_authority = app.state.feature_flags.enabled(FeatureFlag.MK1_PUBLISH_WORKER)
+    redis_transport = app.state.feature_flags.enabled(FeatureFlag.MK1_REDIS_TRANSPORT)
+    if publish_authority:
+        # Authority cutover: MK0 scheduler writes are disabled before S10 worker
+        # publication can start. A partially configured S10 remains safely delayed.
+        container.scheduler_task = None
+        if redis_transport and get_db() is not None:
+            from workers.publishing import s10_publish_loop
+
+            container.s10_publish_task = asyncio.create_task(s10_publish_loop(get_db()))
+        else:
+            container.s10_publish_task = None
+            print("[WARN] MK1_PUBLISH_WORKER enabled without Redis/Mongo readiness; MK0 scheduler remains disabled")
+    else:
+        container.scheduler_task = asyncio.create_task(scheduler_loop())
+        container.s10_publish_task = None
 
     yield
 
-    for task_name in ("preflight_task", "scheduler_task"):
+    for task_name in ("preflight_task", "scheduler_task", "s10_publish_task"):
         task = getattr(container, task_name, None)
         if task and not task.done():
             task.cancel()
@@ -108,6 +125,7 @@ app.include_router(rendering_router, prefix="/api")
 app.include_router(quality_router, prefix="/api")
 app.include_router(approval_router, prefix="/api")
 app.include_router(manual_export_router, prefix="/api")
+app.include_router(publishing_v2_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 
 
