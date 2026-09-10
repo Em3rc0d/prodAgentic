@@ -7,6 +7,7 @@ from domain.production.models import (
     AgentAttemptEvidenceV1,
     ContentRevisionV1,
     GenerationRunV1,
+    RevisionStatus,
     utc_now,
 )
 from domain.tenants.models import TenantContext
@@ -71,12 +72,7 @@ class MongoProductionRepository:
         if result.matched_count != 1:
             raise LookupError("GenerationRun not found")
 
-    async def append_agent_attempt(
-        self,
-        tenant_id: str,
-        run_id: str,
-        attempt: AgentAttemptEvidenceV1,
-    ) -> None:
+    async def append_agent_attempt(self, tenant_id: str, run_id: str, attempt: AgentAttemptEvidenceV1) -> None:
         self._require_tenant(tenant_id)
         if await self.get_run(tenant_id, run_id) is None:
             raise LookupError("GenerationRun not found")
@@ -84,34 +80,15 @@ class MongoProductionRepository:
         payload["run_id"] = run_id
         await self.attempts.insert_one(payload)
 
-    async def save_artifact(
-        self,
-        *,
-        tenant_id: str,
-        run_id: str,
-        artifact_type: str,
-        artifact_id: str,
-        digest: str,
-        payload: dict,
-    ) -> None:
+    async def save_artifact(self, *, tenant_id: str, run_id: str, artifact_type: str, artifact_id: str, digest: str, payload: dict) -> None:
         self._require_tenant(tenant_id)
         if await self.get_run(tenant_id, run_id) is None:
             raise LookupError("GenerationRun not found")
-        await self.artifacts.insert_one(
-            {
-                "artifact_id": artifact_id,
-                "run_id": run_id,
-                "artifact_type": artifact_type,
-                "digest": digest,
-                "payload": payload,
-                "created_at": utc_now(),
-            }
-        )
+        await self.artifacts.insert_one({"artifact_id": artifact_id, "run_id": run_id, "artifact_type": artifact_type, "digest": digest, "payload": payload, "created_at": utc_now()})
 
     async def get_artifact(self, tenant_id: str, artifact_id: str) -> dict | None:
         self._require_tenant(tenant_id)
-        document = _clean(await self.artifacts.find_one({"artifact_id": artifact_id}))
-        return document
+        return _clean(await self.artifacts.find_one({"artifact_id": artifact_id}))
 
     async def list_agent_attempts(self, tenant_id: str, run_id: str) -> list[AgentAttemptEvidenceV1]:
         self._require_tenant(tenant_id)
@@ -134,3 +111,9 @@ class MongoProductionRepository:
         self._require_tenant(tenant_id)
         document = _clean(await self.revisions.find_one({"revision_id": revision_id}))
         return ContentRevisionV1.model_validate(document) if document else None
+
+    async def list_revisions(self, tenant_id: str, *, status: RevisionStatus | None = None) -> list[ContentRevisionV1]:
+        self._require_tenant(tenant_id)
+        criteria = {"status": status.value} if status is not None else {}
+        documents = await self.revisions.find_many(criteria, sort=[("created_at", -1)])
+        return [ContentRevisionV1.model_validate(_clean(document)) for document in documents]
