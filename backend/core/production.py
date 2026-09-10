@@ -42,6 +42,8 @@ def validate_production_environment() -> None:
     if environment != "production":
         return
 
+    if _truthy("PRODAGENTIC_DEMO_MODE", "false"):
+        raise ProductionConfigurationError("PRODAGENTIC_DEMO_MODE must be false in production")
     if not _truthy("PRODAGENTIC_AUTH_ENABLED", "true"):
         raise ProductionConfigurationError("PRODAGENTIC_AUTH_ENABLED must be true in production")
     if not _truthy("PRODAGENTIC_COOKIE_SECURE", "true"):
