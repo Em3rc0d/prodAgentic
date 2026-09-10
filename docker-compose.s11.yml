@@ -1,0 +1,18 @@
+services:
+  backend:
+    environment:
+      MK1_ENABLED: "true"
+      MK1_REDIS_TRANSPORT: "true"
+      MK1_ANALYTICS_WORKER: "true"
+      PRODAGENTIC_ANALYTICS_STREAM: pa:analytics:v1
+      PRODAGENTIC_ANALYTICS_GROUP: pa-analytics-workers-v1
+      PRODAGENTIC_ANALYTICS_DLQ_STREAM: pa:analytics:v1:dead
+      S11_ANALYTICS_POLL_SECONDS: "30"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    environment:
+      NEXT_PUBLIC_MK1_SHELL: "true"
+      NEXT_PUBLIC_MK1_ANALYTICS: "true"
