@@ -24,13 +24,23 @@ class ProduceTextRequest(BaseModel):
 def _serialize(model):
     return model.model_dump(mode="json") if hasattr(model, "model_dump") else model
 
+def _database(request: Request):
+    registry = getattr(request.app.state, "feature_flags", None)
+    if registry is None or not registry.enabled(FeatureFlag.MK1_ENABLED):
+        raise HTTPException(status_code=404, detail="MK1 is not enabled")
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="MongoDB not connected")
+    return db
+
+def _production_repository(request: Request, context: TenantContext) -> MongoProductionRepository:
+    return MongoProductionRepository(_database(request), context)
+
 def _repositories(request: Request, context: TenantContext):
     registry = getattr(request.app.state, "feature_flags", None)
     if registry is None or not registry.enabled(FeatureFlag.MK1_STRUCTURED_AGENT_CELL):
         raise HTTPException(status_code=404, detail="Structured agent cell is not enabled")
-    db = get_db()
-    if db is None:
-        raise HTTPException(status_code=503, detail="MongoDB not connected")
+    db = _database(request)
     return MongoPlanningRepository(db, context), MongoProfileRepository(db, context), MongoProductionRepository(db, context)
 
 def _build_service(request: Request, repository: MongoProductionRepository) -> StructuredAgentCellService:
@@ -53,7 +63,7 @@ async def list_content_revisions(
     limit: int = Query(default=50, ge=1, le=100),
     context: TenantContext = Depends(require_tenant_context),
 ):
-    _, _, production = _repositories(request, context)
+    production = _production_repository(request, context)
     revisions = (await production.list_revisions(context.tenant_id, status=status))[:limit]
     rows = []
     for revision in revisions:
@@ -100,11 +110,11 @@ async def produce_text(content_id: str, body: ProduceTextRequest, request: Reque
     except ContentProductionConflict as exc: raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception:
         await lifecycle.fail(item.content_id); raise
-    return {"run": _serialize(result.run), "revision": _serialize(result.revision), "research": _serialize(result.research), "content": _serialize(result.content), "editorial_review": _serialize(result.review), "next_stage": "S4_VISUAL_PLANNING"}
+    return {"run": _serialize(result.run), "revision": _serialize(result.revision), "research": _serialize(result.research), "content": _serialize(result.content), "editorial_review": _serialize(result.review), "next_stage": "S4_VISUAL_PLANNING" if result.content.format != "text" else "S6_QA"}
 
 @router.get("/generation-runs/{run_id}")
 async def get_generation_run(run_id: str, request: Request, context: TenantContext = Depends(require_tenant_context)):
-    _, _, production = _repositories(request, context)
+    production = _production_repository(request, context)
     run = await production.get_run(context.tenant_id, run_id)
     if run is None: raise HTTPException(status_code=404, detail="GenerationRun not found")
     attempts = await production.list_agent_attempts(context.tenant_id, run_id)
@@ -115,7 +125,7 @@ async def get_generation_run(run_id: str, request: Request, context: TenantConte
 
 @router.get("/content-revisions/{revision_id}")
 async def get_content_revision(revision_id: str, request: Request, context: TenantContext = Depends(require_tenant_context)):
-    _, _, production = _repositories(request, context)
+    production = _production_repository(request, context)
     revision = await production.get_revision(context.tenant_id, revision_id)
     if revision is None: raise HTTPException(status_code=404, detail="ContentRevision not found")
     content = await production.get_artifact(context.tenant_id, revision.content_spec_ref)

@@ -27,25 +27,33 @@ export interface ReviewQueueResponse {
 
 export async function fetchRuntimeReadiness(): Promise<RuntimeReadiness> {
   try {
-    const res = await secureFetch(`${API}/health/ready`, { cache: "no-store" });
-    const payload = await res.json().catch(() => null);
-    if (res.ok) {
+    const res = await fetch("/api/runtime-readiness", { cache: "no-store", credentials: "include" });
+    if (!res.ok) throw new Error(`Readiness envelope failed: ${res.status}`);
+    const payload = await res.json();
+    if (!payload.reachable) {
+      return {
+        state: "UNREACHABLE",
+        label: "Runtime unavailable",
+        detail: payload.detail || "The backend readiness endpoint is unreachable.",
+      };
+    }
+    if (payload.ready) {
       return {
         state: "READY",
         label: "Runtime ready",
-        detail: payload?.status || "Required runtime dependencies are ready.",
+        detail: payload.status || "Required runtime dependencies are ready.",
       };
     }
     return {
       state: "DEGRADED",
       label: "Runtime attention",
-      detail: payload?.detail || payload?.status || `Readiness check returned ${res.status}.`,
+      detail: payload.detail || payload.status || `Readiness check returned ${payload.upstream_status ?? "unknown"}.`,
     };
   } catch (error) {
     return {
       state: "UNREACHABLE",
       label: "Runtime unavailable",
-      detail: error instanceof Error ? error.message : "The backend readiness endpoint is unreachable.",
+      detail: error instanceof Error ? error.message : "The runtime readiness envelope is unreachable.",
     };
   }
 }
