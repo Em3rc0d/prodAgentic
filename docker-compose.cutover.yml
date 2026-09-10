@@ -1,0 +1,59 @@
+services:
+  backend:
+    environment:
+      PRODAGENTIC_ENV: production
+      GEMINI_API_KEY: phase-h-cert-placeholder-key
+      PRODAGENTIC_ASSET_ROOT: /app/assets
+      PRODAGENTIC_DEPLOYMENT_KEY: phase-h-cert-installation
+
+      MK1_ENABLED: "true"
+      MK1_PROFILE_V2: "true"
+      MK1_BATCH_PLANNING: "true"
+      MK1_STRUCTURED_AGENT_CELL: "true"
+      MK1_VISUALSPEC: "true"
+      MK1_RENDER_WORKER: "true"
+      MK1_REVIEW_APPROVAL: "true"
+      MK1_MANUAL_EXPORT: "true"
+      MK1_REDIS_TRANSPORT: "true"
+      MK1_PUBLISH_WORKER: "true"
+      MK1_ANALYTICS_WORKER: "true"
+      MK1_PLANNER_LEARNING: "true"
+      MK1_PRODUCTION_CUTOVER: "true"
+
+      PRODAGENTIC_AUTH_ENABLED: "true"
+      PRODAGENTIC_ADMIN_USER: phase-h-admin
+      PRODAGENTIC_ADMIN_PASSWORD: phase-h-cert-password-2026
+      PRODAGENTIC_SESSION_SECRET: phase-h-cert-session-secret-0123456789abcdef0123456789abcdef
+      PRODAGENTIC_COOKIE_SECURE: "true"
+      PRODAGENTIC_COOKIE_SAMESITE: none
+      FRONTEND_URL: https://app.prodagentic.example
+      CORS_ALLOWED_ORIGINS: https://app.prodagentic.example
+
+      LINKEDIN_STATIC_FALLBACK_ENABLED: "false"
+      SCHEDULER_ENABLED: "true"
+      S10_PUBLISH_POLL_SECONDS: "0.25"
+      S11_ANALYTICS_POLL_SECONDS: "0.25"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      renderer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: https://api.prodagentic.example
+        NEXT_PUBLIC_MK1_SHELL: "true"
+        NEXT_PUBLIC_MK1_PROFILE_V2: "true"
+        NEXT_PUBLIC_MK1_BATCH_PLANNING: "true"
+        NEXT_PUBLIC_MK1_PUBLISHING: "true"
+        NEXT_PUBLIC_MK1_ANALYTICS: "true"
+        PRODAGENTIC_ALLOW_PRIVATE_HTTP_API: "false"
+    environment:
+      NEXT_PUBLIC_MK1_SHELL: "true"
+      NEXT_PUBLIC_MK1_PROFILE_V2: "true"
+      NEXT_PUBLIC_MK1_BATCH_PLANNING: "true"
+      NEXT_PUBLIC_MK1_PUBLISHING: "true"
+      NEXT_PUBLIC_MK1_ANALYTICS: "true"

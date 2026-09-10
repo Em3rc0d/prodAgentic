@@ -13,6 +13,9 @@ services:
         condition: service_healthy
 
   frontend:
+    build:
+      args:
+        NEXT_PUBLIC_MK1_PUBLISHING: "true"
     environment:
       NEXT_PUBLIC_MK1_SHELL: "true"
       NEXT_PUBLIC_MK1_PUBLISHING: "true"

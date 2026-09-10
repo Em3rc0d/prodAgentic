@@ -6,13 +6,21 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from core.assets import prepare_asset_root
 from core.container import ApplicationContainer
 from core.model_registry import validate_available_models, get_profile_readiness
 from core.scheduler import scheduler_loop
-from core.auth import AuthSettings, SessionManager, security_boundary, router as auth_router
+from core.auth import (
+    AuthSettings,
+    SessionManager,
+    PUBLIC_PATHS,
+    security_boundary,
+    router as auth_router,
+)
+from core.cutover import cutover_readiness, production_cutover_boundary
 from core.production import validate_production_environment
 from core.feature_flags import FeatureFlag, FeatureFlagRegistry
 from db.mongo import connect_db, close_db, database_ready, get_db
@@ -37,6 +45,7 @@ from routes.analytics_v1 import router as analytics_v1_router
 
 load_dotenv()
 validate_production_environment()
+PUBLIC_PATHS.add("/health/cutover")
 
 
 @asynccontextmanager
@@ -118,7 +127,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+# The cutover boundary retires only MK0 mutation/generation authority. Historical
+# reads remain mounted for rollback/audit. The normal auth/CSRF boundary still
+# wraps application requests and owns identity/tenant derivation.
+app.middleware("http")(production_cutover_boundary)
 app.middleware("http")(security_boundary)
 
 app.include_router(pipeline_router, prefix="/api")
@@ -149,6 +161,12 @@ async def root():
 @app.get("/health/live")
 def health_live():
     return {"status": "alive"}
+
+
+@app.get("/health/cutover")
+def health_cutover(request: Request):
+    payload, status_code = cutover_readiness(request)
+    return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.get("/health/ready")
