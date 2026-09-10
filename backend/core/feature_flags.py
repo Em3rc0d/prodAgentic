@@ -51,8 +51,15 @@ class FeatureFlagRegistry:
                 raise ValueError(f"{flag.value} must be a boolean value")
             values[flag] = raw in _TRUE
 
+        # The MK1 master gate is authoritative. If it is off, every MK1 child
+        # authority — including the production cutover claim — is off. This
+        # preserves the S0 fail-closed contract and makes rollback one-way safe.
+        if not values[FeatureFlag.MK1_ENABLED]:
+            return cls(values={flag: False for flag in FeatureFlag})
+
         # Production cutover is an authority claim, not a convenience flag.
-        # It fails closed if any certified V1 child authority is omitted.
+        # Once the master gate is on, it fails closed if any certified V1 child
+        # authority is omitted.
         if values[FeatureFlag.MK1_PRODUCTION_CUTOVER]:
             missing = [flag.value for flag in _CUTOVER_REQUIRED_FLAGS if not values[flag]]
             if missing:
@@ -61,9 +68,6 @@ class FeatureFlagRegistry:
                     f"missing: {', '.join(missing)}"
                 )
 
-        # A child authority cannot activate while the MK1 master gate is off.
-        if not values[FeatureFlag.MK1_ENABLED]:
-            values = {flag: False for flag in FeatureFlag}
         return cls(values=values)
 
     def enabled(self, flag: FeatureFlag) -> bool:
