@@ -32,6 +32,7 @@ from routes.quality import router as quality_router
 from routes.approval import router as approval_router
 from routes.manual_export import router as manual_export_router
 from routes.publishing_v2 import router as publishing_v2_router
+from routes.analytics_v1 import router as analytics_v1_router
 
 
 load_dotenv()
@@ -53,6 +54,7 @@ async def lifespan(app: FastAPI):
         container.preflight_task = asyncio.create_task(validate_available_models(container.client))
 
     publish_authority = app.state.feature_flags.enabled(FeatureFlag.MK1_PUBLISH_WORKER)
+    analytics_authority = app.state.feature_flags.enabled(FeatureFlag.MK1_ANALYTICS_WORKER)
     redis_transport = app.state.feature_flags.enabled(FeatureFlag.MK1_REDIS_TRANSPORT)
     if publish_authority:
         # Authority cutover: MK0 scheduler writes are disabled before S10 worker
@@ -69,9 +71,18 @@ async def lifespan(app: FastAPI):
         container.scheduler_task = asyncio.create_task(scheduler_loop())
         container.s10_publish_task = None
 
+    if analytics_authority and redis_transport and get_db() is not None:
+        from workers.analytics import s11_analytics_loop
+
+        container.s11_analytics_task = asyncio.create_task(s11_analytics_loop(get_db()))
+    else:
+        container.s11_analytics_task = None
+        if analytics_authority:
+            print("[WARN] MK1_ANALYTICS_WORKER enabled without Redis/Mongo readiness; analytics collection is delayed")
+
     yield
 
-    for task_name in ("preflight_task", "scheduler_task", "s10_publish_task"):
+    for task_name in ("preflight_task", "scheduler_task", "s10_publish_task", "s11_analytics_task"):
         task = getattr(container, task_name, None)
         if task and not task.done():
             task.cancel()
@@ -86,7 +97,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AI Multi-Agent Content Engine",
-    description="Agentic LinkedIn content pipeline with durable review, approval, scheduling and publication contracts",
+    description="Agentic LinkedIn content pipeline with durable review, approval, scheduling, publication and analytics contracts",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -126,6 +137,7 @@ app.include_router(quality_router, prefix="/api")
 app.include_router(approval_router, prefix="/api")
 app.include_router(manual_export_router, prefix="/api")
 app.include_router(publishing_v2_router, prefix="/api")
+app.include_router(analytics_v1_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 
 
