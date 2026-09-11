@@ -9,7 +9,7 @@ import type { ProfileV2 } from "@/lib/api";
 import { createBatchV1 } from "@/lib/mk1-batches";
 import type { BatchPlanningResponseV1, PlannedFormat, TargetWindowV1 } from "@/lib/mk1-batches";
 import { fetchRuntimeReadiness } from "@/lib/r2";
-import { produceContentToReview, type ProductionStage } from "@/lib/r2-production";
+import { produceContentToReview, resumeContentToReview, type ProductionStage } from "@/lib/r2-production";
 import styles from "./mk1-batch-create.module.css";
 
 type WindowPreset = "tomorrow" | "week";
@@ -80,30 +80,34 @@ export function Mk1BatchCreate() {
     setProgress((current) => ({ ...current, [contentId]: { ...current[contentId], ...value } }));
   }
 
-  async function produceBatch(planned: BatchPlanningResponseV1) {
-    const runtime = await fetchRuntimeReadiness();
-    if (runtime.state !== "READY") {
-      setProductionGate(`${runtime.label}: ${runtime.detail}`);
-      return;
-    }
-
-    setProductionGate(null);
+  async function produceBatch(planned: BatchPlanningResponseV1, resume = false) {
     setProducing(true);
-    const initial = Object.fromEntries(planned.content_items.map((item) => [item.content_id, { stage: "WAITING" as const }]));
-    setProgress(initial);
-    let completed = 0;
-
-    for (const item of planned.content_items) {
-      try {
-        const outcome = await produceContentToReview(item.content_id, (stage) => updateProgress(item.content_id, { stage }));
-        updateProgress(item.content_id, { stage: "REVIEWABLE", revisionId: outcome.revision_id });
-        completed += 1;
-      } catch (reason) {
-        updateProgress(item.content_id, { stage: "FAILED", error: reason instanceof Error ? reason.message : "Production failed" });
+    setError(null);
+    try {
+      const runtime = await fetchRuntimeReadiness();
+      if (runtime.state !== "READY") {
+        setProductionGate(`${runtime.label}: ${runtime.detail}`);
+        return;
       }
+      setProductionGate(null);
+      if (!resume) setProgress(Object.fromEntries(planned.content_items.map((item) => [item.content_id, { stage: "WAITING" as const }])));
+      let completed = 0;
+      for (const item of planned.content_items) {
+        try {
+          const produce = resume ? resumeContentToReview : produceContentToReview;
+          const outcome = await produce(item.content_id, (stage) => updateProgress(item.content_id, { stage, error: undefined }));
+          updateProgress(item.content_id, { stage: "REVIEWABLE", revisionId: outcome.revision_id, error: undefined });
+          completed += 1;
+        } catch (reason) {
+          updateProgress(item.content_id, { stage: "FAILED", error: reason instanceof Error ? reason.message : "Production failed" });
+        }
+      }
+      if (completed === planned.content_items.length && completed > 0) router.push("/review");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Production is unavailable. Retry this batch.");
+    } finally {
+      setProducing(false);
     }
-    setProducing(false);
-    if (completed === planned.content_items.length && completed > 0) router.push("/review");
   }
 
   async function generate() {
@@ -173,7 +177,7 @@ export function Mk1BatchCreate() {
           <div className={styles.metrics}><div><small>Memory</small><strong>{result.memory_count}</strong></div><div><small>Pool</small><strong>{result.batch.summary_counts.candidates_generated}</strong></div><div><small>Blocked</small><strong>{result.batch.summary_counts.candidates_blocked + result.batch.summary_counts.candidates_rewrite}</strong></div></div>
         </div>
         {result.batch.shortfall_reason && <div className={styles.shortfall}>{result.batch.shortfall_reason}</div>}
-        {productionGate && <div className={styles.productionGate}><div><strong>Production is paused truthfully.</strong><span>{productionGate}</span></div><button onClick={() => void produceBatch(result)} disabled={producing}>Retry production</button></div>}
+        {productionGate && <div className={styles.productionGate}><div><strong>Production is paused truthfully.</strong><span>{productionGate}</span></div><button onClick={() => void produceBatch(result, true)} disabled={producing}>Retry production</button></div>}
 
         <div className={styles.cards}>
           {result.content_items.map((item) => {
@@ -189,7 +193,7 @@ export function Mk1BatchCreate() {
           })}
         </div>
 
-        {(reviewableCount > 0 || failedCount > 0) && <div className={styles.productionSummary}><span>{reviewableCount} reviewable · {failedCount} need attention</span>{reviewableCount > 0 && <Link href="/review">Open Review →</Link>}</div>}
+        {(reviewableCount > 0 || failedCount > 0) && <div className={styles.productionSummary}><span>{reviewableCount} reviewable · {failedCount} need attention</span>{failedCount > 0 && <button disabled={producing || busy} onClick={() => void produceBatch(result, true)}>Retry unfinished work</button>}{reviewableCount > 0 && <Link href="/review">Open Review →</Link>}</div>}
         <details className={styles.evidence}><summary>Planning evidence</summary><div><span>trace {result.planning_trace.trace_id}</span><span>{result.planning_trace.evaluations.length} candidates evaluated</span><span>{result.planning_trace.evaluations.filter((item) => item.novelty.verdict === "BLOCKED").length} hard collisions</span></div></details>
       </section>}
     </main>

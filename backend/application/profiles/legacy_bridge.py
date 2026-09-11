@@ -165,7 +165,7 @@ async def migrate_legacy_profiles(db: Any, tenant_id: str) -> ProfileBridgeRepor
 
             version_result = await db["profile_versions"].update_one(
                 version_query,
-                {"$setOnInsert": version.model_dump()},
+                {"$setOnInsert": version.model_dump(mode="json")},
                 upsert=True,
             )
             await db["profiles"].update_one(

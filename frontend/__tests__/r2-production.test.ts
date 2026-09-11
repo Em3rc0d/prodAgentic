@@ -68,3 +68,32 @@ describe("R2 format-aware production orchestration", () => {
     await expect(produceContentToReview("content-text")).rejects.toThrow("visual.clipping.p0");
   });
 });
+
+describe("resuming durable production", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("retries QA on the bound rendered revision without rerunning agents or render", async () => {
+    const { resumeContentToReview } = await import("@/lib/r2-production");
+    mockedSecureFetch
+      .mockResolvedValueOnce(response({ content_item: { editorial_state: "PRODUCING", current_revision_id: "revision-carousel" } }))
+      .mockResolvedValueOnce(response({ revision: { content_id: "content-carousel", revision_id: "revision-carousel", status: "QA_PENDING", visual_spec_ref: "visual-1", asset_refs: ["asset-1"] }, content: { payload: { format: "carousel" } } }))
+      .mockResolvedValueOnce(response(qa("revision-carousel")));
+    const result = await resumeContentToReview("content-carousel");
+    expect(result.reviewable).toBe(true);
+    expect(mockedSecureFetch).toHaveBeenCalledTimes(3);
+    expect(String(mockedSecureFetch.mock.calls[2][0])).toContain("/revision-carousel/qa");
+  });
+
+  it("does not create another run while a production request has no bound revision", async () => {
+    const { resumeContentToReview } = await import("@/lib/r2-production");
+    mockedSecureFetch.mockResolvedValueOnce(response({ content_item: { editorial_state: "PRODUCING", current_revision_id: null } }));
+    await expect(resumeContentToReview("content-carousel")).rejects.toThrow("wait and retry");
+    expect(mockedSecureFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces failed HTTP production requests without continuing downstream", async () => {
+    mockedSecureFetch.mockResolvedValueOnce(response({ detail: "ProfileVersion digest mismatch" }, 409));
+    await expect(produceContentToReview("content-carousel")).rejects.toThrow("ProfileVersion digest mismatch");
+    expect(mockedSecureFetch).toHaveBeenCalledTimes(1);
+  });
+});

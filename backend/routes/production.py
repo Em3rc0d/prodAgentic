@@ -85,6 +85,14 @@ async def list_content_revisions(
         })
     return {"revisions": rows, "count": len(rows)}
 
+@router.get("/content-items/{content_id}")
+async def get_content_item(content_id: str, request: Request, context: TenantContext = Depends(require_tenant_context)):
+    planning, _, _ = _repositories(request, context)
+    item = await planning.get_content_item(content_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="ContentItem not found")
+    return {"content_item": _serialize(item)}
+
 @router.post("/content-items/{content_id}/produce-text", status_code=201)
 async def produce_text(content_id: str, body: ProduceTextRequest, request: Request, context: TenantContext = Depends(require_tenant_context)):
     planning, profiles, production = _repositories(request, context)
@@ -96,6 +104,12 @@ async def produce_text(content_id: str, body: ProduceTextRequest, request: Reque
     profile = await profiles.get_version(item.profile_id, item.profile_version)
     if profile is None: raise HTTPException(status_code=409, detail="Frozen ProfileVersion is unavailable")
     service = _build_service(request, production)
+    # Validate frozen inputs before claiming PLANNED -> PRODUCING. A corrupt
+    # snapshot must not consume the item's lifecycle transition.
+    try:
+        service.validate_authority(tenant_id=context.tenant_id, content_id=item.content_id, plan=persisted_plan.plan, plan_digest=persisted_plan.digest, profile=profile)
+    except ProductionAuthorityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     lifecycle = ContentProductionLifecycle(planning)
     try: await lifecycle.begin(item.content_id)
     except ContentProductionConflict as exc: raise HTTPException(status_code=409, detail=str(exc)) from exc

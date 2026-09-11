@@ -34,7 +34,11 @@ class ApplicationContainer:
 
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            logger.error("GEMINI_API_KEY not found in environment!")
+            from core.demo import demo_mode_enabled
+            if demo_mode_enabled():
+                logger.info("Local deterministic agents enabled; Gemini is optional in this mode.")
+            else:
+                logger.error("GEMINI_API_KEY not found in environment!")
             self.client = None
             self.google_adapter = None
         else:

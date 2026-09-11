@@ -59,15 +59,40 @@ export async function produceContentToReview(
     throw new Error("Structured production returned an incomplete revision contract.");
   }
 
-  if (format !== "text") {
-    onStage?.("VISUAL_SPEC");
-    await jsonOrThrow(
-      await secureFetch(`${API}/api/content-revisions/${encodeURIComponent(revisionId)}/visual-spec`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      }),
-      "VisualSpec planning failed",
-    );
+  return finishProduction(contentId, revisionId, format, onStage);
+}
+
+export async function resumeContentToReview(contentId: string, onStage?: (stage: ProductionStage) => void): Promise<ProductionOutcome> {
+  const payload = await jsonOrThrow(await secureFetch(`${API}/api/content-items/${encodeURIComponent(contentId)}`, { cache: "no-store" }), "Content state unavailable");
+  const item = payload?.content_item;
+  if (item?.editorial_state === "PLANNED") return produceContentToReview(contentId, onStage);
+  if (!item?.current_revision_id || !["PRODUCING", "READY_FOR_REVIEW", "APPROVED"].includes(item.editorial_state)) {
+    throw new Error(`Production cannot resume from ${item?.editorial_state || "unknown"}. If an agent request is still running, wait and retry; otherwise create a new batch.`);
+  }
+  const snapshot = await fetchProductionRevision(item.current_revision_id);
+  if (snapshot.revision.content_id !== contentId || snapshot.revision.status === "SUPERSEDED") {
+    throw new Error("The current revision changed. Reload its authority before continuing.");
+  }
+  return finishProduction(contentId, snapshot.revision.revision_id, snapshot.content.payload.format, onStage, snapshot.revision);
+}
+
+async function finishProduction(
+  contentId: string, revisionId: string, format: ProductionOutcome["format"],
+  onStage?: (stage: ProductionStage) => void,
+  revision?: ProductionRevisionSnapshot["revision"],
+): Promise<ProductionOutcome> {
+
+  if (format !== "text" && (!revision || revision.status === "DRAFT")) {
+    if (!revision?.visual_spec_ref) {
+      onStage?.("VISUAL_SPEC");
+      await jsonOrThrow(
+        await secureFetch(`${API}/api/content-revisions/${encodeURIComponent(revisionId)}/visual-spec`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }),
+        "VisualSpec planning failed",
+      );
+    }
 
     onStage?.("RENDER");
     await jsonOrThrow(

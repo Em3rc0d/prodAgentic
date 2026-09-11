@@ -23,3 +23,6 @@ fix_*.py
 rewrite_*.py
 update_*.py
 backend/scratch/
+
+# Local-production-like generated CA export
+/local-root.crt

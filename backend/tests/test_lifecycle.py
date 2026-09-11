@@ -1,34 +1,47 @@
 import pytest
-import os
 import asyncio
 from fastapi.testclient import TestClient
 from core.container import ApplicationContainer
 from main import app
 
-def test_missing_api_key_is_not_ready():
-    if "GEMINI_API_KEY" in os.environ:
-        del os.environ["GEMINI_API_KEY"]
-        
+@pytest.fixture(autouse=True)
+def lifecycle_environment(monkeypatch):
+    monkeypatch.setenv("APP_DEFAULT_LANGUAGE", "es")
+    monkeypatch.setenv("PRODAGENTIC_ENV", "development")
+    monkeypatch.setenv("PRODAGENTIC_AUTH_ENABLED", "false")
+
+def test_missing_api_key_is_not_ready(monkeypatch):
+    # Isolate provider readiness from database readiness; both are hard gates.
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("PRODAGENTIC_DEMO_MODE", "false")
+    monkeypatch.setattr("main.database_ready", lambda: True)
     with TestClient(app) as client:
         response = client.get("/health/ready")
         assert response.status_code == 503
         assert response.json()["message"] == "Missing API Key"
 
-def test_n8n_env_accepts_true_false_and_1_0():
-    from agents.router import RoutingPolicy
-    
-    os.environ["GEMINI_API_KEY"] = "fake"
+def test_database_failure_blocks_demo_readiness(monkeypatch):
+    monkeypatch.setenv("PRODAGENTIC_DEMO_MODE", "true")
+    monkeypatch.setattr("main.database_ready", lambda: False)
+    with TestClient(app) as client:
+        response = client.get("/health/ready")
+        assert response.status_code == 503
+        assert response.json()["message"] == "Database unavailable"
+
+def test_n8n_env_accepts_true_false_and_1_0(monkeypatch):
+    # Routing-policy parsing does not require constructing an external client.
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     container = ApplicationContainer()
     
-    os.environ["N8N_ALLOW_DIRECT_FALLBACK"] = "1"
+    monkeypatch.setenv("N8N_ALLOW_DIRECT_FALLBACK", "1")
     container.startup()
     assert container.router.policy.allow_direct_provider_fallback_after_n8n_failure is True
     
-    os.environ["N8N_ALLOW_DIRECT_FALLBACK"] = "true"
+    monkeypatch.setenv("N8N_ALLOW_DIRECT_FALLBACK", "true")
     container.startup()
     assert container.router.policy.allow_direct_provider_fallback_after_n8n_failure is True
     
-    os.environ["N8N_ALLOW_DIRECT_FALLBACK"] = "0"
+    monkeypatch.setenv("N8N_ALLOW_DIRECT_FALLBACK", "0")
     container.startup()
     assert container.router.policy.allow_direct_provider_fallback_after_n8n_failure is False
 

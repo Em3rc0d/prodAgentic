@@ -5,6 +5,7 @@ from pymongo.errors import DuplicateKeyError
 from domain.profiles.models import Profile, ProfileVersion
 from domain.tenants.models import TenantContext
 from infrastructure.mongo.scoped_repository import TenantScopedMongoRepository
+from infrastructure.mongo.planning import _hydrate_mongo_utc
 
 
 def _clean(document: dict | None) -> dict | None:
@@ -12,7 +13,7 @@ def _clean(document: dict | None) -> dict | None:
         return None
     value = dict(document)
     value.pop("_id", None)
-    return value
+    return _hydrate_mongo_utc(value)
 
 
 def _same_acceptance_intent(left: ProfileVersion, right: ProfileVersion) -> bool:
@@ -43,7 +44,9 @@ class MongoProfileRepository:
         return ProfileVersion.model_validate(document) if document else None
 
     async def create(self, profile: Profile, version: ProfileVersion) -> None:
-        await self.versions.insert_one(version.model_dump())
+        # Immutable hash inputs retain their exact timestamp precision and zone.
+        # BSON datetimes truncate microseconds and change the canonical digest.
+        await self.versions.insert_one(version.model_dump(mode="json"))
         try:
             await self.profiles.insert_one(profile.model_dump())
         except Exception:
@@ -76,7 +79,7 @@ class MongoProfileRepository:
 
     async def append_version(self, profile: Profile, version: ProfileVersion, expected_version: int) -> bool:
         try:
-            await self.versions.insert_one(version.model_dump())
+            await self.versions.insert_one(version.model_dump(mode="json"))
         except DuplicateKeyError:
             persisted = await self.get_version(profile.profile_id, version.version)
             if persisted is None:

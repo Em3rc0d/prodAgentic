@@ -1,0 +1,35 @@
+# Strict production settings on loopback with locally issued TLS certificates.
+# Use with docker-compose.yml, never as a public deployment configuration.
+services:
+  backend:
+    environment:
+      PRODAGENTIC_ENV: production
+      PRODAGENTIC_DEMO_MODE: "false"
+      PRODAGENTIC_AUTH_ENABLED: "true"
+      PRODAGENTIC_COOKIE_SECURE: "true"
+      PRODAGENTIC_COOKIE_SAMESITE: none
+      FRONTEND_URL: https://localhost:3000
+      CORS_ALLOWED_ORIGINS: https://localhost:3000
+    ports: !reset []
+  frontend:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: https://localhost:8000
+        PRODAGENTIC_ALLOW_PRIVATE_HTTP_API: "false"
+    ports: !reset []
+  local-tls:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./ops/local/Caddyfile:/etc/caddy/Caddyfile:ro
+      - prodagentic_local_tls:/data
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+volumes:
+  prodagentic_local_tls:

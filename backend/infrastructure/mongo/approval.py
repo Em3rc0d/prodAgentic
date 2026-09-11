@@ -96,7 +96,7 @@ class MongoApprovalRepository:
             approved_at=approved_at,
         )
         try:
-            await self.reservations.insert_one(candidate.model_dump())
+            await self.reservations.insert_one(candidate.model_dump(mode="json"))
             return candidate
         except DuplicateKeyError:
             raw = await self.reservations.find_one({"revision_id": revision_id})
@@ -114,7 +114,8 @@ class MongoApprovalRepository:
             if existing != bundle:
                 raise ValueError("immutable ApprovalBundleV2 identity collision")
             return
-        payload = bundle.model_dump()
+        # Preserve the exact signed approval timestamp across Mongo round trips.
+        payload = bundle.model_dump(mode="json")
         payload["metadata_digest"] = bundle.bundle_sha256
         try:
             await self.approvals.insert_one(payload)

@@ -27,7 +27,7 @@ export interface ReviewQueueResponse {
 
 export async function fetchRuntimeReadiness(): Promise<RuntimeReadiness> {
   try {
-    const res = await fetch("/api/runtime-readiness", { cache: "no-store", credentials: "include" });
+    const res = await fetch("/api/runtime-readiness", { signal: AbortSignal.timeout(15_000), cache: "no-store", credentials: "include" });
     if (!res.ok) throw new Error(`Readiness envelope failed: ${res.status}`);
     const payload = await res.json();
     if (!payload.reachable) {

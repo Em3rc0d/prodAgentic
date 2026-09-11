@@ -11,7 +11,7 @@ jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock("@/lib/api", () => ({ fetchProfilesV2: jest.fn() }));
 jest.mock("@/lib/mk1-batches", () => ({ createBatchV1: jest.fn() }));
 jest.mock("@/lib/r2", () => ({ fetchRuntimeReadiness: jest.fn() }));
-jest.mock("@/lib/r2-production", () => ({ produceContentToReview: jest.fn() }));
+jest.mock("@/lib/r2-production", () => ({ produceContentToReview: jest.fn(), resumeContentToReview: jest.fn() }));
 
 const mockedApi = api as jest.Mocked<typeof api>;
 const mockedBatches = batches as jest.Mocked<typeof batches>;
@@ -130,4 +130,18 @@ describe("MK1 R2 Create", () => {
     expect(mockPush).not.toHaveBeenCalled();
     expect(screen.getByText("QA retained this revision for attention")).toBeVisible();
   });
+});
+
+
+it("releases pending state and keeps the server error when production fails", async () => {
+  mockedApi.fetchProfilesV2.mockResolvedValue({ profiles: [profile], count: 1 });
+  mockedBatches.createBatchV1.mockResolvedValue(response(1));
+  mockedR2.fetchRuntimeReadiness.mockResolvedValue({ state: "READY", label: "Ready", detail: "" });
+  mockedProduction.produceContentToReview.mockRejectedValue(new Error("ProfileVersion digest mismatch"));
+  render(<Mk1BatchCreate />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Generate next batch" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
+  expect(await screen.findByText("ProfileVersion digest mismatch")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Generate next batch" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Retry unfinished work" })).toBeEnabled();
 });

@@ -2,6 +2,7 @@ services:
   backend:
     environment:
       PRODAGENTIC_ENV: production
+      PRODAGENTIC_DEMO_MODE: "false"
       GEMINI_API_KEY: phase-h-cert-placeholder-key
       PRODAGENTIC_ASSET_ROOT: /app/assets
       PRODAGENTIC_DEPLOYMENT_KEY: phase-h-cert-installation

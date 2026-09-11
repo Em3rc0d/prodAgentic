@@ -43,6 +43,15 @@ def _report_digest(report: QAReportV1) -> str:
     return canonical_qa_sha256(report.model_dump(mode="json", exclude={"digest"}))
 
 
+def _report_order(document: dict) -> tuple[datetime, str]:
+    # Older rows used BSON dates; new hash-bound rows preserve ISO timestamps.
+    # Mongo type ordering is not chronological across those two representations.
+    created_at = document["created_at"]
+    if isinstance(created_at, str):
+        created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    return _hydrate_utc(created_at), document["qa_report_id"]
+
+
 class MongoQualityRepository:
     """S6 durable QA authority with tenant scope and idempotent CAS transitions."""
 
@@ -65,7 +74,8 @@ class MongoQualityRepository:
             if existing != report:
                 raise ValueError("QAReportV1 identity collision")
             return
-        payload = report.model_dump()
+        # QA hashes include created_at; BSON dates would lose microseconds.
+        payload = report.model_dump(mode="json")
         payload["metadata_digest"] = report.digest
         await self.reports.insert_one(payload)
 
@@ -81,7 +91,8 @@ class MongoQualityRepository:
         documents = await self.reports.find_many(
             {"revision_id": revision_id}, sort=[("created_at", -1), ("qa_report_id", -1)]
         )
-        return self._validate_persisted_report(documents[0]) if documents else None
+        latest = max(documents, key=_report_order) if documents else None
+        return self._validate_persisted_report(latest)
 
     async def claim_text_revision_qa(
         self,
