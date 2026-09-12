@@ -4,80 +4,69 @@ Status: **IMPLEMENTATION STABILIZATION IN PROGRESS / NOT CERTIFIED**
 
 ## Authority
 
-Rejected predecessor:
-`0521ec157f02d0acd7a0a779a4f34c2c18678f1b`
-
-Historical certification PR:
-`#62` — **REJECTED / MUST NOT MERGE**
+Rejected candidates:
+- Candidate 1 `0521ec157f02d0acd7a0a779a4f34c2c18678f1b` — PR `#62` — **REJECTED / IMMUTABLE**.
+- Candidate 2 `32d8c3e875c3354426dde82d4b7a633a8214ec61` — PR `#63` — **REJECTED / IMMUTABLE**.
 
 Working branch:
-`mk1-r2-candidate-2-stabilization`
+`mk1-r2-candidate-3-render-integrity`
 
 The exact next release-candidate SHA is intentionally not embedded in this tracked file. Candidate identity is the immutable PR head plus exact-head workflow receipts. Any tracked mutation after candidate PR creation supersedes that candidate and requires a fresh candidate PR/SHA under the repository candidate law.
 
 ## Scope
 
-This stabilization is constrained to release defects demonstrated by Candidate 1 evidence. It does not reopen product architecture, S0-S12 ownership, Phase H cutover semantics, VisualSpec contracts, RendererPort ownership, Approval authority, or ManualExport authority.
+This stabilization is constrained to release defects demonstrated by exact-head certification evidence. It does not reopen product architecture, S0-S12 ownership, Phase H cutover semantics, VisualSpec contracts, RendererPort ownership, Approval authority, or ManualExport authority.
 
-Permitted changes:
-- test correction where the assertion contradicted the already-frozen persistence representation;
-- semantics-preserving adapter hardening at the existing internal RendererPort boundary;
-- release-certificate observability/evidence hardening;
-- regression tests for the demonstrated failure class.
+Permitted changes remain semantics-preserving fixes, regression coverage, observability/evidence hardening and persistence corrections required to preserve already-defined immutable hash inputs. Architecture changes are out of scope and would stop this build under `WORK_EXECUTION_DIRECTIVE.md`.
 
-Architecture changes are out of scope and would stop this build under `WORK_EXECUTION_DIRECTIVE.md`.
+## Candidate 1 result
 
-## Candidate 1 evidence incorporated
+Candidate 1 established that Docker/READY_DEMO, text production and VisualSpec production worked, while backend/Phase-H regression and the horizontal render path remained red. S5-CERT independently proved the real Chromium renderer image could generate owned PNG goldens.
 
-### Backend / Phase H
+The Phase-H/backend regression was traced to a test representation mismatch for `ProfileVersion.accepted_at`; storage intentionally preserves the canonical JSON timestamp to avoid BSON precision loss. Candidate 2 fixed that assertion without changing persistence authority.
 
-`PHASE-H Production Cutover Cert`:
-- rollback/config contract: PASS;
-- fresh production smoke: PASS;
-- Mongo/Redis restart readiness: PASS;
-- integrated authority regression: FAIL (`48 passed / 1 failed`).
+## Candidate 2 result
 
-Root cause confirmed from uploaded workflow evidence:
-`ProfileVersion.accepted_at` domain datetime was compared directly with its intentionally canonical ISO string in raw Mongo storage.
+Candidate 2 exact head `32d8c3e...` proved:
+- CI frontend PASS;
+- backend tests PASS;
+- production backend image build/smoke PASS;
+- Phase H authority/rollback contracts PASS;
+- Phase H fresh-production restart smoke PASS;
+- S3/S4/S6/S7/S8/S9/S10/S11/S12 PASS as observed in the matrix;
+- Docker Compose Local PASS;
+- R2 stack + `READY_DEMO` PASS;
+- backend-container → renderer direct health transport PASS.
 
-### Horizontal R2 journey
+The horizontal journey still failed during `Produce carousel approve and export`. Retained evidence recorded `S5_RENDER_INTEGRITY_FAILED`, not a RendererPort transport failure. This disproved ambient proxy interception as the root cause.
 
-`MK1-R2 Demo Journey Cert`:
-- isolated Compose startup: PASS;
-- `READY_DEMO`: PASS;
-- Profile creation: PASS;
-- batch planning: PASS;
-- text production: PASS;
-- VisualSpec production: PASS;
-- render HTTP boundary: FAIL `502`;
-- Review/Approval/ManualExport: NOT REACHED;
-- restart/persistence journey: NOT REACHED.
+Code/evidence reconciliation identified the remaining defect: S5 immutable `AssetV1` / `RenderResultV1` digests include timestamps, while their Mongo repository persisted Python datetimes through BSON, truncating non-zero microseconds. Existing S5 real-Mongo coverage used a zero-microsecond fixture and therefore did not exercise the invariant.
 
-S5-CERT separately proved the same renderer image can launch Chromium and generate real owned PNG goldens. Therefore the release defect is treated as an integration-boundary failure, not as permission to replace or redesign the certified renderer.
+## Candidate 3 stabilization changes
 
-## Stabilization changes
-
-1. Correct the real-Mongo crash-recovery assertion to compare the canonical persisted timestamp representation without changing persistence semantics.
-2. Make internal RendererPort HTTP independent of ambient proxy variables (`trust_env=False`).
-3. Preserve bounded renderer diagnostics in backend logs without exposing implementation details through the public route.
-4. Add a regression test proving proxy variables cannot intercept internal RendererPort traffic and retry semantics remain intact.
-5. Add an explicit backend-container → renderer health proof to R2-CERT.
-6. Preserve bounded `GenerationRun.failure` evidence plus Compose logs for failed horizontal journeys.
+1. Preserve `AssetV1` metadata with `model_dump(mode="json")` before Mongo insertion so `created_at` remains exactly the canonical digest input.
+2. Preserve `RenderResultV1` metadata with `model_dump(mode="json")`, including `started_at`, `completed_at` and nested asset timestamps.
+3. Keep Pydantic model validation as the typed read/rehydration boundary.
+4. Change the real-Mongo S5 fixture to a non-zero-microsecond timestamp.
+5. Assert raw Mongo timestamps equal each model's canonical JSON representation before restart/readback checks.
+6. Preserve historical mismatched rows fail-closed; no rejected-candidate history is rewritten.
+7. Retain Candidate 2 transport hardening and R2 evidence probes because they improve deterministic internal networking and observability without changing authority.
 
 ## Invariants preserved
 
-- exact ProfileVersion digest inputs remain immutable;
-- no historical ProfileVersion is rewritten during recovery;
-- retryable render failure remains retryable and does not falsely advance authority;
+- exact ProfileVersion, AssetV1 and RenderResultV1 digest inputs remain immutable;
+- no historical immutable record is silently rewritten during recovery;
+- retryable render failure remains retryable and cannot falsely advance authority;
+- digest mismatch remains terminal/fail-closed;
 - renderer remains isolated behind `RendererPort`;
 - renderer output remains product-owned through `AssetStore` and SHA-256 lineage;
-- S5 still stops before QA/Review/Approval authority;
-- user-facing renderer failures remain fail-closed;
+- S5 still stops before S6/S7 authority;
+- public renderer failures remain safe and fail-closed;
 - no deployment/provider success is inferred from repository tests.
 
-## Required evidence before candidate freeze
+## Required evidence before merge
 
-The next exact SHA must pass all repository-required gates plus the R2 horizontal gate. At minimum:
+The next frozen exact SHA must pass all repository-required gates plus the R2 horizontal gate:
 
 ```text
 CI backend-test                         PASS
@@ -94,8 +83,8 @@ R2 approval/assets persistence          PASS
 tracked checkout clean                  PASS
 ```
 
-Phase H remains governed by its stricter `13/13 pre-merge + 13/13 post-merge` rule. The R2 horizontal gate is additional release evidence, not a substitute for those certificates.
+No skipped downstream step counts as evidence. Phase H remains governed by its stricter `13/13 pre-merge + 13/13 post-merge` law. The R2 horizontal gate is additional release evidence, not a substitute.
 
 ## Merge rule
 
-No merge is authorized until one immutable PR head passes the full required matrix. Merge must use `expected_head_sha`. Post-merge certification must run on the resulting `main` SHA before MK1-R2 may be declared `FULL FUNCTIONAL / CERTIFIED / CLOSED`.
+No merge is authorized until one immutable PR head passes the complete required matrix. Merge must use `expected_head_sha`. Post-merge certification must run on the resulting exact `main` SHA before MK1-R2 may be declared `FULL FUNCTIONAL / CERTIFIED / CLOSED`.
