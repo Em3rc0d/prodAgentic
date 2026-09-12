@@ -1,22 +1,25 @@
 # MK1-R2 — Release Candidate Gate
 
-Status: **PRE-CANDIDATE / FREEZE PENDING**
+Status: **RUNTIME RELEASE CERTIFIED / FINAL DOCUMENTATION SEAL**
 
-## Identity law
+> This file is the retrospective closure of the candidate process. Its closure claim is effective only if the documentation-seal exact head and the resulting exact `main` SHA both reproduce the required green matrix. A failed seal gate reopens the seal; it does not rewrite Candidate 1 or Candidate 2 history.
 
-The release-candidate SHA is not hard-coded in this tracked document. The authoritative candidate identity is the immutable PR head verified by workflow receipts.
+## Candidate history
 
 Rejected immutable candidates:
-- Candidate 1 `0521ec157f02d0acd7a0a779a4f34c2c18678f1b` — PR `#62`.
-- Candidate 2 `32d8c3e875c3354426dde82d4b7a633a8214ec61` — PR `#63`.
+- Candidate 1 `0521ec157f02d0acd7a0a779a4f34c2c18678f1b` — PR `#62` — **REJECTED**.
+- Candidate 2 `32d8c3e875c3354426dde82d4b7a633a8214ec61` — PR `#63` — **REJECTED**.
 
-Candidate 3 is prepared on `mk1-r2-candidate-3-render-integrity`. Any product, test, workflow or tracked documentation mutation after opening its certification PR supersedes that candidate and requires a new SHA/PR. No failed SHA may later be relabeled certified.
+Accepted runtime candidate:
+- Candidate 3 `a653ed9f838e09c6cbfbc7bce39826482c94901a` — PR `#64` — **CERTIFIED / MERGED**.
 
-## Freeze gate
+Certified operational merge:
+- `main@d205494cb803e97fcad9e9ce5f72ccb1a70b2ce9` — **POST-MERGE CERTIFIED**.
 
-Candidate freeze is fail-closed. Require the exact PR head to pass:
+## Candidate 3 freeze gate result
 
-1. repository `CI`, including backend image build/smoke and UI browser certification;
+Candidate 3 passed the exact-head release matrix before merge:
+1. repository `CI`, including frontend, backend image build/smoke and UI browser certification;
 2. `Docker Compose Local`;
 3. S3 through S12 certification workflows;
 4. `PHASE-H Production Cutover Cert`, both jobs;
@@ -32,12 +35,30 @@ Candidate freeze is fail-closed. Require the exact PR head to pass:
    - post-restart exact approval/render survival;
    - clean tracked checkout.
 
-No skipped downstream step counts as evidence.
+No downstream step was counted when skipped.
 
-## Merge / post-merge gate
+## Merge and post-merge result
 
-Merge only with `expected_head_sha` bound to the frozen candidate. Phase H requires its complete 13/13 matrix again on the exact merge SHA. R2 horizontal certification must also pass on `main` before the release is declared closed.
+PR `#64` was merged using the exact accepted head `a653ed9f838e09c6cbfbc7bce39826482c94901a`.
+
+Resulting merge SHA:
+`d205494cb803e97fcad9e9ce5f72ccb1a70b2ce9`.
+
+On that exact `main` SHA:
+- **14/14 push workflows = success**;
+- **17/17 check-runs = success**;
+- Phase H both jobs = success;
+- CI frontend/backend/UI browser = success;
+- S3 through S12 = success;
+- Docker Compose Local = success;
+- R2 full horizontal journey + backend restart + persisted authority = success.
+
+Therefore there is no open runtime release candidate for MK1-R2.
+
+## Final documentation seal law
+
+This documentation-only seal must itself pass the same exact-head matrix and, after exact-head merge, the resulting exact-main matrix. It changes no runtime, test, workflow, contract or architecture behavior. If either seal matrix fails, documentation closure is not effective and the seal must be corrected through a fresh candidate SHA/PR.
 
 ## External boundaries
 
-Repository certification does not claim a real LinkedIn publication, live provider analytics read, or hosting deployment unless separately authorized and evidenced. ManualExport remains the provider-independent certified distribution path.
+Repository/local-release certification does not claim a real LinkedIn publication, live provider analytics read, or hosting deployment unless separately authorized and evidenced. ManualExport remains the provider-independent certified distribution path.

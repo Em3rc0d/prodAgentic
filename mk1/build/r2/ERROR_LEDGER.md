@@ -1,6 +1,6 @@
 # MK1-R2 — Release Stabilization Error / Near-Miss Ledger
 
-Status: **OPEN / APPEND-ONLY DURING STABILIZATION**
+Status: **CLOSED / HISTORICAL / APPEND-ONLY**
 
 Policy: material CI failures, false greens, superseded candidates, root-cause evidence and recovery decisions are retained. A rejected SHA is never rewritten into a certified candidate.
 
@@ -38,7 +38,7 @@ ProfileVersion hash inputs preserve exact timestamp precision. BSON datetime con
 Correction:
 Compare `recovered.version.model_dump(mode="json")["accepted_at"]` to the raw persisted ISO value. Production persistence semantics are unchanged.
 
-Status: REPAIRED IN STABILIZATION / REQUIRES FRESH CI + PHASE-H PROOF.
+Status: REPAIRED / VERIFIED BY FRESH CI + PHASE-H.
 
 ## R2-E003 — Horizontal RendererPort failure was opaque at the integration boundary
 
@@ -46,7 +46,7 @@ Observed evidence:
 S5-CERT independently built the real Playwright renderer and generated real Chromium golden PNGs successfully, while the R2 Compose journey returned HTTP `502`. Candidate 1 renderer logs contained only the startup line and the backend adapter intentionally collapsed renderer/transport failures to a safe public error.
 
 Inference boundary:
-The evidence proves this was not a generic inability to package or launch Chromium. Candidate 1 evidence is insufficient to distinguish an internal transport/proxy failure from a renderer response/contract failure. No stronger root cause is claimed.
+The evidence proved this was not a generic inability to package or launch Chromium. Candidate 1 evidence alone was insufficient to distinguish an internal transport/proxy failure from a renderer response/contract failure.
 
 Corrections in stabilization:
 - internal Backend→Renderer HTTP uses `trust_env=False`, preventing ambient `HTTP_PROXY` / `HTTPS_PROXY` settings from hijacking the internal Docker/service-name boundary;
@@ -55,7 +55,7 @@ Corrections in stabilization:
 - R2-CERT explicitly probes Backend→Renderer health from inside the backend container before the browser journey;
 - R2-CERT preserves bounded `GenerationRun.failure` evidence and full Compose logs on every run.
 
-Status: HARDENED / ROOT CAUSE MUST BE CONFIRMED OR DISPROVED BY FRESH CANDIDATE EVIDENCE.
+Status: HARDENED / TRANSPORT HYPOTHESIS DISPROVED AS ROOT CAUSE BY CANDIDATE 2.
 
 ## R2-E004 — A green slice certificate is not sufficient release evidence
 
@@ -66,7 +66,7 @@ Correction:
 R2 release certification adds a horizontal exact-SHA gate:
 `Profile → Batch → Text → VisualSpec → Render → QA → Review → Approval → ManualExport → backend restart → persisted approval/assets`.
 
-Status: REQUIRED RELEASE GATE.
+Status: REQUIRED RELEASE GATE / VERIFIED GREEN ON ACCEPTED CANDIDATE AND EXACT MAIN.
 
 ## R2-E005 — Candidate 2 isolated the real S5 Mongo render-integrity defect
 
@@ -78,7 +78,7 @@ Observed evidence:
 - Phase H both jobs passed, including the previously failing integrated authority regression and the fresh production restart smoke.
 - repository backend tests, production backend image build/smoke, frontend tests/build, Docker Compose Local and the observed S3/S4/S6/S7/S8/S9/S10/S11/S12 gates passed.
 - R2 `READY_DEMO` passed.
-- the new backend-container → renderer `/health` proof passed with `DIRECT_INTERNAL_NO_ENV_PROXY`.
+- backend-container → renderer `/health` proof passed with `DIRECT_INTERNAL_NO_ENV_PROXY`.
 - the horizontal `Produce carousel approve and export` step still failed.
 - retained `generation-failures.json` recorded terminal `S5_RENDER_INTEGRITY_FAILED` at `RENDERING`, not a retryable RendererPort failure.
 - renderer logs contained normal startup and no renderer execution error associated with the failed journey.
@@ -92,4 +92,47 @@ Correction:
 - change the real-Mongo S5 gate to use a non-zero-microsecond timestamp and assert the raw stored timestamp equals the model's canonical JSON representation;
 - do not rewrite historical rows from rejected candidates; malformed/digest-mismatched historical render metadata continues to fail closed.
 
-Status: REPAIRED ON CANDIDATE-3 STABILIZATION BRANCH / REQUIRES FRESH FULL MATRIX.
+Status: REPAIRED BY CANDIDATE 3 / VERIFIED BY FULL MATRIX.
+
+## R2-E006 — Candidate 3 closed the release and exact-main post-certification
+
+Accepted candidate:
+`a653ed9f838e09c6cbfbc7bce39826482c94901a`
+
+PR:
+`#64`
+
+Observed pre-merge evidence:
+- complete Candidate 3 workflow matrix completed green on the immutable PR head;
+- S5 real-Mongo regression with non-zero microseconds passed;
+- real Playwright/Chromium renderer and owned PNG verification passed;
+- R2 full horizontal journey passed through Render, QA, Review, Approval and ManualExport;
+- backend restart passed over persisted Mongo/assets;
+- post-restart Approval and carousel recovery passed;
+- tracked checkout remained clean;
+- Phase H both jobs passed;
+- UI desktop/mobile passed.
+
+Merge control:
+PR `#64` was merged using `expected_head_sha=a653ed9f838e09c6cbfbc7bce39826482c94901a`.
+
+Resulting exact `main` SHA:
+`d205494cb803e97fcad9e9ce5f72ccb1a70b2ce9`.
+
+Observed post-merge evidence on that exact SHA:
+- **14/14 push workflows completed with `success`**;
+- **17/17 check-runs completed with `success`**;
+- CI run `34707326116` passed frontend, backend and UI-01 desktop/mobile;
+- R2 Demo Journey run `34707326123` passed the complete user-visible + restart/persistence certificate;
+- Phase H both post-merge jobs passed;
+- Docker Compose Local passed;
+- S3 through S12 passed;
+- no required workflow remained failed, pending or skipped-as-evidence.
+
+Decision:
+The demonstrated Candidate 1/2 release defects are closed without rewriting rejected history. Within the certified repository/local-release boundary, MK1-R2 reached `FULL FUNCTIONAL / CERTIFIED / CLOSED` on the evidence above.
+
+External-boundary note:
+This does not claim a real LinkedIn publication, live provider analytics read or hosting deployment. ManualExport is the provider-independent certified distribution path.
+
+Status: RELEASE DEFECT LEDGER CLOSED. FUTURE DEFECTS REQUIRE NEW ENTRIES; HISTORICAL ENTRIES REMAIN IMMUTABLE.
