@@ -70,7 +70,10 @@ class MongoRenderingRepository:
             if existing != asset:
                 raise ValueError("AssetV1 identity collision")
             return
-        payload = asset.model_dump()
+        # AssetV1.created_at participates in its immutable metadata digest. BSON
+        # datetime truncates microseconds, so persist the canonical JSON timestamp
+        # exactly and let Pydantic rehydrate it on authoritative reads.
+        payload = asset.model_dump(mode="json")
         payload["metadata_digest"] = digest
         await self.assets.insert_one(payload)
 
@@ -93,7 +96,9 @@ class MongoRenderingRepository:
             if existing != result:
                 raise ValueError("RenderResultV1 identity collision")
             return
-        payload = result.model_dump()
+        # RenderResult timestamps and nested AssetV1 timestamps are digest inputs.
+        # Preserve their exact canonical representation instead of BSON millis.
+        payload = result.model_dump(mode="json")
         payload["result_digest"] = digest
         await self.render_results.insert_one(payload)
 
