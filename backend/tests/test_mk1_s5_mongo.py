@@ -18,7 +18,9 @@ from infrastructure.mongo.production import MongoProductionRepository
 from infrastructure.mongo.rendering import MongoRenderingRepository
 
 
-NOW = datetime(2026, 9, 8, 20, 20, tzinfo=timezone.utc)
+# Non-zero microseconds are intentional: immutable S5 digest inputs must survive
+# Mongo persistence without BSON datetime truncation changing their hash identity.
+NOW = datetime(2026, 9, 8, 20, 20, 0, 123456, tzinfo=timezone.utc)
 
 
 def make_run_and_revision():
@@ -87,6 +89,13 @@ async def test_real_mongodb_s5_render_lineage_survives_restart_and_is_tenant_sco
             started_at=NOW, completed_at=NOW,
         )
         await rendering.save_render_result(result)
+
+        raw_asset = await db["assets"].find_one({"tenant_id": context.tenant_id, "asset_id": asset.asset_id})
+        raw_result = await db["render_results"].find_one({"tenant_id": context.tenant_id, "render_id": result.render_id})
+        assert raw_asset["created_at"] == asset.model_dump(mode="json")["created_at"]
+        assert raw_result["started_at"] == result.model_dump(mode="json")["started_at"]
+        assert raw_result["completed_at"] == result.model_dump(mode="json")["completed_at"]
+
         bound = await rendering.bind_revision_assets(
             revision_id=revision.revision_id, visual_spec_ref=run.visual_spec_ref,
             visual_spec_digest=revision.visual_spec_digest, expected_asset_refs=(), asset_refs=(asset.asset_id,),
