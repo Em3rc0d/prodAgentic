@@ -48,6 +48,27 @@ jobs:
           assert payload['status']=='READY_DEMO', payload
           PY
 
+      - name: Prove backend-to-renderer internal transport
+        run: |
+          docker compose exec -T backend python - <<'PY' | tee r2-demo-evidence/renderer-transport.json
+          import json
+          import os
+          import httpx
+
+          target=os.environ['PRODAGENTIC_RENDERER_URL'].rstrip('/') + '/health'
+          with httpx.Client(timeout=5, trust_env=False) as client:
+              response=client.get(target)
+          response.raise_for_status()
+          payload=response.json()
+          assert payload['status']=='ok', payload
+          print(json.dumps({
+              'status': payload['status'],
+              'renderer_name': payload['renderer_name'],
+              'renderer_version': payload['renderer_version'],
+              'transport': 'DIRECT_INTERNAL_NO_ENV_PROXY',
+          }, sort_keys=True))
+          PY
+
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -90,6 +111,17 @@ jobs:
             const a=db.approvals.findOne({revision_id:r.revision_id},{_id:0,approval_id:1,revision_id:1,bundle_sha256:1});
             print(JSON.stringify({revision:r,approval:a}));
           ' | tee r2-demo-evidence/persistence.json
+
+      - name: Capture generation failure diagnostics
+        if: always()
+        run: |
+          docker compose exec -T mongo mongosh --quiet prodagentic_local --eval '
+            const rows=db.generation_runs.find(
+              {failure:{$ne:null}},
+              {_id:0,run_id:1,state:1,visual_spec_ref:1,"failure.code":1,"failure.stage":1,"failure.retryable":1,"failure.message":1}
+            ).sort({_id:-1}).limit(10).toArray();
+            print(JSON.stringify(rows));
+          ' > r2-demo-evidence/generation-failures.json || true
 
       - name: Verify tracked checkout remained clean
         run: |
