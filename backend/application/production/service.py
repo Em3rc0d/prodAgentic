@@ -103,7 +103,7 @@ class StructuredAgentCellService:
         now: datetime | None = None,
     ) -> TextCellResult:
         clock = now or utc_now()
-        self._verify_authority(
+        self.validate_authority(
             tenant_id=tenant_id,
             content_id=content_id,
             plan=plan,
@@ -423,7 +423,7 @@ class StructuredAgentCellService:
             review=final_review,
         )
 
-    def _verify_authority(
+    def validate_authority(
         self,
         *,
         tenant_id: str,

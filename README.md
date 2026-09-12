@@ -1,5 +1,7 @@
 # prodAgentic
 
+Local candidate start and configuration: [LOCAL-RELEASE.md](LOCAL-RELEASE.md).
+
 prodAgentic is a governed agentic content-production system. It plans, produces, validates, reviews, stores, schedules, publishes, and learns from content for multiple editorial identities while keeping the operator in control.
 
 ## Current product state

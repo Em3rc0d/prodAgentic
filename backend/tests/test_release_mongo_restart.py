@@ -252,7 +252,10 @@ async def test_real_mongodb_profile_update_recovers_interrupted_version_pointer(
         pointer_after_restart = await MongoProfileRepository(db, context).get_profile(created.profile.profile_id)
         assert recovered.version.version == 2
         assert recovered.version.digest == stranded["digest"]
-        assert recovered.version.accepted_at == stranded["accepted_at"]
+        # Immutable ProfileVersion timestamps are stored as ISO strings to preserve
+        # microsecond precision across BSON. The domain model rehydrates that same
+        # instant as datetime, so compare their canonical persisted representation.
+        assert recovered.version.model_dump(mode="json")["accepted_at"] == stranded["accepted_at"]
         assert pointer_after_restart.current_version == 2
         assert pointer_after_restart.name == "Recovered Profile"
         assert await db["profile_versions"].count_documents({

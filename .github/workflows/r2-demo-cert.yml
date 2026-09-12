@@ -1,0 +1,147 @@
+name: MK1-R2 Demo Journey Cert
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: mk1-r2-demo-cert-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  r2-demo-cert:
+    name: R2-DEMO-CERT horizontal journey
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEMO_MODE: "true"
+      PRODAGENTIC_ALLOW_PRIVATE_HTTP_API: "false"
+      R2_WEB_URL: http://127.0.0.1:3000
+      R2_API_URL: http://127.0.0.1:8000
+      R2_STATE_FILE: r2-journey-state.json
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Record exact R2 candidate identity
+        run: |
+          mkdir -p r2-demo-evidence
+          git rev-parse HEAD | tee r2-demo-evidence/checkout-sha.txt
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Start isolated R2 test stack
+        run: docker compose up --build -d --wait --wait-timeout 300
+
+      - name: Prove truthful demo readiness
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:8000/health/ready | tee r2-demo-evidence/readiness.json
+          python - <<'PY'
+          import json
+          payload=json.load(open('r2-demo-evidence/readiness.json'))
+          assert payload['status']=='READY_DEMO', payload
+          PY
+
+      - name: Prove backend-to-renderer internal transport
+        run: |
+          docker compose exec -T backend python - <<'PY' | tee r2-demo-evidence/renderer-transport.json
+          import json
+          import os
+          import httpx
+
+          target=os.environ['PRODAGENTIC_RENDERER_URL'].rstrip('/') + '/health'
+          with httpx.Client(timeout=5, trust_env=False) as client:
+              response=client.get(target)
+          response.raise_for_status()
+          payload=response.json()
+          assert payload['status']=='ok', payload
+          print(json.dumps({
+              'status': payload['status'],
+              'renderer_name': payload['renderer_name'],
+              'renderer_version': payload['renderer_version'],
+              'transport': 'DIRECT_INTERNAL_NO_ENV_PROXY',
+          }, sort_keys=True))
+          PY
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install browser certificate dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Produce carousel approve and export
+        working-directory: frontend
+        run: npx playwright test e2e/r2-demo-journey.spec.ts --grep "produces a real carousel" --reporter=line
+
+      - name: Preserve journey state
+        run: cp frontend/r2-journey-state.json r2-demo-evidence/r2-journey-state.json
+
+      - name: Restart backend process over persisted Mongo and assets
+        run: |
+          docker compose restart backend
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8000/health/ready | grep -q READY_DEMO; then exit 0; fi
+            sleep 2
+          done
+          docker compose logs backend
+          exit 1
+
+      - name: Certify approval and carousel survive restart
+        working-directory: frontend
+        run: npx playwright test e2e/r2-demo-journey.spec.ts --grep "survives backend restart" --reporter=line
+
+      - name: Capture authoritative persistence evidence
+        run: |
+          cp frontend/r2-demo-approved.png r2-demo-evidence/ 2>/dev/null || true
+          cp frontend/r2-demo-after-restart.png r2-demo-evidence/ 2>/dev/null || true
+          docker compose exec -T mongo mongosh --quiet prodagentic_local --eval '
+            const r=db.content_revisions.findOne({status:"REVIEWABLE"},{_id:0,revision_id:1,status:1,asset_refs:1,qa_report_id:1});
+            const a=db.approvals.findOne({revision_id:r.revision_id},{_id:0,approval_id:1,revision_id:1,bundle_sha256:1});
+            print(JSON.stringify({revision:r,approval:a}));
+          ' | tee r2-demo-evidence/persistence.json
+
+      - name: Capture generation failure diagnostics
+        if: always()
+        run: |
+          docker compose exec -T mongo mongosh --quiet prodagentic_local --eval '
+            const rows=db.generation_runs.find(
+              {failure:{$ne:null}},
+              {_id:0,run_id:1,state:1,visual_spec_ref:1,"failure.code":1,"failure.stage":1,"failure.retryable":1,"failure.safe_message":1}
+            ).sort({_id:-1}).limit(10).toArray();
+            print(JSON.stringify(rows));
+          ' > r2-demo-evidence/generation-failures.json || true
+
+      - name: Verify tracked checkout remained clean
+        run: |
+          rm -f frontend/r2-journey-state.json frontend/r2-demo-approved.png frontend/r2-demo-after-restart.png
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Capture stack logs
+        if: always()
+        run: docker compose logs --no-color > r2-demo-evidence/compose.log || true
+
+      - name: Upload R2 demo certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mk1-r2-demo-journey-evidence
+          path: r2-demo-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Destroy isolated stack
+        if: always()
+        run: docker compose down -v --remove-orphans

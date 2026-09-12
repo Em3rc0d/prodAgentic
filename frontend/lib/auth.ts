@@ -10,7 +10,7 @@ export interface AuthSession {
 let csrfToken: string | null = null;
 
 export async function loadSession(): Promise<AuthSession> {
-  const response = await fetch(`${API}/api/auth/session`, { credentials: "include", cache: "no-store" });
+  const response = await fetch(`${API}/api/auth/session`, { credentials: "include", cache: "no-store", signal: AbortSignal.timeout(15_000) });
   if (!response.ok) throw new Error(`Session unavailable: ${response.status}`);
   const session = await response.json() as AuthSession;
   csrfToken = session.csrf_token ?? null;
@@ -21,6 +21,7 @@ export async function login(username: string, password: string): Promise<AuthSes
   const response = await fetch(`${API}/api/auth/login`, {
     method: "POST",
     credentials: "include",
+    signal: AbortSignal.timeout(15_000),
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
@@ -37,7 +38,9 @@ export async function secureFetch(input: RequestInfo | URL, init: RequestInit = 
     if (!csrfToken) await loadSession();
     if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
   }
-  const response = await fetch(input, { ...init, headers, credentials: "include" });
+  // Abort also bounds response-body reads, so failed production/export requests
+  // settle and their callers can release pending UI state.
+  const response = await fetch(input, { ...init, signal: init.signal ?? AbortSignal.timeout(180_000), headers, credentials: "include" });
   if (response.status === 401 && typeof window !== "undefined") {
     window.dispatchEvent(new Event("prodagentic:unauthorized"));
   }

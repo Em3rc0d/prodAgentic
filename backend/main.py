@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from core.assets import prepare_asset_root
 from core.container import ApplicationContainer
+from core.demo import demo_mode_enabled
 from core.model_registry import validate_available_models, get_profile_readiness
 from core.scheduler import scheduler_loop
 from core.auth import (
@@ -59,15 +60,13 @@ async def lifespan(app: FastAPI):
     container.startup()
     app.state.container = container
 
-    if container.client:
+    if container.client and not demo_mode_enabled():
         container.preflight_task = asyncio.create_task(validate_available_models(container.client))
 
     publish_authority = app.state.feature_flags.enabled(FeatureFlag.MK1_PUBLISH_WORKER)
     analytics_authority = app.state.feature_flags.enabled(FeatureFlag.MK1_ANALYTICS_WORKER)
     redis_transport = app.state.feature_flags.enabled(FeatureFlag.MK1_REDIS_TRANSPORT)
     if publish_authority:
-        # Authority cutover: MK0 scheduler writes are disabled before S10 worker
-        # publication can start. A partially configured S10 remains safely delayed.
         container.scheduler_task = None
         if redis_transport and get_db() is not None:
             from workers.publishing import s10_publish_loop
@@ -127,9 +126,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# The cutover boundary retires only MK0 mutation/generation authority. Historical
-# reads remain mounted for rollback/audit. The normal auth/CSRF boundary still
-# wraps application requests and owns identity/tenant derivation.
 app.middleware("http")(production_cutover_boundary)
 app.middleware("http")(security_boundary)
 
@@ -172,9 +168,9 @@ def health_cutover(request: Request):
 @app.get("/health/ready")
 def health_ready(request: Request):
     container = getattr(request.app.state, "container", None)
-    if not container or not container.client:
+    if not container:
         from fastapi import Response
-        return Response(content=json.dumps({"status": "NOT_READY", "message": "Missing API Key"}), media_type="application/json", status_code=503)
+        return Response(content=json.dumps({"status": "NOT_READY", "message": "Application container unavailable"}), media_type="application/json", status_code=503)
 
     if getattr(container, "config_error", None):
         from fastapi import Response
@@ -183,6 +179,16 @@ def health_ready(request: Request):
     if not database_ready():
         from fastapi import Response
         return Response(content=json.dumps({"status": "NOT_READY", "message": "Database unavailable"}), media_type="application/json", status_code=503)
+
+    if demo_mode_enabled():
+        return {
+            "status": "READY_DEMO",
+            "message": "Deterministic local demo agents enabled; Mongo, rendering, QA, review and approval remain real.",
+        }
+
+    if not container.client:
+        from fastapi import Response
+        return Response(content=json.dumps({"status": "NOT_READY", "message": "Missing API Key"}), media_type="application/json", status_code=503)
 
     status = get_profile_readiness()
     if status in ("READY", "READY_WITH_STALE_CACHE"):

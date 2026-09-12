@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
 
 import httpx
@@ -10,6 +11,7 @@ from domain.rendering.ports import RenderedPageBytes, RendererPortError
 
 
 _MAX_PAGE_BYTES = 16 * 1024 * 1024
+_LOG = logging.getLogger(__name__)
 
 
 class ChromiumRendererAdapter:
@@ -31,27 +33,60 @@ class ChromiumRendererAdapter:
         last_error: Exception | None = None
         for attempt in range(1, 3):
             try:
-                async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                # RendererPort is an internal service boundary. Ambient HTTP(S)_PROXY
+                # configuration must not be allowed to hijack Docker/service-name
+                # traffic or turn a healthy local renderer into an external 502.
+                async with httpx.AsyncClient(timeout=self.timeout_seconds, trust_env=False) as client:
                     response = await client.post(
                         f"{self.base_url}/render",
                         json=request.model_dump(mode="json"),
                         headers={"content-type": "application/json"},
                     )
                 if response.status_code >= 500:
+                    _LOG.warning(
+                        "Chromium renderer server failure status=%s attempt=%s render_id=%s",
+                        response.status_code,
+                        attempt,
+                        request.render_id,
+                    )
                     raise RendererPortError("Chromium renderer unavailable", retryable=True)
                 if response.status_code != 200:
+                    _LOG.error(
+                        "Chromium renderer contract rejection status=%s render_id=%s detail=%s",
+                        response.status_code,
+                        request.render_id,
+                        _safe_renderer_detail(response),
+                    )
                     raise RendererPortError("Chromium renderer rejected the render contract", retryable=False)
                 payload = response.json()
                 return self._decode_response(request, payload)
             except RendererPortError as exc:
                 last_error = exc
+                _LOG.warning(
+                    "Chromium renderer port error retryable=%s attempt=%s render_id=%s reason=%s",
+                    exc.retryable,
+                    attempt,
+                    request.render_id,
+                    str(exc),
+                )
                 if not exc.retryable or attempt == 2:
                     raise
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_error = exc
+                _LOG.warning(
+                    "Chromium renderer transport error attempt=%s render_id=%s type=%s",
+                    attempt,
+                    request.render_id,
+                    type(exc).__name__,
+                )
                 if attempt == 2:
                     raise RendererPortError("Chromium renderer transport failed", retryable=True) from exc
             except (ValueError, TypeError, KeyError) as exc:
+                _LOG.error(
+                    "Chromium renderer invalid response render_id=%s type=%s",
+                    request.render_id,
+                    type(exc).__name__,
+                )
                 raise RendererPortError("Chromium renderer returned an invalid response", retryable=False) from exc
         raise RendererPortError("Chromium renderer failed", retryable=True) from last_error
 
@@ -96,3 +131,15 @@ class ChromiumRendererAdapter:
                 )
             )
         return tuple(decoded)
+
+
+def _safe_renderer_detail(response: httpx.Response) -> str:
+    """Return bounded renderer-owned diagnostic text without user payloads."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return "non-json renderer response"
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if not isinstance(detail, str):
+        return "renderer response omitted detail"
+    return detail[:240]

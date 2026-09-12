@@ -44,6 +44,7 @@ services:
     init: true
     environment:
       PRODAGENTIC_ENV: development
+      PRODAGENTIC_DEMO_MODE: ${PRODAGENTIC_DEMO_MODE:-true}
       APP_DEFAULT_LANGUAGE: ${APP_DEFAULT_LANGUAGE:-es}
       LANGUAGE_MIN_CONFIDENCE: ${LANGUAGE_MIN_CONFIDENCE:-0.6}
       LANGUAGE_MIN_MARGIN: ${LANGUAGE_MIN_MARGIN:-0.2}
@@ -62,6 +63,8 @@ services:
       MK1_STRUCTURED_AGENT_CELL: "true"
       MK1_VISUALSPEC: "true"
       MK1_RENDER_WORKER: "true"
+      MK1_REVIEW_APPROVAL: "true"
+      MK1_MANUAL_EXPORT: "true"
       IMAGE_RENDER_ENABLED: "false"
       SCHEDULER_ENABLED: "false"
 
@@ -114,6 +117,7 @@ services:
         NEXT_PUBLIC_MK1_SHELL: "true"
         NEXT_PUBLIC_MK1_PROFILE_V2: "true"
         NEXT_PUBLIC_MK1_BATCH_PLANNING: "true"
+        NEXT_PUBLIC_MK1_MANUAL_EXPORT: "true"
         PRODAGENTIC_ALLOW_PRIVATE_HTTP_API: "${PRODAGENTIC_ALLOW_PRIVATE_HTTP_API:-false}"
     restart: unless-stopped
     init: true
@@ -121,6 +125,7 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
+      PRODAGENTIC_INTERNAL_API_URL: http://backend:8000
     ports:
       - "${PRODAGENTIC_WEB_BIND_HOST:-127.0.0.1}:3000:3000"
     depends_on:

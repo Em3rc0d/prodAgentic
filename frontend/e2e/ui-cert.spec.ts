@@ -6,74 +6,45 @@ const API_URL = process.env.UI_CERT_API_URL || "http://127.0.0.1:8000";
 const SCREENSHOT_DIR = process.env.UI_CERT_SCREENSHOT_DIR || "ui-cert-screenshots";
 
 const ROUTES = [
-  { path: "/", slug: "create", heading: /Create/i },
-  { path: "/library", slug: "library", heading: /Library/i },
+  { path: "/home", slug: "home", heading: /What needs attention/i },
   { path: "/profiles", slug: "profiles", heading: /Teach prodAgentic how to sound like you\./i },
-  { path: "/create", slug: "s2-create", heading: /Create for/i },
-  { path: "/publishing", slug: "publishing", heading: /Publishing/i },
-  { path: "/scheduling", slug: "scheduling", heading: /Scheduling/i },
+  { path: "/create", slug: "create", heading: /Create for/i },
+  { path: "/review", slug: "review", heading: /^Review$/i },
+  { path: "/calendar", slug: "calendar", heading: /Calendar/i },
+  { path: "/analytics", slug: "analytics", heading: /Analytics/i },
 ] as const;
 
 fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
 test.beforeEach(async ({ context }) => {
   await context.route(`${API_URL}/api/**`, async (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-
+    const url = new URL(route.request().url());
     if (url.pathname === "/api/auth/session") {
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ authenticated: true, auth_enabled: false, csrf_token: null }),
-      });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ authenticated: true, auth_enabled: false, csrf_token: null }) });
     }
-
     return route.continue();
   });
 });
 
-async function certifyRoute(
-  page: Page,
-  route: (typeof ROUTES)[number],
-  viewportName: "desktop" | "mobile",
-) {
+async function certifyRoute(page: Page, route: (typeof ROUTES)[number], viewportName: "desktop" | "mobile") {
   const consoleErrors: string[] = [];
   const apiFailures: string[] = [];
-
-  page.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
-  });
+  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
   page.on("response", (response) => {
     const requestUrl = response.url();
-    if (
-      (requestUrl.startsWith(API_URL) || requestUrl.startsWith(`${BASE_URL}/api/`)) &&
-      response.status() >= 400
-    ) {
-      apiFailures.push(`${response.status()} ${requestUrl}`);
-    }
+    if ((requestUrl.startsWith(API_URL) || requestUrl.startsWith(`${BASE_URL}/api/`)) && response.status() >= 400) apiFailures.push(`${response.status()} ${requestUrl}`);
   });
 
   await page.goto(`${BASE_URL}${route.path}`, { waitUntil: "domcontentloaded" });
   await expect(page.locator("body")).toBeVisible();
   await expect(page.getByRole("main")).toBeVisible();
   await expect(page.getByRole("heading", { name: route.heading }).first()).toBeVisible();
-
-  const dimensions = await page.evaluate(() => ({
-    bodyScrollWidth: document.body.scrollWidth,
-    bodyClientWidth: document.body.clientWidth,
-    documentScrollWidth: document.documentElement.scrollWidth,
-    documentClientWidth: document.documentElement.clientWidth,
-  }));
-  expect(
-    Math.max(dimensions.bodyScrollWidth, dimensions.documentScrollWidth),
-    `${route.path} should not overflow the viewport horizontally`,
-  ).toBeLessThanOrEqual(
-    Math.max(dimensions.bodyClientWidth, dimensions.documentClientWidth) + 1,
-  );
+  const dimensions = await page.evaluate(() => ({ bodyScrollWidth: document.body.scrollWidth, bodyClientWidth: document.body.clientWidth, documentScrollWidth: document.documentElement.scrollWidth, documentClientWidth: document.documentElement.clientWidth }));
+  expect(Math.max(dimensions.bodyScrollWidth, dimensions.documentScrollWidth), `${route.path} should not overflow the viewport horizontally`).toBeLessThanOrEqual(Math.max(dimensions.bodyClientWidth, dimensions.documentClientWidth) + 1);
 
   const nav = page.getByRole("navigation", { name: "Primary product navigation" }).first();
   await expect(nav).toBeVisible();
+  await expect(nav.getByRole("link")).toHaveCount(6);
   const navBox = await nav.boundingBox();
   expect(navBox, "Product navigation should have a measurable box").not.toBeNull();
   if (navBox) {
@@ -82,50 +53,31 @@ async function certifyRoute(
     expect(navBox.x + navBox.width).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
     expect(navBox.y + navBox.height).toBeLessThanOrEqual(page.viewportSize()!.height + 1);
   }
-
-  const mk1ScrollRegion = page.locator('[data-scroll-region="main"]');
-  if (await mk1ScrollRegion.count()) {
-    const overflowY = await mk1ScrollRegion.evaluate((element) => getComputedStyle(element).overflowY);
-    expect(
-      overflowY,
-      `${route.path} MK1 work surface must allow vertical overflow when content exceeds the viewport`,
-    ).toMatch(/^(auto|scroll)$/);
-  }
-
+  const scrollRegion = page.locator('[data-scroll-region="main"]');
+  await expect(scrollRegion).toBeVisible();
+  expect(await scrollRegion.evaluate((element) => getComputedStyle(element).overflowY)).toMatch(/^(auto|scroll)$/);
   expect(apiFailures, `${route.path} should not produce failing app/API requests`).toEqual([]);
   expect(consoleErrors, `${route.path} should not emit browser console errors`).toEqual([]);
-
-  await page.screenshot({
-    path: `${SCREENSHOT_DIR}/${viewportName}-${route.slug}.png`,
-    fullPage: route.path !== "/" || viewportName === "mobile",
-  });
+  await page.screenshot({ path: `${SCREENSHOT_DIR}/${viewportName}-${route.slug}.png`, fullPage: true });
 }
 
-test.describe("UI-01-CERT desktop product frames", () => {
+test.describe("MK1-R2 desktop canonical product frames", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
-
-  for (const route of ROUTES) {
-    test(`${route.slug} desktop`, async ({ page }) => {
-      await page.emulateMedia({ reducedMotion: "no-preference" });
-      await certifyRoute(page, route, "desktop");
-    });
-  }
+  for (const route of ROUTES) test(`${route.slug} desktop`, async ({ page }) => { await page.emulateMedia({ reducedMotion: "no-preference" }); await certifyRoute(page, route, "desktop"); });
+  test("legacy root redirects into the canonical Home surface", async ({ page }) => {
+    await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(/\/home$/);
+    await expect(page.getByRole("heading", { name: /What needs attention/i })).toBeVisible();
+  });
 });
 
-test.describe("UI-01-CERT mobile product frames", () => {
+test.describe("MK1-R2 mobile canonical product frames", () => {
   test.use({ viewport: { width: 390, height: 844 } });
-
-  for (const route of ROUTES) {
-    test(`${route.slug} mobile`, async ({ page }) => {
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await certifyRoute(page, route, "mobile");
-    });
-  }
+  for (const route of ROUTES) test(`${route.slug} mobile`, async ({ page }) => { await page.emulateMedia({ reducedMotion: "reduce" }); await certifyRoute(page, route, "mobile"); });
 });
 
 test.describe("S1 Profile V2 acceptance", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
-
   test("quick setup requires proposal review before creating immutable v1", async ({ page }) => {
     await page.goto(`${BASE_URL}/profiles`, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Teach prodAgentic how to sound like you." })).toBeVisible();
@@ -139,65 +91,40 @@ test.describe("S1 Profile V2 acceptance", () => {
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByLabel("Example").fill("3 ways to test a queue safely. What would you verify first? #reliability");
     await page.getByRole("button", { name: "Analyze" }).click();
-
     await expect(page.getByRole("heading", { name: "This is what I understood." })).toBeVisible();
     await expect(page.getByText("1 hashed example · low")).toBeVisible();
     await page.screenshot({ path: `${SCREENSHOT_DIR}/desktop-s1-profile-proposal.png`, fullPage: true });
     await page.getByRole("button", { name: "Looks good" }).click();
-
     await expect(page.getByRole("heading", { name: "Profile ready" })).toBeVisible();
     await expect(page.getByText("UI Certification Profile · Profile v1")).toBeVisible();
     const response = await page.request.get(`${API_URL}/api/profiles`);
     expect(response.ok()).toBeTruthy();
     const payload = await response.json();
-    expect(payload.profiles.some((profile: { name: string; current_version: number }) =>
-      profile.name === "UI Certification Profile" && profile.current_version === 1
-    )).toBeTruthy();
+    expect(payload.profiles.some((profile: { name: string; current_version: number }) => profile.name === "UI Certification Profile" && profile.current_version === 1)).toBeTruthy();
   });
 });
 
 test.describe("S2 memory-aware Batch planning", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
-
   test("Create freezes ProfileVersion and commits a novelty-screened oversized pool", async ({ page }) => {
-    const setup = {
-      name: "S2 UI Profile",
-      account_type: "education",
-      goals: ["educate", "build_authority"],
-      audience: "software engineers learning reliable systems",
-      voice: ["technical", "direct"],
-      batch_size: 4,
-      channels: ["manual_export"],
-      examples: [{
-        kind: "caption",
-        label: "S2 planning topics",
-        text: "Reliable systems across #queues #caching #apis #databases need different tradeoffs.",
-      }],
-    };
+    const setup = { name: "S2 UI Profile", account_type: "education", goals: ["educate", "build_authority"], audience: "software engineers learning reliable systems", voice: ["technical", "direct"], batch_size: 4, channels: ["manual_export"], examples: [{ kind: "caption", label: "S2 planning topics", text: "Reliable systems across #queues #caching #apis #databases need different tradeoffs." }] };
     const proposalResponse = await page.request.post(`${API_URL}/api/profiles/inference-proposals`, { data: setup });
     expect(proposalResponse.ok()).toBeTruthy();
     const proposal = await proposalResponse.json();
-    const acceptanceResponse = await page.request.post(`${API_URL}/api/profiles`, {
-      data: { setup, proposal_digest: proposal.proposal_digest },
-    });
+    const acceptanceResponse = await page.request.post(`${API_URL}/api/profiles`, { data: { setup, proposal_digest: proposal.proposal_digest } });
     expect(acceptanceResponse.ok()).toBeTruthy();
     const accepted = await acceptanceResponse.json();
     expect(accepted.profile.current_version).toBe(1);
 
     await page.goto(`${BASE_URL}/create`, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Create for S2 UI Profile" })).toBeVisible();
-    await expect(page.getByText("Profile v1")).toBeVisible();
+    await expect(page.getByLabel("Batch request").getByText("Profile v1", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "4" })).toHaveAttribute("aria-pressed", "true");
-
-    const responsePromise = page.waitForResponse((response) =>
-      response.request().method() === "POST" &&
-      response.url().includes(`/api/profiles/${accepted.profile.profile_id}/batches`)
-    );
+    const responsePromise = page.waitForResponse((response) => response.request().method() === "POST" && response.url().includes(`/api/profiles/${accepted.profile.profile_id}/batches`));
     await page.getByRole("button", { name: "Generate next batch" }).click();
     const batchResponse = await responsePromise;
     expect(batchResponse.ok()).toBeTruthy();
     const batchPayload = await batchResponse.json();
-
     expect(batchPayload.batch.profile_version).toBe(1);
     expect(batchPayload.batch.profile_snapshot_digest).toBe(accepted.version.digest);
     expect(batchPayload.batch.requested_size).toBe(4);
@@ -207,24 +134,16 @@ test.describe("S2 memory-aware Batch planning", () => {
     expect(batchPayload.content_items).toHaveLength(4);
     expect(batchPayload.plans).toHaveLength(4);
     expect(batchPayload.planning_trace.evaluations.length).toBeGreaterThanOrEqual(8);
-
     await expect(page.getByRole("heading", { name: "4 of 4 ideas committed" })).toBeVisible();
     await page.getByText("Planning evidence").click();
     const evidence = page.getByText(/candidates evaluated/i);
     await expect(evidence).toBeVisible();
-
     const scrollRegion = page.locator('[data-scroll-region="main"]');
-    const before = await scrollRegion.evaluate((element) => ({
-      clientHeight: element.clientHeight,
-      scrollHeight: element.scrollHeight,
-      scrollTop: element.scrollTop,
-    }));
+    const before = await scrollRegion.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, scrollTop: element.scrollTop }));
     expect(before.scrollHeight, "planned Batch should exceed the desktop work-surface height").toBeGreaterThan(before.clientHeight);
-
     await scrollRegion.evaluate((element) => { element.scrollTop = element.scrollHeight; });
     await expect.poll(() => scrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await evidence.scrollIntoViewIfNeeded();
-
     const [regionBox, evidenceBox] = await Promise.all([scrollRegion.boundingBox(), evidence.boundingBox()]);
     expect(regionBox).not.toBeNull();
     expect(evidenceBox).not.toBeNull();
@@ -232,7 +151,6 @@ test.describe("S2 memory-aware Batch planning", () => {
       expect(evidenceBox.y).toBeGreaterThanOrEqual(regionBox.y - 1);
       expect(evidenceBox.y + evidenceBox.height).toBeLessThanOrEqual(regionBox.y + regionBox.height + 1);
     }
-
     await page.screenshot({ path: `${SCREENSHOT_DIR}/desktop-s2-batch-planned.png`, fullPage: true });
   });
 });
