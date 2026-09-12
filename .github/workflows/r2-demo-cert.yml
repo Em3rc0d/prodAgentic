@@ -118,7 +118,7 @@ jobs:
           docker compose exec -T mongo mongosh --quiet prodagentic_local --eval '
             const rows=db.generation_runs.find(
               {failure:{$ne:null}},
-              {_id:0,run_id:1,state:1,visual_spec_ref:1,"failure.code":1,"failure.stage":1,"failure.retryable":1,"failure.message":1}
+              {_id:0,run_id:1,state:1,visual_spec_ref:1,"failure.code":1,"failure.stage":1,"failure.retryable":1,"failure.safe_message":1}
             ).sort({_id:-1}).limit(10).toArray();
             print(JSON.stringify(rows));
           ' > r2-demo-evidence/generation-failures.json || true
