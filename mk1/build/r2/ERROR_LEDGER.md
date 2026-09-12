@@ -67,3 +67,29 @@ R2 release certification adds a horizontal exact-SHA gate:
 `Profile → Batch → Text → VisualSpec → Render → QA → Review → Approval → ManualExport → backend restart → persisted approval/assets`.
 
 Status: REQUIRED RELEASE GATE.
+
+## R2-E005 — Candidate 2 isolated the real S5 Mongo render-integrity defect
+
+Candidate:
+`32d8c3e875c3354426dde82d4b7a633a8214ec61`
+
+Observed evidence:
+- PR `#63` remained unmerged and was closed after the exact-head R2 gate failed.
+- Phase H both jobs passed, including the previously failing integrated authority regression and the fresh production restart smoke.
+- repository backend tests, production backend image build/smoke, frontend tests/build, Docker Compose Local and the observed S3/S4/S6/S7/S8/S9/S10/S11/S12 gates passed.
+- R2 `READY_DEMO` passed.
+- the new backend-container → renderer `/health` proof passed with `DIRECT_INTERNAL_NO_ENV_PROXY`.
+- the horizontal `Produce carousel approve and export` step still failed.
+- retained `generation-failures.json` recorded terminal `S5_RENDER_INTEGRITY_FAILED` at `RENDERING`, not a retryable RendererPort failure.
+- renderer logs contained normal startup and no renderer execution error associated with the failed journey.
+
+Root cause:
+`MongoRenderingRepository.save_asset()` and `save_render_result()` computed canonical digests from `AssetV1` / `RenderResultV1`, then persisted those models with Python `datetime` objects via `model_dump()`. PyMongo/BSON stores datetime only at millisecond precision. Real rendering creates timestamps with non-zero microseconds, so an immediate authoritative read reconstructs a semantically similar but byte-different timestamp. Recomputing the immutable metadata/result digest therefore fails closed. The existing real-Mongo S5 test used a timestamp with zero microseconds and masked the defect.
+
+Correction:
+- persist immutable `AssetV1` and `RenderResultV1` metadata with `model_dump(mode="json")`, preserving exact canonical timestamp strings used by the digest;
+- keep Pydantic as the typed rehydration boundary on reads;
+- change the real-Mongo S5 gate to use a non-zero-microsecond timestamp and assert the raw stored timestamp equals the model's canonical JSON representation;
+- do not rewrite historical rows from rejected candidates; malformed/digest-mismatched historical render metadata continues to fail closed.
+
+Status: REPAIRED ON CANDIDATE-3 STABILIZATION BRANCH / REQUIRES FRESH FULL MATRIX.
