@@ -17,6 +17,7 @@ from agents.router import (
     ModelRouter,
     RoutingExhausted,
 )
+from application.content_quality.brief import build_creative_brief
 from core.context import GenerationContext, LanguageCode
 from core.model_registry import ModelProfile
 from core.validator import ArtifactType
@@ -375,7 +376,7 @@ class RouterResearchAgent:
 
 
 class RouterWriterAgent:
-    prompt_version = "s3-writer-v1"
+    prompt_version = "s3-writer-v2"
 
     def __init__(self, router: ModelRouter, *, max_contract_repairs: int = 1):
         self.executor = StructuredRouterExecutor[ContentSpecV1](
@@ -384,20 +385,27 @@ class RouterWriterAgent:
         )
 
     async def write(self, *, tenant_id, run_id, plan, profile, research):
+        creative_brief = build_creative_brief(plan=plan, profile=profile)
         input_payload = {
             "tenant_context": {"tenant_id": tenant_id},
             "plan": plan.model_dump(mode="json"),
             "profile": profile.snapshot(),
             "research": research.model_dump(mode="json"),
+            "creative_brief": creative_brief,
         }
         input_digest = canonical_sha256(
             {"plan": input_payload["plan"], "profile": input_payload["profile"], "research": input_payload["research"]}
         )
         system = (
-            "You are the MK1 WriterAgent. Produce one ContentSpecV1. "
+            "You are the MK1 WriterAgent operating under the R3 publishability bar. Produce one finished ContentSpecV1 for the audience, not an explanation of the production process. "
             "Use only claims present in the exact ResearchPack and list every used claim ID in claims_used. "
             "Do not invent facts, metrics, customers, outcomes, sources or personal experience. "
-            "Respect the frozen Profile language/voice and the exact planned format."
+            "Treat creative_brief as deterministic editorial guidance derived from the frozen Profile and Plan. "
+            "Respect the Profile language, voice, audience, goals, planned role and exact format. "
+            "Make the hook specific enough to earn attention and make the body repay it with useful substance. "
+            "Do not expose taxonomy identifiers, snake_case labels, workflow states, QA language, schema names, digests, prompt language, demo/test narration or other internal metadata. "
+            "For single images keep on-canvas copy concise. For carousels create real semantic progression between slides. For infographics create distinct information groups. "
+            "Avoid generic filler, repeated restatements and one-template-fits-all phrasing. The output should be something the Profile owner could plausibly publish after human review."
         )
         return await self.executor.execute(
             agent=AgentKind.WRITER,
@@ -413,7 +421,7 @@ class RouterWriterAgent:
 
 
 class RouterEditorAgent:
-    prompt_version = "s3-editor-v1"
+    prompt_version = "s3-editor-v2"
 
     def __init__(self, router: ModelRouter, *, max_contract_repairs: int = 1):
         self.executor = StructuredRouterExecutor[EditorialReviewV1](
@@ -422,12 +430,14 @@ class RouterEditorAgent:
         )
 
     async def edit(self, *, tenant_id, run_id, plan, profile, research, content, revision_cycle):
+        creative_brief = build_creative_brief(plan=plan, profile=profile)
         input_payload = {
             "tenant_context": {"tenant_id": tenant_id},
             "plan": plan.model_dump(mode="json"),
             "profile": profile.snapshot(),
             "research": research.model_dump(mode="json"),
             "content": content.model_dump(mode="json"),
+            "creative_brief": creative_brief,
             "revision_cycle": revision_cycle,
         }
         input_digest = canonical_sha256(
@@ -440,11 +450,15 @@ class RouterEditorAgent:
             }
         )
         system = (
-            "You are the MK1 EditorAgent. Return EditorialReviewV1. "
-            "Check brand match, clarity, hook strength, factual consistency and platform fit. "
+            "You are the MK1 EditorAgent and publishability gate. Return EditorialReviewV1. "
+            "Check brand match, clarity, hook strength, factual consistency and platform fit, but also judge whether the piece feels genuinely audience-facing, specific, useful and publishable rather than AI filler. "
+            "Use the creative_brief quality_bar as mandatory editorial criteria. "
+            "REVISE content that leaks internal terms, taxonomy IDs, snake_case labels, demo/test narration, workflow states or QA/schema language. "
+            "REVISE generic hooks, redundant slides, weak value progression, empty engagement bait and visual copy that is too dense for its format. "
             "You may APPROVE_TEXT, REVISE with a complete new ContentSpecV1, or REJECT. "
             "Never introduce a claim ID or factual assertion absent from the ResearchPack. "
-            "A revised ContentSpec must use a new content_spec_id and preserve plan authority."
+            "A revised ContentSpec must use a new content_spec_id and preserve plan authority, target language, claims boundary and exact planned format. "
+            "APPROVE_TEXT only when you would be comfortable handing the piece to a human reviewer as a credible publish-ready candidate."
         )
         return await self.executor.execute(
             agent=AgentKind.EDITOR,
