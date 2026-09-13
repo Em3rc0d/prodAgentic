@@ -44,7 +44,7 @@ class VisualSpecService:
     """
 
     contract_versions = ("DesignProfileV1@1", "VisualSpecV1@1")
-    planner_version = "mk1-visual-planner-v1"
+    planner_version = "mk1-visual-planner-v2"
 
     def __init__(
         self,
