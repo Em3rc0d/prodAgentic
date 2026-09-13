@@ -26,6 +26,19 @@ _INTERNAL_OUTPUT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("internal.state_name", re.compile(r"\b(?:READY_FOR_REVIEW|QA_PENDING|VISUAL_PLANNING)\b")),
 )
 
+# These values belong to prodAgentic's own planning/authority vocabulary. We do
+# not reject arbitrary snake_case because developer, data and engineering clients
+# may legitimately publish code identifiers such as retry_count or user_id.
+_INTERNAL_CONTROL_TOKENS = {
+    "better_decision",
+    "profile_snapshot_digest",
+    "content_spec_id",
+    "visual_spec_id",
+    "qa_report_id",
+    "render_input_digest",
+    "agent_run_id",
+}
+
 _GENERIC_OPENERS = (
     "una forma clara de pensar",
     "en este post",
@@ -35,7 +48,6 @@ _GENERIC_OPENERS = (
 )
 
 _SNAKE_CASE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
-_MULTI_SPACE = re.compile(r"\s+")
 
 
 def _issue(code: str, severity: EditorialIssueSeverity, message: str, target_ref: str | None = None) -> EditorialIssueV1:
@@ -87,12 +99,13 @@ def evaluate_publishability(
             )
 
     snake_tokens = tuple(dict.fromkeys(_SNAKE_CASE.findall(visible)))
-    if snake_tokens:
+    leaked_control_tokens = tuple(token for token in snake_tokens if token.lower() in _INTERNAL_CONTROL_TOKENS)
+    if leaked_control_tokens:
         issues.append(
             _issue(
                 "copy.internal_token_leak",
                 EditorialIssueSeverity.BLOCKING,
-                f"Audience-facing copy exposes internal snake_case tokens: {', '.join(snake_tokens[:4])}",
+                f"Audience-facing copy exposes prodAgentic control tokens: {', '.join(leaked_control_tokens[:4])}",
                 content.content_spec_id,
             )
         )
@@ -160,7 +173,7 @@ def evaluate_publishability(
             )
         )
 
-    if content.cta and normalize_text(content.cta) in {"comenta", "comparte", "guardalo", "guárdalo", "dale like"}:
+    if content.cta and normalize_text(content.cta) in {"comenta", "comparte", "guardalo", "dale like"}:
         issues.append(
             _issue(
                 "copy.engagement_bait_cta",
