@@ -22,6 +22,14 @@ const setup = {
   ],
 };
 
+async function certifyCarouselPageCount(page: import("@playwright/test").Page) {
+  const renderedPageButtons = page.getByRole("button", { name: /Show rendered page/ });
+  const pageCount = await renderedPageButtons.count();
+  expect(pageCount).toBeGreaterThanOrEqual(3);
+  await expect(page.getByText(new RegExp(`Page 1 of ${pageCount}`))).toBeVisible();
+  return pageCount;
+}
+
 test("R2 demo produces a real carousel, reaches Review, approves and exports", async ({ page }) => {
   test.setTimeout(120_000);
 
@@ -54,8 +62,7 @@ test("R2 demo produces a real carousel, reaches Review, approves and exports", a
 
   await expect(page.getByTestId("s5-review-preview")).toHaveAttribute("data-qa-readiness", "READY_FOR_REVIEW", { timeout: 30_000 });
   await expect(page.getByTestId("s5-review-preview")).toHaveAttribute("data-s7-approval", "AVAILABLE");
-  expect(await page.getByRole("button", { name: /Show rendered page/ }).count()).toBeGreaterThanOrEqual(2);
-  await expect(page.getByText(/Page 1 of 3/)).toBeVisible();
+  const pageCount = await certifyCarouselPageCount(page);
 
   const revisionId = new URL(page.url()).pathname.split("/").filter(Boolean).at(-1);
   expect(revisionId).toBeTruthy();
@@ -72,13 +79,13 @@ test("R2 demo produces a real carousel, reaches Review, approves and exports", a
   expect(exportResponse.ok()).toBeTruthy();
   expect(exportResponse.headers()["content-type"]).toContain("application/zip");
 
-  fs.writeFileSync(STATE_FILE, JSON.stringify({ revisionId }, null, 2));
+  fs.writeFileSync(STATE_FILE, JSON.stringify({ revisionId, pageCount }, null, 2));
   await page.screenshot({ path: "r2-demo-approved.png", fullPage: true });
 });
 
 test("R2 approved carousel survives backend restart with owned pages intact", async ({ page }) => {
   test.setTimeout(60_000);
-  const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8")) as { revisionId: string };
+  const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8")) as { revisionId: string; pageCount: number };
 
   const ready = await page.request.get(`${API}/health/ready`);
   expect(ready.ok()).toBeTruthy();
@@ -89,7 +96,7 @@ test("R2 approved carousel survives backend restart with owned pages intact", as
   await expect(root).toHaveAttribute("data-qa-readiness", "READY_FOR_REVIEW");
   await expect(root).toHaveAttribute("data-s7-approval", "APPROVED");
   await expect(page.getByText("Approved · package frozen", { exact: true })).toBeVisible();
-  expect(await page.getByRole("button", { name: /Show rendered page/ }).count()).toBeGreaterThanOrEqual(2);
-  await expect(page.getByText(/Page 1 of 3/)).toBeVisible();
+  const recoveredCount = await certifyCarouselPageCount(page);
+  expect(recoveredCount).toBe(state.pageCount);
   await page.screenshot({ path: "r2-demo-after-restart.png", fullPage: true });
 });
