@@ -36,31 +36,16 @@ _BOLD = {
     "impactful", "potente",
 }
 _DARK = {"dark", "oscuro", "dark-mode", "dark_mode"}
-_SOFT = {"soft", "suave", "friendly", "amable", "approachable", "cercano"}
-_WARM = {"warm", "calido", "friendly", "amable", "approachable", "cercano", "soft", "suave"}
-_PREMIUM = {"premium", "elegant", "elegante", "sophisticated", "sofisticado"}
-
-
-def _accent_token(*, traits: set[str], bold: bool, dense: bool) -> str:
-    # Archetypes come from explicit visual/voice traits, never a business
-    # vertical. The DesignProfileV1 contract remains stable; R3 only expands the
-    # allowlisted mapping behind that contract.
-    if bold:
-        return "accent.signal_strong"
-    if traits & _PREMIUM:
-        return "accent.premium"
-    if traits & _WARM:
-        return "accent.warm"
-    if dense:
-        return "accent.tech"
-    return "accent.signal"
+_SOFT = {"soft", "suave", "friendly", "amable", "approachable", "cercano", "warm", "calido"}
 
 
 def derive_design_profile(profile: ProfileVersion) -> DesignProfileV1:
-    """Derive controlled visual policy from one immutable ProfileVersion.
+    """Derive a bounded cross-client visual archetype from ProfileVersion.
 
-    Free-form traits are reduced to an allowlisted vocabulary. Unknown traits
-    never flow into token IDs, CSS, URLs, scripts or renderer directives.
+    Client specialization comes from explicit visual/voice traits. Unknown values
+    never become token, CSS, URL or renderer authority. R3 varies density, layout,
+    radius, icon language, image treatment, contrast and safe-zone policy while
+    keeping the already-certified renderer token vocabulary closed.
     """
 
     traits = {_normalize_trait(item) for item in profile.visual_system.traits}
@@ -69,7 +54,6 @@ def derive_design_profile(profile: ProfileVersion) -> DesignProfileV1:
     bold = bool(traits & _BOLD)
     dark = bool(traits & _DARK)
     soft = bool(traits & _SOFT)
-    accent = _accent_token(traits=traits, bold=bold, dense=dense)
 
     if sparse and dense:
         density = Density.BALANCED
@@ -80,6 +64,7 @@ def derive_design_profile(profile: ProfileVersion) -> DesignProfileV1:
     else:
         density = Density.BALANCED
 
+    accent = "accent.signal_strong" if bold else "accent.signal"
     if dark:
         palette = PaletteMappingV1(
             background="surface.ink",
