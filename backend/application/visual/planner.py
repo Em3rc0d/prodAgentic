@@ -9,6 +9,9 @@ from domain.production.models import (
 from domain.visual.models import (
     CanvasV1,
     DesignProfileV1,
+    DiagramBlockV1,
+    DividerBlockV1,
+    IconBlockV1,
     LayoutFamily,
     RenderStrategy,
     SafeZoneV1,
@@ -28,7 +31,7 @@ class UnsupportedVisualFormat(ValueError):
 
 
 _ROLE_LAYOUT_CANDIDATES: dict[VisualPageRole, tuple[LayoutFamily, ...]] = {
-    VisualPageRole.HOOK: (LayoutFamily.HERO_STACK, LayoutFamily.EDITORIAL_POSTER),
+    VisualPageRole.HOOK: (LayoutFamily.EDITORIAL_POSTER, LayoutFamily.HERO_STACK),
     VisualPageRole.EXPLAIN: (LayoutFamily.SPLIT_EVIDENCE, LayoutFamily.CARD_GRID),
     VisualPageRole.EVIDENCE: (LayoutFamily.EVIDENCE_GRID, LayoutFamily.SPLIT_EVIDENCE),
     VisualPageRole.EXAMPLE: (LayoutFamily.CARD_GRID, LayoutFamily.SPLIT_FOCUS),
@@ -63,6 +66,54 @@ def _style(profile: DesignProfileV1) -> VisualStyleV1:
     )
 
 
+def _surface(block_id: str, profile: DesignProfileV1) -> ShapeBlockV1:
+    return ShapeBlockV1(
+        block_id=block_id,
+        shape=ShapeKind.RECT,
+        token_ref=profile.palette.surface,
+    )
+
+
+def _divider(block_id: str, profile: DesignProfileV1) -> DividerBlockV1:
+    return DividerBlockV1(block_id=block_id, token_ref=profile.palette.border)
+
+
+def _accent_icon(block_id: str) -> IconBlockV1:
+    return IconBlockV1(block_id=block_id, icon_ref="icon.editorial_signal", decorative=True)
+
+
+def _text(*, block_id: str, copy_ref: str, role: str = "body") -> TextBlockV1:
+    return TextBlockV1(
+        block_id=block_id,
+        copy_ref=copy_ref,
+        editorial_critical=True,
+        role=role,
+    )
+
+
+def _single_image_pattern(content: SingleImageSpecV1, profile: DesignProfileV1) -> str:
+    if len(content.supporting_copy) >= 2:
+        return "single_image.action_framework.v2"
+    if LayoutFamily.EDITORIAL_POSTER in profile.layout_family_preferences:
+        return "single_image.editorial_poster.v2"
+    return "single_image.focus_card.v2"
+
+
+def _carousel_pattern(content: CarouselSpecV1) -> str:
+    roles = {slide.role for slide in content.slides}
+    if "evidence" in roles or "example" in roles:
+        return "carousel.evidence_progression.v2"
+    if "cta" in roles and "takeaway" in roles:
+        return "carousel.narrative_progression.v2"
+    return "carousel.semantic_pages.v2"
+
+
+def _infographic_pattern(content: InfographicSpecV1) -> str:
+    if any(section.relationship for section in content.sections):
+        return "infographic.relationship_map.v2"
+    return "infographic.section_grid.v2"
+
+
 def build_visual_spec(
     *,
     visual_spec_id: str,
@@ -78,30 +129,41 @@ def build_visual_spec(
     pages: list[VisualPageV1] = []
 
     if isinstance(format_spec, SingleImageSpecV1):
+        # Keep the accepted headline at the stable first editorial position while
+        # adding semantic accents around it. This preserves deterministic copy
+        # authority and the existing tamper tests.
         blocks = [
-            ShapeBlockV1(block_id="surface", shape=ShapeKind.RECT, token_ref=design_profile.palette.surface),
-            TextBlockV1(
+            _surface("surface", design_profile),
+            _text(
                 block_id="headline",
                 copy_ref="content_spec.format_spec.headline",
-                editorial_critical=True,
                 role="headline",
             ),
+            _accent_icon("signal"),
+            _divider("headline-divider", design_profile),
         ]
-        blocks.extend(
-            TextBlockV1(
-                block_id=f"support-{index}",
-                copy_ref=f"content_spec.format_spec.supporting_copy[{index}]",
-                editorial_critical=True,
-                role="body",
-            )
+        support_refs = tuple(
+            f"content_spec.format_spec.supporting_copy[{index}]"
             for index in range(len(format_spec.supporting_copy))
         )
+        if len(support_refs) >= 2:
+            blocks.append(
+                DiagramBlockV1(
+                    block_id="support-framework",
+                    diagram_kind="flow",
+                    label_refs=support_refs,
+                )
+            )
+        else:
+            blocks.extend(
+                _text(block_id=f"support-{index}", copy_ref=ref, role="body")
+                for index, ref in enumerate(support_refs)
+            )
         if format_spec.footer is not None:
             blocks.append(
-                TextBlockV1(
+                _text(
                     block_id="footer",
                     copy_ref="content_spec.format_spec.footer",
-                    editorial_critical=True,
                     role="footer",
                 )
             )
@@ -116,39 +178,39 @@ def build_visual_spec(
         )
         visual_format = VisualFormat.SINGLE_IMAGE
         strategy = RenderStrategy.COMPOSED_STATIC
-        pattern = "single_image.editorial_poster.v1"
+        pattern = _single_image_pattern(format_spec, design_profile)
 
     elif isinstance(format_spec, CarouselSpecV1):
         for index, slide in enumerate(format_spec.slides):
             role = VisualPageRole(slide.role)
             prefix = f"content_spec.format_spec.slides[{slide.slide_id}]"
-            blocks = [
-                ShapeBlockV1(
-                    block_id=f"surface-{slide.slide_id}",
-                    shape=ShapeKind.RECT,
-                    token_ref=design_profile.palette.surface,
-                ),
-                TextBlockV1(
+            blocks = [_surface(f"surface-{slide.slide_id}", design_profile)]
+            blocks.append(
+                _text(
                     block_id=f"headline-{slide.slide_id}",
                     copy_ref=f"{prefix}.headline",
-                    editorial_critical=True,
                     role="headline",
-                ),
-            ]
+                )
+            )
+            if role in {VisualPageRole.HOOK, VisualPageRole.TAKEAWAY, VisualPageRole.CTA}:
+                blocks.extend(
+                    (_accent_icon(f"signal-{slide.slide_id}"), _divider(f"divider-{slide.slide_id}", design_profile))
+                )
             if slide.body is not None:
                 blocks.append(
-                    TextBlockV1(
+                    _text(
                         block_id=f"body-{slide.slide_id}",
                         copy_ref=f"{prefix}.body",
-                        editorial_critical=True,
                         role="body",
                     )
                 )
+            # Keep each bullet independently addressable. This is important for
+            # exact copy coverage/tamper detection and lets CSS layouts turn them
+            # into cards without duplicating visible copy.
             blocks.extend(
-                TextBlockV1(
+                _text(
                     block_id=f"bullet-{slide.slide_id}-{bullet_index}",
                     copy_ref=f"{prefix}.bullets[{bullet_index}]",
-                    editorial_critical=True,
                     role="body",
                 )
                 for bullet_index in range(len(slide.bullets))
@@ -164,45 +226,48 @@ def build_visual_spec(
             )
         visual_format = VisualFormat.CAROUSEL
         strategy = RenderStrategy.CAROUSEL
-        pattern = "carousel.semantic_pages.v1"
+        pattern = _carousel_pattern(format_spec)
 
     elif isinstance(format_spec, InfographicSpecV1):
         blocks = [
-            ShapeBlockV1(block_id="surface", shape=ShapeKind.RECT, token_ref=design_profile.palette.surface),
-            TextBlockV1(
+            _surface("surface", design_profile),
+            _text(
                 block_id="title",
                 copy_ref="content_spec.format_spec.title",
-                editorial_critical=True,
                 role="headline",
             ),
+            _accent_icon("signal"),
+            _divider("title-divider", design_profile),
         ]
-        for section in format_spec.sections:
+        relationship_refs: list[str] = []
+        for section_index, section in enumerate(format_spec.sections):
             prefix = f"content_spec.format_spec.sections[{section.section_id}]"
+            if section_index > 0:
+                blocks.append(_divider(f"section-divider-{section.section_id}", design_profile))
             blocks.append(
-                TextBlockV1(
+                _text(
                     block_id=f"label-{section.section_id}",
                     copy_ref=f"{prefix}.label",
-                    editorial_critical=True,
                     role="label",
                 )
             )
             blocks.append(
-                TextBlockV1(
+                _text(
                     block_id=f"value-{section.section_id}",
                     copy_ref=f"{prefix}.value_or_copy",
-                    editorial_critical=True,
                     role="body",
                 )
             )
             if section.relationship is not None:
-                blocks.append(
-                    TextBlockV1(
-                        block_id=f"relationship-{section.section_id}",
-                        copy_ref=f"{prefix}.relationship",
-                        editorial_critical=True,
-                        role="body",
-                    )
+                relationship_refs.append(f"{prefix}.relationship")
+        if relationship_refs:
+            blocks.append(
+                DiagramBlockV1(
+                    block_id="relationships",
+                    diagram_kind="relationship",
+                    label_refs=tuple(relationship_refs),
                 )
+            )
         role = VisualPageRole.EXPLAIN
         pages.append(
             VisualPageV1(
@@ -215,7 +280,7 @@ def build_visual_spec(
         )
         visual_format = VisualFormat.INFOGRAPHIC
         strategy = RenderStrategy.INFOGRAPHIC
-        pattern = "infographic.section_grid.v1"
+        pattern = _infographic_pattern(format_spec)
     else:
         raise UnsupportedVisualFormat(f"unsupported format spec: {type(format_spec).__name__}")
 

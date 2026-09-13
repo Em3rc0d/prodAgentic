@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import uuid4
 
+from application.content_quality.policy import blocking_publishability_issues
 from domain.planning.models import ContentPlanV1, canonical_sha256 as planning_sha256
 from domain.profiles.models import ProfileVersion, canonical_digest as profile_digest
 from domain.production.models import (
@@ -303,7 +304,7 @@ class StructuredAgentCellService:
                     expected_output_digest=review_digest,
                 )
                 run = await self._bind_attempt_refs(run, editor_refs)
-                self._verify_review(plan, research, content, review)
+                self._verify_review(plan, profile, research, content, review)
             except ProductionContractViolation:
                 await self._fail_run(
                     run,
@@ -486,6 +487,7 @@ class StructuredAgentCellService:
     def _verify_review(
         cls,
         plan: ContentPlanV1,
+        profile: ProfileVersion,
         research: ResearchPackV1,
         content: ContentSpecV1,
         review: EditorialReviewV1,
@@ -517,6 +519,17 @@ class StructuredAgentCellService:
             raise ProductionContractViolation(
                 "APPROVE_TEXT cannot silently replace the reviewed ContentSpec"
             )
+        if review.verdict == EditorialVerdict.APPROVE_TEXT:
+            blockers = blocking_publishability_issues(
+                content=content,
+                plan=plan,
+                profile=profile,
+            )
+            if blockers:
+                codes = ", ".join(issue.code for issue in blockers)
+                raise ProductionContractViolation(
+                    f"APPROVE_TEXT violates the deterministic publishability floor: {codes}"
+                )
 
     async def _persist_attempts(
         self,

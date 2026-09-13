@@ -36,6 +36,29 @@ class AcceptedProfile:
     version: ProfileVersion
 
 
+def _derive_visual_traits(voice: tuple[str, ...]) -> tuple[str, ...]:
+    """Reuse explicit user-facing voice choices as bounded visual evidence.
+
+    R3 deliberately avoids another setup form. The DesignProfile mapper already
+    owns an allowlist, so unknown voice traits remain harmless and cannot become
+    CSS/token authority. A neutral clean baseline is added only when the setup
+    provides no useful visual signal.
+    """
+
+    normalized = tuple(dict.fromkeys(item.strip().lower() for item in voice if item.strip()))
+    visual_vocabulary = {
+        "minimal", "minimalist", "minimalista", "clean", "limpio",
+        "premium", "elegant", "elegante", "sophisticated", "sofisticado",
+        "technical", "tecnico", "técnico", "data", "datos", "detailed", "detallado",
+        "analytical", "analitico", "analítico", "precise", "preciso",
+        "bold", "energetic", "energetico", "energético", "aggressive", "agresivo",
+        "impactful", "potente", "dark", "oscuro", "soft", "suave", "friendly", "amable",
+        "warm", "calido", "cálido", "approachable", "cercano",
+    }
+    selected = tuple(item for item in normalized if item in visual_vocabulary)
+    return selected or ("clean",)
+
+
 class ProfileService:
     def __init__(self, repository: ProfileRepositoryPort, analyzer: ProfileAnalyzerPort):
         self.repository = repository
@@ -76,7 +99,7 @@ class ProfileService:
                 cta_style=proposal.cta_style,
             ),
             "claim_policy": ClaimPolicy(),
-            "visual_system": VisualSystem(),
+            "visual_system": VisualSystem(traits=_derive_visual_traits(setup.voice)),
             "publishing_preferences": PublishingPreferences(
                 channels=setup.channels,
                 default_batch_size=setup.batch_size,
@@ -138,9 +161,6 @@ class ProfileService:
         if not await self.repository.append_version(updated, version, expected_current_version):
             raise ProfileConflict("Profile version changed; reload before accepting another update")
 
-        # A restart retry reconstructs timestamps locally, so return the immutable
-        # version that actually won the unique version key rather than the retry's
-        # transient candidate.
         committed = await self.repository.get_version(profile_id, next_version)
         if committed is None:
             raise RuntimeError("Profile version commit succeeded without immutable evidence")
