@@ -25,18 +25,35 @@ def _normalize_trait(value: str) -> str:
 
 _SPARSE = {
     "minimal", "minimalist", "minimalista", "clean", "cleanly", "limpio",
-    "premium", "elegant", "elegante",
+    "premium", "elegant", "elegante", "sophisticated", "sofisticado",
 }
 _DENSE = {
     "technical", "tecnico", "data", "datos", "detailed", "detallado",
-    "analytical", "analitico",
+    "analytical", "analitico", "precise", "preciso",
 }
 _BOLD = {
     "bold", "energetic", "energetico", "aggressive", "agresivo",
     "impactful", "potente",
 }
 _DARK = {"dark", "oscuro", "dark-mode", "dark_mode"}
-_SOFT = {"soft", "suave", "friendly", "amable"}
+_SOFT = {"soft", "suave", "friendly", "amable", "approachable", "cercano"}
+_WARM = {"warm", "calido", "friendly", "amable", "approachable", "cercano", "soft", "suave"}
+_PREMIUM = {"premium", "elegant", "elegante", "sophisticated", "sofisticado"}
+
+
+def _accent_token(*, traits: set[str], bold: bool, dense: bool) -> str:
+    # Archetypes are inferred from explicit visual/voice traits, never from a
+    # client's business vertical. This keeps the same machinery useful for a
+    # restaurant, developer, automotive account, consultant or personal brand.
+    if bold:
+        return "accent.signal_strong"
+    if traits & _PREMIUM:
+        return "accent.premium"
+    if traits & _WARM:
+        return "accent.warm"
+    if dense:
+        return "accent.tech"
+    return "accent.signal"
 
 
 def derive_design_profile(profile: ProfileVersion) -> DesignProfileV1:
@@ -52,6 +69,7 @@ def derive_design_profile(profile: ProfileVersion) -> DesignProfileV1:
     bold = bool(traits & _BOLD)
     dark = bool(traits & _DARK)
     soft = bool(traits & _SOFT)
+    accent = _accent_token(traits=traits, bold=bold, dense=dense)
 
     if sparse and dense:
         density = Density.BALANCED
@@ -68,7 +86,7 @@ def derive_design_profile(profile: ProfileVersion) -> DesignProfileV1:
             surface="surface.charcoal",
             text="text.on_dark",
             muted_text="text.muted_on_dark",
-            accent="accent.signal_strong" if bold else "accent.signal",
+            accent=accent,
             border="border.dark_hairline",
         )
     else:
@@ -77,7 +95,7 @@ def derive_design_profile(profile: ProfileVersion) -> DesignProfileV1:
             surface="surface.paper",
             text="text.ink",
             muted_text="text.muted",
-            accent="accent.signal_strong" if bold else "accent.signal",
+            accent=accent,
             border="border.hairline",
         )
 
@@ -125,7 +143,7 @@ def derive_design_profile(profile: ProfileVersion) -> DesignProfileV1:
 
     semantic_payload = {
         "schema_version": 1,
-        "mapping_version": "mk1-design-profile-v1",
+        "mapping_version": "mk1-design-profile-v2",
         "profile_id": profile.profile_id,
         "profile_version": profile.version,
         "source_profile_digest": profile.digest,
@@ -141,6 +159,7 @@ def derive_design_profile(profile: ProfileVersion) -> DesignProfileV1:
     }
     digest = canonical_visual_sha256(semantic_payload)
     return DesignProfileV1(
+        mapping_version="mk1-design-profile-v2",
         design_profile_id=f"dp-{digest[:32]}",
         profile_id=profile.profile_id,
         profile_version=profile.version,
