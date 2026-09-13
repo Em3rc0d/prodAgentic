@@ -79,8 +79,6 @@ def _divider(block_id: str, profile: DesignProfileV1) -> DividerBlockV1:
 
 
 def _accent_icon(block_id: str) -> IconBlockV1:
-    # Renderer owns the concrete glyph. VisualSpec only communicates a bounded
-    # semantic accent, keeping generated/external assets outside this slice.
     return IconBlockV1(block_id=block_id, icon_ref="icon.editorial_signal", decorative=True)
 
 
@@ -131,14 +129,17 @@ def build_visual_spec(
     pages: list[VisualPageV1] = []
 
     if isinstance(format_spec, SingleImageSpecV1):
+        # Keep the accepted headline at the stable first editorial position while
+        # adding semantic accents around it. This preserves deterministic copy
+        # authority and the existing tamper tests.
         blocks = [
             _surface("surface", design_profile),
-            _accent_icon("signal"),
             _text(
                 block_id="headline",
                 copy_ref="content_spec.format_spec.headline",
                 role="headline",
             ),
+            _accent_icon("signal"),
             _divider("headline-divider", design_profile),
         ]
         support_refs = tuple(
@@ -155,11 +156,7 @@ def build_visual_spec(
             )
         else:
             blocks.extend(
-                _text(
-                    block_id=f"support-{index}",
-                    copy_ref=ref,
-                    role="body",
-                )
+                _text(block_id=f"support-{index}", copy_ref=ref, role="body")
                 for index, ref in enumerate(support_refs)
             )
         if format_spec.footer is not None:
@@ -188,8 +185,6 @@ def build_visual_spec(
             role = VisualPageRole(slide.role)
             prefix = f"content_spec.format_spec.slides[{slide.slide_id}]"
             blocks = [_surface(f"surface-{slide.slide_id}", design_profile)]
-            if role in {VisualPageRole.HOOK, VisualPageRole.TAKEAWAY, VisualPageRole.CTA}:
-                blocks.append(_accent_icon(f"signal-{slide.slide_id}"))
             blocks.append(
                 _text(
                     block_id=f"headline-{slide.slide_id}",
@@ -198,7 +193,9 @@ def build_visual_spec(
                 )
             )
             if role in {VisualPageRole.HOOK, VisualPageRole.TAKEAWAY, VisualPageRole.CTA}:
-                blocks.append(_divider(f"divider-{slide.slide_id}", design_profile))
+                blocks.extend(
+                    (_accent_icon(f"signal-{slide.slide_id}"), _divider(f"divider-{slide.slide_id}", design_profile))
+                )
             if slide.body is not None:
                 blocks.append(
                     _text(
@@ -207,27 +204,17 @@ def build_visual_spec(
                         role="body",
                     )
                 )
-            bullet_refs = tuple(
-                f"{prefix}.bullets[{bullet_index}]"
+            # Keep each bullet independently addressable. This is important for
+            # exact copy coverage/tamper detection and lets CSS layouts turn them
+            # into cards without duplicating visible copy.
+            blocks.extend(
+                _text(
+                    block_id=f"bullet-{slide.slide_id}-{bullet_index}",
+                    copy_ref=f"{prefix}.bullets[{bullet_index}]",
+                    role="body",
+                )
                 for bullet_index in range(len(slide.bullets))
             )
-            if len(bullet_refs) >= 2:
-                blocks.append(
-                    DiagramBlockV1(
-                        block_id=f"framework-{slide.slide_id}",
-                        diagram_kind="flow" if role in {VisualPageRole.EXPLAIN, VisualPageRole.EXAMPLE} else "relationship",
-                        label_refs=bullet_refs,
-                    )
-                )
-            else:
-                blocks.extend(
-                    _text(
-                        block_id=f"bullet-{slide.slide_id}-{bullet_index}",
-                        copy_ref=ref,
-                        role="body",
-                    )
-                    for bullet_index, ref in enumerate(bullet_refs)
-                )
             pages.append(
                 VisualPageV1(
                     page_id=f"page-{slide.slide_id}",
@@ -244,12 +231,12 @@ def build_visual_spec(
     elif isinstance(format_spec, InfographicSpecV1):
         blocks = [
             _surface("surface", design_profile),
-            _accent_icon("signal"),
             _text(
                 block_id="title",
                 copy_ref="content_spec.format_spec.title",
                 role="headline",
             ),
+            _accent_icon("signal"),
             _divider("title-divider", design_profile),
         ]
         relationship_refs: list[str] = []
