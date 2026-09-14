@@ -41,10 +41,13 @@ class ProfilePatchService:
         *,
         accepted_at: datetime,
     ) -> ProfileVersion:
-        topic_families = _append_unique(
-            current.editorial_strategy.topic_families,
-            patch.add_topic_families,
-        )
+        if patch.replace_topic_families is not None:
+            topic_families = patch.replace_topic_families
+        else:
+            topic_families = _append_unique(
+                current.editorial_strategy.topic_families,
+                patch.add_topic_families,
+            )
         hook_tendencies = _append_unique(
             current.copy_policy.hook_tendencies,
             patch.add_hook_tendencies,
