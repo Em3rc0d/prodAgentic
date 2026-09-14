@@ -1,124 +1,78 @@
 # prodAgentic
 
-Local candidate start and configuration: [LOCAL-RELEASE.md](LOCAL-RELEASE.md).
+prodAgentic is a governed agentic content-production system for planning, producing, validating, reviewing, storing, exporting/publishing and learning from content across multiple editorial identities while keeping the operator in control.
 
-prodAgentic is a governed agentic content-production system. It plans, produces, validates, reviews, stores, schedules, publishes, and learns from content for multiple editorial identities while keeping the operator in control.
+## Repository authority
+
+The repository uses only two active authority branches:
+
+```text
+main       stable / certified line
+developer  active design + implementation line
+```
+
+Current anchors:
+
+```text
+main
+790f1e86312e13f4b14f1320db5d83f94ed8a97e
+MK1-R3 certified stable authority
+
+developer
+active MK1-R4 design / implementation / hardening authority
+```
+
+Do not create long-lived slice, feature, docs, fix, candidate-shadow or certification-shadow branches. Engineering state belongs in the MK folder/evidence graph; integration state belongs in `main` and `developer`.
+
+Canonical policy: [`mk1/build/REPOSITORY_HYGIENE.md`](mk1/build/REPOSITORY_HYGIENE.md).
 
 ## Current product state
 
-The active product generation is **MK1**.
-
-Certified/merged slices:
-
 ```text
-S0 — Foundation + Bootstrap Tenant       ✅
-S1 — Profile V2                         ✅
-S2 — Batch + Editorial Memory + Novelty ✅
-S3 — Structured Agent Cell              ✅
-S4 — VisualSpec V1                      ✅
+MK1-R3   CERTIFIED / MERGED on main
+MK1-R4   IMPLEMENTED / DESIGN + HARDENING OPEN on developer
 ```
 
-Next work:
+R4 is not certified merely because its implementation exists. It becomes releasable only after an exact `developer` candidate SHA passes the complete required gates and the exact merged `main` passes post-merge certification.
+
+## Current product flow
 
 ```text
-S5 — Renderer + AssetStore              ⛔ NOT STARTED
-```
-
-S4 product-code certificate:
-
-```text
-6a0a653d615e7fa2d1d63bc41b6b265b19646202
-```
-
-`mk1/STATUS.md` is the canonical certification ledger. Product-code certificate boundaries and later documentation descendants are intentionally distinguished.
-
-## Certified MK1 journey today
-
-```text
-Bootstrap Tenant
-    ↓
-Profile V2 quick setup
-    ↓
-immutable ProfileVersion
-    ↓
-Create / Batch planning
-    ↓
-Editorial Memory
-    ↓
-Novelty + diversity
-    ↓
-ContentPlanV1
-    ↓
-ResearchPackV1
-    ↓
-ContentSpecV1
-    ↓
-EditorialReviewV1
-    ↓
-ContentRevisionV1(DRAFT)
-    ↓
-DesignProfileV1
-    ↓
-VisualSpecV1
-    ↓
-GenerationRun.VISUAL_PLANNING
-```
-
-S4 certifies the typed visual intermediate representation. It does **not** own render bytes; Chromium/Playwright rendering, AssetStore and pixel QA begin in S5+.
-
-## S4 certified boundary
-
-```text
-accepted ContentSpecV1
-  + exact ContentRevisionV1(DRAFT)
-  + GenerationRun.VISUAL_PLANNING
-  + exact frozen ProfileVersion
+Profile / immutable ProfileVersion
         ↓
-deterministic DesignProfileV1
+Batch planning + Editorial Memory + Novelty
         ↓
-strict VisualSpecV1
+ContentPlan / ResearchPack
         ↓
-validated critical copy refs
+ContentSpec
         ↓
-durable tenant-scoped lineage
+Editorial Review + Publishability
+        ↓
+DesignProfile / VisualSpec
+        ↓
+Generated or deterministic visual source assets
+        ↓
+Chromium render + owned final assets
+        ↓
+QA + recovery
+        ↓
+Human review + approval
+        ↓
+Manual export / bounded distribution
+        ↓
+Persistence + restart recovery
 ```
 
-Certified VisualSpec V1 formats:
+The active R4 design extends this graph toward stronger creative production, provenance, traceability, validation and future learning loops without changing the certified R3 boundary until R4 itself is certified.
 
-```text
-single_image
-carousel
-infographic
-```
+## Run locally
 
-Critical editorial text references accepted `ContentSpecV1`; S4 does not freely regenerate that copy.
+See [`LOCAL-RELEASE.md`](LOCAL-RELEASE.md) first.
 
-Canonical S4 evidence:
-
-- [`mk1/test/evidence/S4/CERTIFICATION.md`](mk1/test/evidence/S4/CERTIFICATION.md)
-- [`mk1/build/slices/S4/BUILD_RECORD.md`](mk1/build/slices/S4/BUILD_RECORD.md)
-- [`mk1/build/slices/S4/ERROR_LEDGER.md`](mk1/build/slices/S4/ERROR_LEDGER.md)
-- [`mk1/arch/VISUAL_SYSTEM.md`](mk1/arch/VISUAL_SYSTEM.md)
-
-## Repository hygiene
-
-Canonical branch/PR policy:
-
-- [`mk1/build/REPOSITORY_HYGIENE.md`](mk1/build/REPOSITORY_HYGIENE.md)
-
-Integration authority:
-
-```text
-main                     canonical integration authority
-```
-
-There is no `developer`/`develop` branch. Historical uncertified/superseded PRs are archived instead of being merged merely to empty the branch list. Historical refs are not force-moved to simulate deletion.
-
-## Run locally with Docker
-
-Default local path:
+Default Docker path:
 
 ```bash
+git switch developer
 git pull
 docker compose up --build
 ```
@@ -129,48 +83,40 @@ Then open:
 http://localhost:3000
 ```
 
-Default local login:
+For WSL native Docker where Windows localhost forwarding is unreliable, use [`docs/WSL_NATIVE_DOCKER.md`](docs/WSL_NATIVE_DOCKER.md).
 
-```text
-username: admin
-password: local-docker-password-change-me
-```
-
-The checked-in local Compose contract starts MongoDB, FastAPI and Next.js with health-gated startup and persistent named volumes.
-
-For WSL native Docker where Windows `localhost` forwarding is unreliable, use:
-
-- [`docs/WSL_NATIVE_DOCKER.md`](docs/WSL_NATIVE_DOCKER.md)
-
-Other canonical runbooks:
+Other runbooks:
 
 - [`docs/DOCKER_LOCAL.md`](docs/DOCKER_LOCAL.md)
 - [`docs/LOCAL_DEVELOPMENT.md`](docs/LOCAL_DEVELOPMENT.md)
 - [`mk1/test/LOCAL_ACCEPTANCE.md`](mk1/test/LOCAL_ACCEPTANCE.md)
 
-## Generations
+## MK engineering method
 
-- **MK0** — historical implementation lineage: FastAPI/Next.js product, ContentRun lifecycle, legacy Content Profiles, approval/publishing/storage/release work. It remains evidence/migration authority only where explicitly retained.
-- **MK1** — current reconciled generation built around first-class Profiles, Batches, ContentItems, GenerationRuns, Editorial Memory, Novelty, structured agent contracts, VisualSpec, governed QA, queue-based execution, capability-aware distribution, analytics and progressive-disclosure UX.
-
-## MK1 repository method
+Each MK follows the same internal structure:
 
 ```text
-brainstorming/  exploration and hypotheses; never authoritative by itself
-design/         product, UX and visual design contracts
-arch/           domain, application and infrastructure architecture
-plan/           dependency graph, delivery order, risks and gates
-build/          implementation records, slice ledgers and repository hygiene
-test/           test strategy, golden datasets and certification evidence
-mining-site/    evidence intake, provenance ledger and repository findings
-quarries/       scoped investigations that may promote findings upstream
+brainstorming/
+design/
+arch/
+plan/
+build/
+test/
+mining-site/
+quarries/
 ```
 
-Canonical MK1 index: [`mk1/README.md`](mk1/README.md).
+The delivery flow is:
+
+```text
+brainstorming → design → architecture → plan → build → test
+```
+
+`mining-site` and `quarries` carry research, source provenance, extraction and evidence. Important decisions should be closed before implementation; open architectural/product nodes are not hidden behind code.
 
 ## Documentation authority
 
-When documents conflict inside the active MK:
+When active MK documents conflict:
 
 ```text
 accepted ADR / invariant
@@ -181,28 +127,24 @@ design contract
         >
 plan
         >
-build note
+build record
         >
 brainstorming / quarry finding
 ```
 
-Certification receipts plus `mk1/STATUS.md` determine whether a slice actually crossed its gates.
+Certification receipts plus `mk1/STATUS.md` determine whether a release actually crossed its gates.
 
-## Required reading order
+## Promotion law
 
-1. `mk1/README.md`
-2. `mk1/STATUS.md`
-3. `mk1/build/REPOSITORY_HYGIENE.md`
-4. `mk1/brainstorming/PRODUCT_THESIS.md`
-5. `mk1/design/PRODUCT.md`
-6. `mk1/arch/SYSTEM_ARCHITECTURE.md`
-7. `mk1/arch/DOMAIN_MODEL.md`
-8. `mk1/arch/INVARIANTS.md`
-9. `mk1/arch/CONTRACTS.md`
-10. `mk1/arch/AGENT_ARCHITECTURE.md`
-11. `mk1/arch/VISUAL_SYSTEM.md`
-12. current slice build record + error ledger.
+```text
+developer
+   ↓ freeze exact candidate SHA
+   ↓ full required gates
+   ↓ no mutation after candidate green
+   ↓ PR developer -> main
+main
+   ↓ exact-main post-certification
+   ↓ final release certificate
+```
 
-## Build authorization phrase
-
-MK1 uses **“Take the hummer”** to indicate that the graph is sufficiently closed to begin a build slice. It never bypasses exact-SHA testing, slice-specific certification, receipt-head revalidation, exact-head merge or post-merge evidence.
+A failed or mutated candidate is superseded. It is never relabeled as certified.
