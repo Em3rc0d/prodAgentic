@@ -20,7 +20,8 @@ class FrozenModel(BaseModel):
 def _json_default(value):
     if isinstance(value, datetime):
         normalized = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-        return normalized.astimezone(timezone.utc).isoformat()
+        normalized = normalized.astimezone(timezone.utc)
+        return normalized.isoformat().replace("+00:00", "Z")
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, BaseModel):
