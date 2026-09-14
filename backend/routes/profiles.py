@@ -4,13 +4,26 @@ from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from application.learning import PerformanceSummaryService
+from application.learning.proposals import (
+    LearningProposalConflict,
+    LearningProposalService,
+    LearningProposalStale,
+)
 from application.profiles import DeterministicProfileAnalyzer, ProfileConflict, ProfileService
+from application.profiles.patch_service import ProfilePatchNoop, ProfilePatchService
 from application.profiles.service import ProposalMismatch
 from application.tenancy.context import require_tenant_context
 from core.feature_flags import FeatureFlag
 from db.mongo import get_db
+from domain.learning.proposals import LearningDecisionValue
 from domain.profiles.models import ProfileSetup
 from domain.tenants.models import TenantContext
+from infrastructure.mongo.learning import MongoPerformanceEvidenceRepository, MongoPerformanceSummaryRepository
+from infrastructure.mongo.learning_proposals import (
+    LearningProposalPersistenceConflict,
+    MongoLearningProposalRepository,
+)
 from infrastructure.mongo.profiles import MongoProfileRepository
 
 
@@ -27,6 +40,13 @@ class UpdateAcceptanceRequest(AcceptanceRequest):
     expected_current_version: int = Field(ge=1)
 
 
+class LearningDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: LearningDecisionValue
+    expected_current_version: int = Field(ge=1)
+    proposal_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 def _serialize(value):
     if isinstance(value, (ObjectId, datetime)):
         return str(value) if isinstance(value, ObjectId) else value.isoformat()
@@ -37,14 +57,39 @@ def _serialize(value):
     return value
 
 
-def _service(request: Request, context: TenantContext) -> ProfileService:
+def _registry(request: Request):
     registry = getattr(request.app.state, "feature_flags", None)
     if registry is None or not registry.enabled(FeatureFlag.MK1_PROFILE_V2):
         raise HTTPException(status_code=404, detail="Profile V2 is not enabled")
+    return registry
+
+
+def _service(request: Request, context: TenantContext) -> ProfileService:
+    _registry(request)
     db = get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="MongoDB not connected")
     return ProfileService(MongoProfileRepository(db, context), DeterministicProfileAnalyzer())
+
+
+def _learning_service(request: Request, context: TenantContext) -> LearningProposalService:
+    registry = _registry(request)
+    if not registry.enabled(FeatureFlag.MK1_PLANNER_LEARNING):
+        raise HTTPException(status_code=404, detail="Profile learning proposals are not enabled")
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="MongoDB not connected")
+    profiles = MongoProfileRepository(db, context)
+    summaries = PerformanceSummaryService(
+        evidence=MongoPerformanceEvidenceRepository(db, context),
+        summaries=MongoPerformanceSummaryRepository(db, context),
+    )
+    return LearningProposalService(
+        summaries=summaries,
+        proposals=MongoLearningProposalRepository(db, context),
+        profiles=profiles,
+        profile_patches=ProfilePatchService(profiles),
+    )
 
 
 @router.post("/profiles/inference-proposals")
@@ -136,3 +181,87 @@ async def update_profile(
         "profile": _serialize(accepted.profile.model_dump(mode="json")),
         "version": _serialize(accepted.version.model_dump(mode="json")),
     }
+
+
+@router.post("/profiles/{profile_id}/learning-proposals/rebuild")
+async def rebuild_learning_proposals(
+    profile_id: str,
+    request: Request,
+    context: TenantContext = Depends(require_tenant_context),
+):
+    try:
+        proposals = await _learning_service(request, context).rebuild(profile_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LearningProposalConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "profile_id": profile_id,
+        "proposals": [_serialize(item.model_dump(mode="json")) for item in proposals],
+        "count": len(proposals),
+        "authority": "proposal_only_until_human_decision",
+    }
+
+
+@router.get("/profiles/{profile_id}/learning-proposals")
+async def list_learning_proposals(
+    profile_id: str,
+    request: Request,
+    context: TenantContext = Depends(require_tenant_context),
+):
+    service = _learning_service(request, context)
+    try:
+        proposals = await service.list_for_profile(profile_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    items = []
+    for proposal in proposals:
+        decision = await service.decision_for(proposal.proposal_id)
+        items.append(
+            {
+                "proposal": _serialize(proposal.model_dump(mode="json")),
+                "decision": (
+                    _serialize(decision.model_dump(mode="json")) if decision is not None else None
+                ),
+            }
+        )
+    return {"profile_id": profile_id, "items": items, "count": len(items)}
+
+
+@router.post("/profiles/{profile_id}/learning-proposals/{proposal_id}/decisions")
+async def decide_learning_proposal(
+    profile_id: str,
+    proposal_id: str,
+    body: LearningDecisionRequest,
+    request: Request,
+    context: TenantContext = Depends(require_tenant_context),
+):
+    try:
+        result = await _learning_service(request, context).decide(
+            tenant_id=context.tenant_id,
+            profile_id=profile_id,
+            proposal_id=proposal_id,
+            proposal_digest=body.proposal_digest,
+            expected_current_version=body.expected_current_version,
+            decision=body.decision,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (
+        LearningProposalConflict,
+        LearningProposalStale,
+        LearningProposalPersistenceConflict,
+        ProfileConflict,
+        ProfilePatchNoop,
+    ) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    payload = {
+        "decision": _serialize(result.decision.model_dump(mode="json")),
+        "profile": None,
+        "version": None,
+    }
+    if result.accepted_profile is not None:
+        payload["profile"] = _serialize(result.accepted_profile.profile.model_dump(mode="json"))
+        payload["version"] = _serialize(result.accepted_profile.version.model_dump(mode="json"))
+    return payload
