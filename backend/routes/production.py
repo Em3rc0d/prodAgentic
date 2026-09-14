@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from application.production.lifecycle import ContentProductionConflict, ContentProductionLifecycle
+from application.production.r4_service import R4StructuredAgentCellService
 from application.production.service import ProductionAuthorityError, ProductionContractViolation, ProductionDomainStop, RevisionBudgetExhausted, StructuredAgentCellService
 from application.tenancy.context import require_tenant_context
 from core.demo import build_demo_s3_service, demo_mode_enabled
@@ -57,7 +58,12 @@ def _build_service(request: Request, repository: MongoProductionRepository) -> S
     router_instance = getattr(container, "router", None) if container is not None else None
     if router_instance is None:
         raise HTTPException(status_code=503, detail="Model router is unavailable")
-    return StructuredAgentCellService(repository=repository, research_agent=RouterResearchAgent(router_instance), writer_agent=RouterWriterAgent(router_instance), editor_agent=RouterEditorAgent(router_instance))
+    return R4StructuredAgentCellService(
+        repository=repository,
+        research_agent=RouterResearchAgent(router_instance),
+        writer_agent=RouterWriterAgent(router_instance),
+        editor_agent=RouterEditorAgent(router_instance),
+    )
 
 @router.get("/content-revisions")
 async def list_content_revisions(
@@ -82,6 +88,7 @@ async def list_content_revisions(
             "hook": payload.get("hook"),
             "format": payload.get("format"),
             "qa_report_id": revision.qa_report_id,
+            "preview_asset_id": revision.asset_refs[0] if revision.asset_refs else None,
         })
     return {"revisions": rows, "count": len(rows)}
 
@@ -104,8 +111,6 @@ async def produce_text(content_id: str, body: ProduceTextRequest, request: Reque
     profile = await profiles.get_version(item.profile_id, item.profile_version)
     if profile is None: raise HTTPException(status_code=409, detail="Frozen ProfileVersion is unavailable")
     service = _build_service(request, production)
-    # Validate frozen inputs before claiming PLANNED -> PRODUCING. A corrupt
-    # snapshot must not consume the item's lifecycle transition.
     try:
         service.validate_authority(tenant_id=context.tenant_id, content_id=item.content_id, plan=persisted_plan.plan, plan_digest=persisted_plan.digest, profile=profile)
     except ProductionAuthorityError as exc:
@@ -123,11 +128,11 @@ async def produce_text(content_id: str, body: ProduceTextRequest, request: Reque
     except RevisionBudgetExhausted as exc:
         await lifecycle.fail(item.content_id); raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ProductionContractViolation as exc:
-        await lifecycle.fail(item.content_id); raise HTTPException(status_code=502, detail="Structured production failed before a valid text revision was produced") from exc
+        await lifecycle.fail(item.content_id); raise HTTPException(status_code=502, detail="Structured production failed before a valid publishable text revision was produced") from exc
     except ContentProductionConflict as exc: raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception:
         await lifecycle.fail(item.content_id); raise
-    return {"run": _serialize(result.run), "revision": _serialize(result.revision), "research": _serialize(result.research), "content": _serialize(result.content), "editorial_review": _serialize(result.review), "next_stage": "S4_VISUAL_PLANNING" if result.content.format != "text" else "S6_QA"}
+    return {"run": _serialize(result.run), "revision": _serialize(result.revision), "research": _serialize(result.research), "content": _serialize(result.content), "editorial_review": _serialize(result.review), "creative_mode": "deterministic_demo" if demo_mode_enabled() else "model_router_r4", "next_stage": "S4_VISUAL_PLANNING" if result.content.format != "text" else "S6_QA"}
 
 @router.get("/generation-runs/{run_id}")
 async def get_generation_run(run_id: str, request: Request, context: TenantContext = Depends(require_tenant_context)):
