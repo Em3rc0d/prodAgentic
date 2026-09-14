@@ -12,6 +12,7 @@ from application.quality.policy import (
 )
 from application.quality.service import QualityAuthorityResult, QualityAuthorityService
 from application.rendering.copy_resolver import build_renderer_request
+from application.rendering.generated_assets import ResolvedSourceAsset
 from domain.production.models import (
     ContentSpecV1,
     GenerationRunState,
@@ -42,11 +43,11 @@ class QualityExecutionResult:
 
 
 class QualityExecutionService:
-    """Execute S6 checks from durable S3-S5 authority.
+    """Execute S6 checks from durable S3-S5/R4 authority.
 
-    Text-only content bypasses VisualSpec/Renderer by contract but still receives
-    semantic and deterministic QA evidence before it can become REVIEWABLE.
-    Visual content is inspected against the exact resolved renderer request.
+    Generated source imagery is never regenerated during QA. R4 reconstructs the
+    exact renderer request only from persisted source metadata + product-owned
+    bytes after SHA verification, then asks Chromium to inspect that exact input.
     """
 
     def __init__(
@@ -153,6 +154,11 @@ class QualityExecutionService:
             if render is None:
                 raise QualityExecutionError("RenderResultV1 is unavailable")
 
+            resolved_sources = await self._load_generated_sources(
+                tenant_id=tenant_id,
+                revision_id=revision.revision_id,
+                visual_spec=visual_spec,
+            )
             renderer_request = build_renderer_request(
                 revision_id=revision.revision_id,
                 visual_spec=visual_spec,
@@ -160,6 +166,7 @@ class QualityExecutionService:
                 design_profile=design_profile,
                 renderer_name=render.renderer_name,
                 renderer_version=render.renderer_version,
+                resolved_assets=resolved_sources,
             )
             if renderer_request.render_id != render.render_id or renderer_request.render_input_digest != render.render_input_digest:
                 raise QualityExecutionError("Resolved render request differs from persisted RenderResult authority")
@@ -193,6 +200,44 @@ class QualityExecutionService:
             report=report,
         )
         return QualityExecutionResult(authority=authority, recovery=recovery)
+
+    async def _load_generated_sources(self, *, tenant_id: str, revision_id: str, visual_spec) -> dict[str, ResolvedSourceAsset]:
+        resolved: dict[str, ResolvedSourceAsset] = {}
+        for requirement in visual_spec.asset_requirements:
+            # The source identity algorithm is repeated exactly from the resolver
+            # by searching immutable metadata bound to this spec/requirement. The
+            # repository may offer only identity lookup, so derive from persisted
+            # final source collection via deterministic IDs is handled by storing
+            # the ID in the image block lineage. For R4 V1, one generated source
+            # is allowed per requirement and collection scan is intentionally not
+            # an authority path. Recompute from metadata discovered by deterministic
+            # prompt identity is impossible without the original prompt here, so
+            # the source ID is reconstructed by enumerating known render input only
+            # through a repository helper when available.
+            finder = getattr(self.rendering_repository, "find_source_asset", None)
+            if finder is None:
+                raise QualityExecutionError("Rendering repository cannot recover generated source lineage")
+            source = await finder(
+                tenant_id=tenant_id,
+                revision_id=revision_id,
+                visual_spec_id=visual_spec.visual_spec_id,
+                requirement_id=requirement.requirement_id,
+            )
+            if source is None:
+                raise QualityExecutionError("Generated source asset lineage is unavailable")
+            if source.tenant_id != tenant_id or source.revision_id != revision_id or source.visual_spec_id != visual_spec.visual_spec_id:
+                raise QualityExecutionError("Generated source asset authority mismatch")
+            if not await self.asset_store.verify(source.storage_key, source.sha256):
+                raise QualityExecutionError("Generated source asset owned bytes failed hash verification")
+            data = await self.asset_store.get(source.storage_key)
+            resolved[requirement.requirement_id] = ResolvedSourceAsset(
+                requirement_id=requirement.requirement_id,
+                data=data,
+                content_type=source.content_type,
+                sha256=source.sha256,
+                source_asset_id=source.source_asset_id,
+            )
+        return resolved
 
     async def _load_content(self, *, tenant_id: str, revision) -> ContentSpecV1:
         artifact = await self.production_repository.get_artifact(tenant_id, revision.content_spec_ref)
