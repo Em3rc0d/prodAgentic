@@ -13,16 +13,22 @@ The release is not complete merely because services, persistence, rendering, QA,
 
 ## Canonical R4 package
 
-This directory is the release-local authority for R4:
+R4 is intentionally distributed across the standard MK1 evidence structure while remaining one linked authority graph:
 
-- `ARCHITECTURE.md` — product/runtime architecture and validation graph.
-- `BUILD_RECORD.md` — implementation truth and requirement-to-code traceability.
-- `ERROR_LEDGER.md` — known failures, gaps, regressions and their dispositions.
-- `CANDIDATE.md` — candidate freeze protocol and exact-SHA certification record.
-- `../CERTIFICATION_GRAPH.json` — machine-readable reciprocal validation graph.
-- `../../../scripts/verify_r4_cert_graph.py` — structural verifier for that graph.
-- `../../test/R4_ACCEPTANCE.md` — product + technical acceptance gates.
-- `../../mining-site/R4_RESEARCH_LEDGER.md` — provenance for external engineering guidance.
+- `mk1/brainstorming/R4_CREATIVE_PRODUCTION_THESIS.md` — product thesis and failure definition.
+- `mk1/design/R4_CREATIVE_PRODUCTION.md` — user-facing product/UX contract.
+- `mk1/arch/R4_CONTRACTS.md` — typed cross-layer contracts and invariants.
+- `mk1/arch/R4_SECURITY.md` — trust zones, threat model and security boundaries.
+- `mk1/build/r4/ARCHITECTURE.md` — runtime architecture and reciprocal validation graph.
+- `mk1/build/r4/BUILD_RECORD.md` — implementation truth and requirement-to-code traceability.
+- `mk1/build/r4/ERROR_LEDGER.md` — known failures, gaps, regressions and dispositions.
+- `mk1/build/r4/CANDIDATE.md` — exact-SHA candidate/release protocol.
+- `mk1/build/r4/CERTIFICATION_GRAPH.json` — machine-readable reciprocal validation graph.
+- `mk1/plan/R4_EXECUTION_PLAN.md` — remaining closure/build/certification plan.
+- `mk1/test/R4_ACCEPTANCE.md` — product + technical acceptance gates.
+- `mk1/mining-site/R4_RESEARCH_LEDGER.md` — provenance for external engineering guidance.
+- `mk1/quarries/R4_LEARNING_AND_PROFILE_AUTHORITY.md` — learning-loop/profile-authority design finding.
+- `scripts/verify_r4_cert_graph.py` — structural graph verifier.
 
 ## Product contract
 
@@ -45,6 +51,22 @@ The graph is intentionally closed by the learning loop. No publication is treate
 9. A failed candidate SHA is immutable evidence and is never relabeled certified.
 10. Promotion is always `developer exact SHA → pre-cert → main merge → exact-main post-cert`.
 
+## Graph verification
+
+Structural development check:
+
+```bash
+python scripts/verify_r4_cert_graph.py
+```
+
+Frozen candidate/release mode additionally requires digests:
+
+```bash
+python scripts/verify_r4_cert_graph.py --require-digests
+```
+
+The verifier proves graph structure only. It does not replace editorial/visual UAT, exact-SHA CI, provider testing, supply-chain verification or human review.
+
 ## Closure rule
 
-R4 may be marked `CERTIFIED / CLOSED` only when every blocking node in `R4_ACCEPTANCE.md` has evidence, the graph verifier passes, the exact candidate SHA passes all required automated gates, a real-profile UAT meets publishability expectations, and the exact merged `main` SHA passes post-merge certification.
+R4 may be marked `CERTIFIED / CLOSED` only when every blocking node in `mk1/test/R4_ACCEPTANCE.md` has evidence, the graph verifier passes, the exact candidate SHA passes all required automated gates, a real-profile UAT meets publishability expectations, and the exact merged `main` SHA passes post-merge certification.
