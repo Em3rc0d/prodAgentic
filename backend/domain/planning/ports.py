@@ -18,7 +18,7 @@ from domain.profiles.models import ProfileVersion
 
 
 class CandidateSourcePort(Protocol):
-    async def generate(
+    def generate(
         self,
         profile: ProfileVersion,
         target_window: TargetWindow,
