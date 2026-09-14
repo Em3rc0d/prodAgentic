@@ -2,10 +2,11 @@ import http from "node:http";
 import { chromium } from "@playwright/test";
 
 const PORT = Number.parseInt(process.env.PORT || "4100", 10);
-const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_BODY_BYTES = 12 * 1024 * 1024;
+const MAX_IMAGE_DATA_URI_BYTES = 11 * 1024 * 1024;
 const RENDERER_NAME = "ChromiumRendererAdapter";
-const RENDERER_VERSION = "playwright-1.62.1-chromium-v1";
-const INSPECTOR_VERSION = "dom-geometry-v1";
+const RENDERER_VERSION = "playwright-1.62.1-chromium-v2-r4";
+const INSPECTOR_VERSION = "dom-geometry-v2-r4";
 const ALLOWED_TOP_LEVEL = new Set([
   "schema_version", "contract_version", "render_id", "revision_id", "visual_spec_id",
   "visual_spec_digest", "content_spec_digest", "design_profile_digest", "visual_pattern",
@@ -44,6 +45,16 @@ function assertExactKeys(value, allowed, label) {
   for (const key of Object.keys(value)) if (!allowed.has(key)) fail(`${label} contains unsupported field: ${key}`);
 }
 
+function validateImageBlock(block) {
+  if (typeof block.image_data_uri !== "string" || Buffer.byteLength(block.image_data_uri, "utf8") > MAX_IMAGE_DATA_URI_BYTES) {
+    fail("invalid image data URI size");
+  }
+  if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(block.image_data_uri)) fail("invalid image data URI");
+  if (!/^[0-9a-f]{64}$/.test(block.image_sha256 || "")) fail("invalid image digest");
+  if (!["image/png", "image/jpeg", "image/webp"].includes(block.image_content_type)) fail("invalid image content type");
+  if (!block.image_data_uri.startsWith(`data:${block.image_content_type};base64,`)) fail("image content type/data URI mismatch");
+}
+
 function validateRequest(value) {
   assertExactKeys(value, ALLOWED_TOP_LEVEL, "RendererRequestV1");
   if (value.schema_version !== 1 || value.contract_version !== "RendererRequestV1@1") fail("unsupported renderer contract");
@@ -57,6 +68,9 @@ function validateRequest(value) {
     if (page.page_index !== index) fail("page indices must be contiguous");
     if (typeof page.page_id !== "string" || !page.page_id) fail("invalid page_id");
     if (!Array.isArray(page.blocks) || page.blocks.length < 1 || page.blocks.length > 64) fail("invalid page blocks");
+    page.blocks.forEach((block) => {
+      if (block?.kind === "image") validateImageBlock(block);
+    });
   });
   for (const token of [value.theme?.background, value.theme?.surface, value.theme?.text, value.theme?.muted_text, value.theme?.accent, value.theme?.border]) {
     if (!Object.hasOwn(COLOR_TOKENS, token)) fail(`unmapped renderer color token: ${token}`);
@@ -79,6 +93,9 @@ function blockHtml(block) {
     const items = (block.items || []).map((item, itemIndex) => `<div class="diagram-node"><span>${itemIndex + 1}</span>${escapeHtml(item)}</div>`).join("");
     return `<div class="block diagram" data-block-id="${id}">${items}</div>`;
   }
+  if (block.kind === "image") {
+    return `<figure class="block image" data-block-id="${id}" data-image-sha256="${escapeHtml(block.image_sha256)}"><img src="${escapeHtml(block.image_data_uri)}" alt="" decoding="sync" /></figure>`;
+  }
   if (block.kind === "divider") return `<div class="block divider" data-block-id="${id}"></div>`;
   if (block.kind === "icon") return `<div class="block icon" data-block-id="${id}" aria-hidden="true"><span>✦</span></div>`;
   if (block.kind === "shape") return `<div class="shape-marker" data-block-id="${id}" data-shape="${escapeHtml(block.shape)}" aria-hidden="true"></div>`;
@@ -97,30 +114,50 @@ function htmlForPage(request, page) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>
 *{box-sizing:border-box}html,body{margin:0;width:${request.canvas_width}px;height:${request.canvas_height}px;overflow:hidden;background:${colors.background};color:${colors.text};font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
 body{position:relative}.canvas{position:absolute;inset:0;background:${colors.background};padding:${safe.top}px ${safe.right}px ${safe.bottom}px ${safe.left}px;overflow:hidden}.frame{position:relative;width:100%;height:100%;background:${colors.surface};border:2px solid ${colors.border};border-radius:${radius}px;padding:${density === "dense" ? 48 : density === "sparse" ? 68 : 58}px;display:flex;flex-direction:column;gap:${gap}px;overflow:hidden;box-shadow:0 22px 80px rgba(0,0,0,.08)}.frame:before{content:"";position:absolute;left:0;top:0;width:14px;height:100%;background:${colors.accent}}
-.kicker{font-size:23px;line-height:1;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:${colors.accent};padding-left:4px}.content{display:flex;flex:1;min-height:0;flex-direction:column;gap:${gap}px;justify-content:center}.block{position:relative;z-index:2}.text{white-space:pre-wrap;overflow-wrap:anywhere}.headline{font-weight:850;font-size:${density === "dense" ? 62 : density === "sparse" ? 78 : 70}px;line-height:1.02;letter-spacing:-.045em;max-width:900px}.body{font-size:${density === "dense" ? 35 : 39}px;line-height:1.22;font-weight:560;max-width:900px}.label{font-size:24px;line-height:1.12;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:${colors.accent}}.footer,.microcopy{margin-top:auto;font-size:24px;line-height:1.25;color:${colors.muted};font-weight:650}.divider{height:2px;background:${colors.border};width:100%}.metric{display:grid;gap:8px;padding:24px;border:2px solid ${colors.border};border-radius:${Math.max(8, radius - 8)}px}.metric span{font-size:22px;color:${colors.muted};text-transform:uppercase;letter-spacing:.08em}.metric strong{font-size:66px;line-height:1;color:${colors.accent}}.diagram{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.diagram-node{font-size:27px;line-height:1.2;font-weight:700;border:2px solid ${colors.border};border-radius:${Math.max(8, radius - 8)}px;padding:22px;background:${colors.background}}.diagram-node span{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:50%;background:${colors.accent};color:white;font-size:18px;margin-right:12px}.icon{font-size:52px;color:${colors.accent}}.meta{display:flex;justify-content:space-between;align-items:center;font-size:22px;line-height:1;color:${colors.muted};font-weight:700;letter-spacing:.04em}.meta .role{text-transform:uppercase;color:${colors.accent}}
-.frame.card_grid .content,.frame.evidence_grid .content{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:center}.frame.card_grid .headline,.frame.evidence_grid .headline{grid-column:1/-1}.frame.card_grid .body,.frame.evidence_grid .body{padding:24px;border:2px solid ${colors.border};border-radius:${Math.max(8, radius - 8)}px;background:${colors.background};font-size:${density === "dense" ? 30 : 34}px}.frame.split_focus .content,.frame.split_evidence .content{display:grid;grid-template-columns:1.18fr .82fr;align-items:center}.frame.split_focus .headline,.frame.split_evidence .headline{grid-column:1/-1}.frame.split_focus .body:nth-of-type(even),.frame.split_evidence .body:nth-of-type(even){padding-left:26px;border-left:5px solid ${colors.accent}}.frame.editorial_poster .headline{font-size:${density === "dense" ? 70 : 88}px;max-width:860px}.frame.hero_stack .content{justify-content:center}.frame.metric_stack .content{justify-content:flex-start}.frame.metric_stack .metric{margin-top:8px}</style></head><body><main class="canvas"><section class="frame ${layout}" data-page-id="${escapeHtml(page.page_id)}"><div class="kicker">${escapeHtml(request.format.replaceAll("_", " "))}</div><div class="content">${contentBlocks}</div><div class="meta"><span class="role">${escapeHtml(page.role)}</span><span>${escapeHtml(pageNumber)}</span></div></section></main></body></html>`;
+.kicker{font-size:23px;line-height:1;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:${colors.accent};padding-left:4px}.content{display:flex;flex:1;min-height:0;flex-direction:column;gap:${gap}px;justify-content:center}.block{position:relative;z-index:2}.text{white-space:pre-wrap;overflow-wrap:anywhere}.headline{font-weight:850;font-size:${density === "dense" ? 62 : density === "sparse" ? 78 : 70}px;line-height:1.02;letter-spacing:-.045em;max-width:900px}.body{font-size:${density === "dense" ? 35 : 39}px;line-height:1.22;font-weight:560;max-width:900px}.label{font-size:24px;line-height:1.12;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:${colors.accent}}.footer,.microcopy{margin-top:auto;font-size:24px;line-height:1.25;color:${colors.muted};font-weight:650}.divider{height:2px;background:${colors.border};width:100%}.metric{display:grid;gap:8px;padding:24px;border:2px solid ${colors.border};border-radius:${Math.max(8, radius - 8)}px}.metric span{font-size:22px;color:${colors.muted};text-transform:uppercase;letter-spacing:.08em}.metric strong{font-size:66px;line-height:1;color:${colors.accent}}.diagram{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.diagram-node{font-size:27px;line-height:1.2;font-weight:700;border:2px solid ${colors.border};border-radius:${Math.max(8, radius - 8)}px;padding:22px;background:${colors.background}}.diagram-node span{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:50%;background:${colors.accent};color:white;font-size:18px;margin-right:12px}.icon{font-size:52px;color:${colors.accent}}.image{margin:0;width:100%;height:${density === "dense" ? 300 : 340}px;min-height:${density === "dense" ? 300 : 340}px;overflow:hidden;border-radius:${Math.max(10, radius - 6)}px;border:2px solid ${colors.border};background:${colors.background}}.image img{display:block;width:100%;height:100%;object-fit:cover;object-position:center}.meta{display:flex;justify-content:space-between;align-items:center;font-size:22px;line-height:1;color:${colors.muted};font-weight:700;letter-spacing:.04em}.meta .role{text-transform:uppercase;color:${colors.accent}}
+.frame.card_grid .content,.frame.evidence_grid .content{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:center}.frame.card_grid .headline,.frame.evidence_grid .headline{grid-column:1/-1}.frame.card_grid .image,.frame.evidence_grid .image{grid-column:1/-1}.frame.card_grid .body,.frame.evidence_grid .body{padding:24px;border:2px solid ${colors.border};border-radius:${Math.max(8, radius - 8)}px;background:${colors.background};font-size:${density === "dense" ? 30 : 34}px}.frame.split_focus .content,.frame.split_evidence .content{display:grid;grid-template-columns:1.18fr .82fr;align-items:center}.frame.split_focus .headline,.frame.split_evidence .headline,.frame.split_focus .image,.frame.split_evidence .image{grid-column:1/-1}.frame.split_focus .body:nth-of-type(even),.frame.split_evidence .body:nth-of-type(even){padding-left:26px;border-left:5px solid ${colors.accent}}.frame.editorial_poster .headline{font-size:${density === "dense" ? 70 : 88}px;max-width:860px}.frame.editorial_poster .image{height:${density === "dense" ? 300 : 330}px;min-height:${density === "dense" ? 300 : 330}px}.frame.hero_stack .content{justify-content:center}.frame.metric_stack .content{justify-content:flex-start}.frame.metric_stack .metric{margin-top:8px}</style></head><body><main class="canvas"><section class="frame ${layout}" data-page-id="${escapeHtml(page.page_id)}"><div class="kicker">${escapeHtml(request.format.replaceAll("_", " "))}</div><div class="content">${contentBlocks}</div><div class="meta"><span class="role">${escapeHtml(page.role)}</span><span>${escapeHtml(pageNumber)}</span></div></section></main></body></html>`;
+}
+
+async function waitForAssets(page) {
+  await page.evaluate(async () => {
+    if (document.fonts?.ready) await document.fonts.ready;
+    const images = Array.from(document.images);
+    await Promise.all(images.map((image) => {
+      if (image.complete) return Promise.resolve();
+      return new Promise((resolve) => {
+        image.addEventListener("load", resolve, {once:true});
+        image.addEventListener("error", resolve, {once:true});
+      });
+    }));
+  });
 }
 
 async function withPreparedPage(browser, request, pageSpec, callback) {
   const context = await browser.newContext({viewport:{width:request.canvas_width,height:request.canvas_height},deviceScaleFactor:1,colorScheme:"light",reducedMotion:"reduce"});
   try {
-    await context.route("**/*", (route) => route.abort());
+    await context.route("**/*", (route) => {
+      const url = route.request().url();
+      if (url.startsWith("data:")) return route.continue();
+      return route.abort();
+    });
     const page = await context.newPage();
     await page.setContent(htmlForPage(request, pageSpec), {waitUntil:"load",timeout:10_000});
-    await page.evaluate(async () => { if (document.fonts?.ready) await document.fonts.ready; });
+    await waitForAssets(page);
     return await callback(page);
   } finally { await context.close(); }
 }
 
 async function renderPage(browser, request, pageSpec) {
   return withPreparedPage(browser, request, pageSpec, async (page) => {
+    const malformed = await page.evaluate(() => Array.from(document.images).some((image) => !image.complete || image.naturalWidth < 2 || image.naturalHeight < 2));
+    if (malformed) fail("generated image failed to decode inside renderer", 422);
     const data = await page.screenshot({type:"png",fullPage:false,animations:"disabled",caret:"hide"});
     return {page_id:pageSpec.page_id,page_index:pageSpec.page_index,width:request.canvas_width,height:request.canvas_height,content_type:"image/png",data_base64:data.toString("base64")};
   });
 }
 
 function semanticPageSignature(pageSpec) {
-  return JSON.stringify(pageSpec.blocks.map((block) => ({kind:block.kind,role:block.role ?? null,text:block.text ?? null,label:block.label ?? null,items:block.items ?? null})));
+  return JSON.stringify(pageSpec.blocks.map((block) => ({kind:block.kind,role:block.role ?? null,text:block.text ?? null,label:block.label ?? null,items:block.items ?? null,image_sha256:block.image_sha256 ?? null})));
 }
 
 async function inspectPage(browser, request, pageSpec, duplicatePage) {
@@ -131,7 +168,7 @@ async function inspectPage(browser, request, pageSpec, duplicatePage) {
       const frame = document.querySelector(".frame");
       const content = document.querySelector(".content");
       const blocks = Array.from(document.querySelectorAll(".content > .block"));
-      if (!frame || !content) return {clipping:true,overlap:true,unreadable_hierarchy:true,malformed_imagery:false,wrong_visible_text:true,key_copy_omitted:true,semantic_contradiction:false};
+      if (!frame || !content) return {clipping:true,overlap:true,unreadable_hierarchy:true,malformed_imagery:true,wrong_visible_text:true,key_copy_omitted:true,semantic_contradiction:false};
       const frameRect = rectOf(frame);
       const blockRects = blocks.map((element) => ({element,rect:rectOf(element)}));
       const tolerance = 1;
@@ -140,13 +177,15 @@ async function inspectPage(browser, request, pageSpec, duplicatePage) {
       for (let i=0;i<blockRects.length && !overlap;i+=1) for (let j=i+1;j<blockRects.length;j+=1) { const a=blockRects[i].rect; const b=blockRects[j].rect; const w=Math.min(a.right,b.right)-Math.max(a.left,b.left); const h=Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top); if (w>2 && h>2) { overlap=true; break; } }
       const textBlocks = blocks.filter((element) => element.classList.contains("text"));
       const unreadableHierarchy = textBlocks.some((element) => { const style=getComputedStyle(element); const size=Number.parseFloat(style.fontSize||"0"); const rect=element.getBoundingClientRect(); return !Number.isFinite(size)||size<18||rect.width<2||rect.height<2; });
+      const imageBlocks = blocks.filter((element) => element.classList.contains("image"));
+      const malformedImagery = imageBlocks.some((element) => { const image=element.querySelector("img"); return !image || !image.complete || image.naturalWidth<2 || image.naturalHeight<2; });
       const expectedCritical=[];
       for (const block of spec.blocks) { if (!block.editorial_critical) continue; if (typeof block.text === "string") expectedCritical.push(block.text); if (typeof block.label === "string") expectedCritical.push(block.label); if (Array.isArray(block.items)) expectedCritical.push(...block.items); }
       const visibleText=normalize(content.textContent);
       const keyCopyOmitted=expectedCritical.some((value)=>!visibleText.includes(normalize(value)));
       const domById=new Map(blocks.map((element)=>[element.getAttribute("data-block-id"),normalize(element.textContent)]));
       const wrongVisibleText=spec.blocks.some((block)=>{ if(!block.editorial_critical)return false; const actual=domById.get(block.block_id); if(actual==null)return true; const expected=[]; if(typeof block.text==="string")expected.push(block.text); if(typeof block.label==="string")expected.push(block.label); if(Array.isArray(block.items))expected.push(...block.items); return expected.some((part)=>!actual.includes(normalize(part))); });
-      return {clipping,overlap,unreadable_hierarchy:unreadableHierarchy,malformed_imagery:false,wrong_visible_text:wrongVisibleText,key_copy_omitted:keyCopyOmitted,semantic_contradiction:false};
+      return {clipping,overlap,unreadable_hierarchy:unreadableHierarchy,malformed_imagery:malformedImagery,wrong_visible_text:wrongVisibleText,key_copy_omitted:keyCopyOmitted,semantic_contradiction:false};
     }, pageSpec);
     return {schema_version:1,page_index:pageSpec.page_index,...observation,duplicate_page:duplicatePage};
   });
