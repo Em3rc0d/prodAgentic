@@ -109,6 +109,10 @@ class RoutingPolicy:
     max_models_per_stage: int = 2
     max_total_attempts: int = 5
     allow_direct_provider_fallback_after_n8n_failure: bool = False
+    # Hard wall-clock budget for one governed model-routing stage. This must stay
+    # below the browser/API request budget so a hung provider fails closed instead
+    # of leaving the UI waiting after its request has already been aborted.
+    max_stage_seconds: float = 75.0
 
 @dataclass
 class ModelExecutionRequest:
@@ -155,6 +159,8 @@ class ModelRouter:
             yield RoutingExhausted("No viable provider adapters available.")
             return
 
+        loop = asyncio.get_running_loop()
+        stage_deadline = loop.time() + max(0.01, float(self.policy.max_stage_seconds))
         models = get_models_for_profile(request.model_profile)
         total_attempts = 0
         models_tried = 0
@@ -180,6 +186,11 @@ class ModelRouter:
                 current_system_instruction = request.system_instruction
                 
                 while transport_retries <= self.policy.max_transport_retries_per_route and total_attempts < self.policy.max_total_attempts:
+                    remaining_seconds = stage_deadline - loop.time()
+                    if remaining_seconds <= 0:
+                        yield RoutingExhausted("Model stage deadline exceeded.")
+                        return
+
                     total_attempts += 1
                     attempt_id = str(uuid.uuid4())
                     successful_start = False
@@ -196,11 +207,15 @@ class ModelRouter:
                         )
                         
                         yield AttemptStarted(model_def.model_id, attempt_id, provider_name)
-                        
-                        async for chunk_type, chunk_text in stream_gen:
-                            successful_start = True
-                            accumulated_text += chunk_text
-                            yield ContentChunk(chunk_text, attempt_id)
+
+                        # Provider SDKs may wait indefinitely when transport stalls.
+                        # Bound the complete routing stage here so every adapter,
+                        # current or future, inherits the same fail-closed contract.
+                        async with asyncio.timeout(remaining_seconds):
+                            async for chunk_type, chunk_text in stream_gen:
+                                successful_start = True
+                                accumulated_text += chunk_text
+                                yield ContentChunk(chunk_text, attempt_id)
                         
                         # Validate the language
                         validation_result = LanguageValidator.validate(accumulated_text, request.expected_output_language, request.artifact_type)
@@ -235,6 +250,15 @@ class ModelRouter:
                         self._record_success(provider_name, model_def.model_id)
                         yield AttemptCompleted(attempt_id)
                         return # fully successful
+
+                    except TimeoutError:
+                        timeout_reason = "Model stage deadline exceeded."
+                        yield AttemptFailed(timeout_reason, attempt_id)
+                        if successful_start:
+                            yield AttemptResetRequired(timeout_reason, attempt_id)
+                        self._get_model_breaker(provider_name, model_def.model_id).record_failure(ErrorCode.TIMEOUT.value)
+                        yield RoutingExhausted(timeout_reason)
+                        return
                         
                     except ModelExecutionError as exec_error:
                         if successful_start:
