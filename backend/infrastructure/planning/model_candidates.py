@@ -39,6 +39,32 @@ class _IdeaPool(_StrictModel):
     ideas: tuple[_IdeaDraft, ...] = Field(min_length=1, max_length=24)
 
 
+class PrecomputedCandidateSource:
+    """Synchronous planner adapter for a model pool generated before planning.
+
+    BatchPlannerService remains unchanged and continues to own novelty/diversity.
+    The adapter refuses pool-size mismatches instead of silently regenerating or
+    padding creative work after the authoritative planning request begins.
+    """
+
+    def __init__(self, candidates: list[IdeaCandidateV1]):
+        self._candidates = tuple(candidates)
+
+    def generate(
+        self,
+        profile: ProfileVersion,
+        target_window: TargetWindow,
+        constraints: BatchRequestConstraints,
+        target_pool_size: int,
+    ) -> list[IdeaCandidateV1]:
+        del profile, target_window, constraints
+        if target_pool_size != len(self._candidates):
+            raise CandidateGenerationError(
+                f"Precomputed candidate pool size mismatch: expected {target_pool_size}, got {len(self._candidates)}"
+            )
+        return list(self._candidates)
+
+
 class RouterCandidateSource:
     """R4 creative candidate source backed by the governed ModelRouter.
 
@@ -131,7 +157,15 @@ class RouterCandidateSource:
                     )
                 feedback = f"ideas must contain exactly {target_pool_size} items; got {len(pool.ideas)}"
                 continue
-            return self._materialize(profile, target_window, constraints, pool.ideas)
+            candidates = self._materialize(profile, target_window, constraints, pool.ideas)
+            if len(candidates) != target_pool_size:
+                if repair >= self.max_contract_repairs:
+                    raise CandidateGenerationError(
+                        "Model candidate pool lost ideas during policy filtering; refusing to pad with duplicates"
+                    )
+                feedback = "Ideas must be unique and must not use excluded topics. Return a fully usable distinct pool."
+                continue
+            return candidates
 
         raise CandidateGenerationError("Model candidate generation exhausted")
 
