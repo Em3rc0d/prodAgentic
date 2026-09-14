@@ -69,15 +69,19 @@ jobs:
           cp frontend/r4-four-post-approved.png r4-four-post-evidence/ 2>/dev/null || true
           docker compose exec -T mongo mongosh --quiet prodagentic_local --eval '
             const revisions=db.content_revisions.find({status:"REVIEWABLE"},{_id:0,revision_id:1,content_id:1,status:1,asset_refs:1,qa_report_id:1}).toArray();
-            const approvals=db.approvals.find({},{_id:0,approval_id:1,revision_id:1,bundle_sha256:1}).toArray();
-            print(JSON.stringify({revision_count:revisions.length,approval_count:approvals.length,revisions,approvals}));
+            const approvals=db.approval_bundles.find({},{_id:0,approval_id:1,revision_id:1,bundle_sha256:1}).toArray();
+            const items=db.content_items.find({editorial_state:"APPROVED"},{_id:0,content_id:1,current_revision_id:1,latest_approval_id:1,editorial_state:1}).toArray();
+            print(JSON.stringify({revision_count:revisions.length,approval_count:approvals.length,approved_item_count:items.length,revisions,approvals,items}));
           ' | tee r4-four-post-evidence/persistence-before-restart.json
           python - <<'PY'
           import json
           payload=json.load(open('r4-four-post-evidence/persistence-before-restart.json'))
           assert payload['revision_count']==4, payload
           assert payload['approval_count']==4, payload
+          assert payload['approved_item_count']==4, payload
           assert all(row.get('asset_refs') for row in payload['revisions']), payload
+          assert all(row.get('bundle_sha256') for row in payload['approvals']), payload
+          assert all(row.get('latest_approval_id') for row in payload['items']), payload
           PY
       - name: Restart backend over persisted Mongo and owned assets
         run: |
@@ -97,9 +101,15 @@ jobs:
           docker compose exec -T mongo mongosh --quiet prodagentic_local --eval '
             print(JSON.stringify({
               revisions:db.content_revisions.countDocuments({status:"REVIEWABLE"}),
-              approvals:db.approvals.countDocuments({})
+              approvals:db.approval_bundles.countDocuments({}),
+              approved_items:db.content_items.countDocuments({editorial_state:"APPROVED"})
             }));
           ' | tee r4-four-post-evidence/persistence-after-restart.json
+          python - <<'PY'
+          import json
+          payload=json.load(open('r4-four-post-evidence/persistence-after-restart.json'))
+          assert payload == {'revisions':4,'approvals':4,'approved_items':4}, payload
+          PY
       - name: Verify tracked checkout remained clean
         run: |
           rm -f frontend/r4-four-post-state.json frontend/r4-four-post-approved.png frontend/r4-four-post-after-restart.png
