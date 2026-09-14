@@ -96,6 +96,7 @@ export interface BatchPlanningResponseV1 {
     evaluations: CandidateEvaluationV1[];
   };
   memory_count: number;
+  creative_source?: "deterministic_demo" | "model_router";
 }
 
 export async function createBatchV1(
