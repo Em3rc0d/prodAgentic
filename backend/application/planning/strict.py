@@ -15,30 +15,41 @@ class BatchDistinctnessConflict(PlanningConflict):
 
 
 _GENERIC_EDITORIAL_TOKENS = {
-    "a", "an", "and", "best", "checklist", "de", "del", "el", "en", "for", "guide",
-    "how", "la", "las", "los", "mistake", "mistakes", "more", "para", "post", "posts",
+    "a", "an", "and", "best", "checklist", "common", "de", "del", "el", "en", "for", "guide",
+    "how", "la", "las", "los", "mistake", "mistakes", "more", "para", "post", "posts", "quick",
     "the", "tip", "tips", "to", "tutorial", "vs", "y",
 }
 
 
-def _concept_tokens(item: ContentItem) -> frozenset[str]:
-    values = [item.canonical_topic.replace(".", " "), *item.subtopics, item.angle]
-    tokens = {
+def _tokens(*values: str) -> frozenset[str]:
+    return frozenset(
         token
-        for token in normalize_text(" ".join(values)).split()
+        for token in normalize_text(" ".join(value for value in values if value)).split()
         if len(token) >= 2 and token not in _GENERIC_EDITORIAL_TOKENS
-    }
-    return frozenset(tokens)
+    )
 
 
-def _similarity(left: frozenset[str], right: frozenset[str]) -> float:
+def _topic_tokens(item: ContentItem) -> frozenset[str]:
+    return _tokens(item.canonical_topic.replace(".", " "))
+
+
+def _concept_tokens(item: ContentItem) -> frozenset[str]:
+    return _tokens(item.canonical_topic.replace(".", " "), *item.subtopics, item.angle)
+
+
+def _jaccard(left: frozenset[str], right: frozenset[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def _concept_similarity(left: frozenset[str], right: frozenset[str]) -> float:
     if not left or not right:
         return 0.0
     intersection = left & right
-    union = left | right
-    jaccard = len(intersection) / len(union)
+    jaccard = len(intersection) / len(left | right)
     containment = len(intersection) / min(len(left), len(right))
-    return max(jaccard, containment if len(intersection) >= 1 else 0.0)
+    return max(jaccard, containment if len(intersection) >= 2 else jaccard)
 
 
 @dataclass(frozen=True)
@@ -51,12 +62,16 @@ class DistinctnessIssue:
 def batch_distinctness_issues(items: tuple[ContentItem, ...] | list[ContentItem]) -> tuple[DistinctnessIssue, ...]:
     issues: list[DistinctnessIssue] = []
     for index, left in enumerate(items):
-        left_tokens = _concept_tokens(left)
+        left_topic = _topic_tokens(left)
+        left_concept = _concept_tokens(left)
         for right in items[index + 1 :]:
-            right_tokens = _concept_tokens(right)
-            similarity = _similarity(left_tokens, right_tokens)
-            single_concept_duplicate = len(left_tokens) == 1 and left_tokens == right_tokens
-            if single_concept_duplicate or similarity >= 0.84:
+            right_topic = _topic_tokens(right)
+            right_concept = _concept_tokens(right)
+            topic_similarity = _jaccard(left_topic, right_topic)
+            concept_similarity = _concept_similarity(left_concept, right_concept)
+            exact_topic_family = bool(left_topic) and left_topic == right_topic
+            similarity = max(topic_similarity, concept_similarity)
+            if exact_topic_family or topic_similarity >= 0.80 or concept_similarity >= 0.84:
                 issues.append(
                     DistinctnessIssue(
                         left_content_id=left.content_id,
