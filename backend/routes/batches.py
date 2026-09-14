@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from application.learning import PerformanceSummaryService, PlannerPerformanceSource
 from application.planning import BatchPlannerService, DeterministicCandidateSource, PlanningConflict
 from application.tenancy.context import require_tenant_context
+from core.demo import demo_mode_enabled
 from core.feature_flags import FeatureFlag
 from db.mongo import get_db
 from domain.planning.models import BatchRequestConstraints, TargetWindow, utc_now
@@ -15,6 +16,7 @@ from infrastructure.mongo.editorial_memory import MongoEditorialMemoryProjector
 from infrastructure.mongo.learning import MongoPerformanceEvidenceRepository, MongoPerformanceSummaryRepository
 from infrastructure.mongo.planning import MongoPlanningRepository
 from infrastructure.mongo.profiles import MongoProfileRepository
+from infrastructure.planning.model_candidates import CandidateGenerationError, PrecomputedCandidateSource, RouterCandidateSource
 
 
 router = APIRouter(tags=["mk1-batches"])
@@ -50,6 +52,45 @@ def _repositories(request: Request, context: TenantContext):
     return registry, db, profiles, planning, projector
 
 
+async def _candidate_source_for_request(
+    *,
+    request: Request,
+    context: TenantContext,
+    profiles: MongoProfileRepository,
+    profile_id: str,
+    body: CreateBatchRequest,
+):
+    if demo_mode_enabled():
+        return DeterministicCandidateSource()
+
+    profile = await profiles.get_profile(profile_id)
+    if profile is None or profile.tenant_id != context.tenant_id:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    version = await profiles.get_version(profile_id, profile.current_version)
+    if version is None or version.tenant_id != context.tenant_id:
+        raise HTTPException(status_code=409, detail="Current ProfileVersion is unavailable")
+
+    container = getattr(request.app.state, "container", None)
+    router_instance = getattr(container, "router", None) if container is not None else None
+    if router_instance is None:
+        raise HTTPException(status_code=503, detail="Creative planning model router is unavailable")
+
+    target_pool_size = min(BatchPlannerService.candidate_cap, max(8, body.requested_size * 3))
+    try:
+        candidates = await RouterCandidateSource(router_instance).generate(
+            version,
+            body.target_window,
+            body.constraints,
+            target_pool_size,
+        )
+    except CandidateGenerationError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Creative planning failed before a valid governed candidate pool was produced",
+        ) from exc
+    return PrecomputedCandidateSource(candidates)
+
+
 @router.post("/profiles/{profile_id}/batches", status_code=201)
 async def create_batch(
     profile_id: str,
@@ -66,10 +107,18 @@ async def create_batch(
                 summaries=MongoPerformanceSummaryRepository(db, context),
             )
         )
+
+    candidate_source = await _candidate_source_for_request(
+        request=request,
+        context=context,
+        profiles=profiles,
+        profile_id=profile_id,
+        body=body,
+    )
     service = BatchPlannerService(
         profiles,
         planning,
-        DeterministicCandidateSource(),
+        candidate_source,
         projector,
         performance_source=performance_source,
     )
@@ -85,12 +134,15 @@ async def create_batch(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PlanningConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except CandidateGenerationError as exc:
+        raise HTTPException(status_code=502, detail="Candidate pool could not be bound to the planner request") from exc
     return {
         "batch": _serialize(result.batch.model_dump(mode="json")),
         "content_items": [_serialize(item.model_dump(mode="json")) for item in result.items],
         "plans": [_serialize(item.model_dump(mode="json")) for item in result.plans],
         "planning_trace": _serialize(result.trace.model_dump(mode="json")),
         "memory_count": result.memory_count,
+        "creative_source": "deterministic_demo" if demo_mode_enabled() else "model_router",
     }
 
 
