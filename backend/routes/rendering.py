@@ -1,28 +1,38 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from application.rendering.copy_resolver import UnsupportedRenderInput
+from application.rendering.r4_service import R4RenderService
 from application.rendering.service import (
     RenderAuthorityError,
     RenderConflict,
     RenderExecutionFailed,
     RenderIntegrityError,
-    RenderService,
 )
 from application.tenancy.context import require_tenant_context
+from core.demo import demo_mode_enabled
 from core.feature_flags import FeatureFlag
 from db.mongo import get_db
 from domain.production.models import RevisionStatus
 from domain.tenants.models import TenantContext
-from infrastructure.assets.filesystem import FilesystemAssetStore
+from infrastructure.assets.r4_filesystem import R4FilesystemAssetStore
 from infrastructure.mongo.production import MongoProductionRepository
-from infrastructure.mongo.rendering import MongoRenderingRepository
+from infrastructure.mongo.rendering_r4 import MongoR4RenderingRepository
 from infrastructure.mongo.visual import MongoVisualRepository
 from infrastructure.rendering.chromium import ChromiumRendererAdapter
+from infrastructure.visual.gemini_image import GeminiImageGenerationAdapter
 
 
 router = APIRouter(tags=["mk1-rendering"])
+
+
+def _truthy(value: str | None, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _runtime(request: Request, context: TenantContext):
@@ -38,10 +48,21 @@ def _runtime(request: Request, context: TenantContext):
         raise HTTPException(status_code=503, detail="MongoDB not connected")
     production = MongoProductionRepository(db, context)
     visual = MongoVisualRepository(db, context)
-    rendering = MongoRenderingRepository(db, context)
-    asset_store = FilesystemAssetStore()
+    rendering = MongoR4RenderingRepository(db, context)
+    asset_store = R4FilesystemAssetStore()
     renderer = ChromiumRendererAdapter()
-    return production, visual, rendering, asset_store, renderer
+
+    image_generator = None
+    generated_enabled = (
+        not demo_mode_enabled()
+        and _truthy(os.getenv("PRODAGENTIC_GENERATIVE_VISUALS"), default=True)
+    )
+    if generated_enabled:
+        container = getattr(request.app.state, "container", None)
+        client = getattr(container, "client", None) if container is not None else None
+        if client is not None:
+            image_generator = GeminiImageGenerationAdapter(client)
+    return production, visual, rendering, asset_store, renderer, image_generator
 
 
 @router.post("/content-revisions/{revision_id}/render", status_code=201)
@@ -50,13 +71,14 @@ async def render_revision(
     request: Request,
     context: TenantContext = Depends(require_tenant_context),
 ):
-    production, visual, rendering, asset_store, renderer = _runtime(request, context)
-    service = RenderService(
+    production, visual, rendering, asset_store, renderer, image_generator = _runtime(request, context)
+    service = R4RenderService(
         production_repository=production,
         visual_repository=visual,
         rendering_repository=rendering,
         renderer=renderer,
         asset_store=asset_store,
+        image_generator=image_generator,
     )
     try:
         result = await service.render_revision(tenant_id=context.tenant_id, revision_id=revision_id)
@@ -65,7 +87,7 @@ async def render_revision(
     except RenderConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except RenderIntegrityError as exc:
-        raise HTTPException(status_code=409, detail="S5 render integrity check failed") from exc
+        raise HTTPException(status_code=409, detail="R4 render integrity check failed") from exc
     except UnsupportedRenderInput as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RenderExecutionFailed as exc:
@@ -76,6 +98,7 @@ async def render_revision(
         "revision": result.revision.model_dump(mode="json"),
         "render_result": result.render_result.model_dump(mode="json"),
         "preview": _preview_payload(result.revision, result.render_result),
+        "generated_source_count": len(result.visual_spec.asset_requirements),
         "next_stage": "S6_QA",
     }
 
@@ -86,7 +109,7 @@ async def get_render_result(
     request: Request,
     context: TenantContext = Depends(require_tenant_context),
 ):
-    _, _, rendering, asset_store, _ = _runtime(request, context)
+    _, _, rendering, asset_store, _, _ = _runtime(request, context)
     try:
         result = await rendering.get_render_result(render_id)
     except ValueError as exc:
@@ -105,7 +128,7 @@ async def get_render_asset_content(
     request: Request,
     context: TenantContext = Depends(require_tenant_context),
 ):
-    _, _, rendering, asset_store, _ = _runtime(request, context)
+    _, _, rendering, asset_store, _, _ = _runtime(request, context)
     try:
         asset = await rendering.get_asset(asset_id)
     except ValueError as exc:
@@ -132,7 +155,7 @@ async def get_render_preview(
     request: Request,
     context: TenantContext = Depends(require_tenant_context),
 ):
-    production, visual, rendering, asset_store, _ = _runtime(request, context)
+    production, visual, rendering, asset_store, _, _ = _runtime(request, context)
     revision = await production.get_revision(context.tenant_id, revision_id)
     if revision is None:
         raise HTTPException(status_code=404, detail="ContentRevision not found")
