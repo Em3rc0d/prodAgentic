@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from application.learning import PerformanceSummaryService, PlannerPerformanceSource
 from application.planning import BatchPlannerService, DeterministicCandidateSource, PlanningConflict
+from application.planning.formats import AutoFormatCandidateSource, R4_AUTO_FORMAT_POLICY_VERSION
 from application.tenancy.context import require_tenant_context
 from core.demo import demo_mode_enabled
 from core.feature_flags import FeatureFlag
@@ -61,7 +62,7 @@ async def _candidate_source_for_request(
     body: CreateBatchRequest,
 ):
     if demo_mode_enabled():
-        return DeterministicCandidateSource()
+        return AutoFormatCandidateSource(DeterministicCandidateSource())
 
     profile = await profiles.get_profile(profile_id)
     if profile is None or profile.tenant_id != context.tenant_id:
@@ -88,7 +89,7 @@ async def _candidate_source_for_request(
             status_code=502,
             detail="Creative planning failed before a valid governed candidate pool was produced",
         ) from exc
-    return PrecomputedCandidateSource(candidates)
+    return AutoFormatCandidateSource(PrecomputedCandidateSource(candidates))
 
 
 @router.post("/profiles/{profile_id}/batches", status_code=201)
@@ -143,6 +144,7 @@ async def create_batch(
         "planning_trace": _serialize(result.trace.model_dump(mode="json")),
         "memory_count": result.memory_count,
         "creative_source": "deterministic_demo" if demo_mode_enabled() else "model_router",
+        "format_policy": R4_AUTO_FORMAT_POLICY_VERSION,
     }
 
 
