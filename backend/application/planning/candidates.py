@@ -43,14 +43,14 @@ _EFFECT_BY_ROLE = {
 
 
 class DeterministicCandidateSource:
-    """Provider-free bounded S2 candidate generator.
+    """Provider-free bounded candidate source for demo/certification fallback.
 
-    S2 proves planning policy rather than creative model quality. A later candidate
-    adapter may use a model behind CandidateSourcePort, but it must still return
-    IdeaCandidateV1 and remain bounded by the planner pool contract.
+    R4 production uses a model-backed source. This deterministic implementation is
+    intentionally retained for offline certification and degraded environments; it
+    still passes through the same novelty/diversity planner policy.
     """
 
-    def generate(
+    async def generate(
         self,
         profile: ProfileVersion,
         target_window: TargetWindow,
@@ -118,9 +118,6 @@ class DeterministicCandidateSource:
                 )
             )
             cursor += 1
-
-            # The identity matrix can cycle when a tiny Profile has only one role,
-            # one topic and a forced format. Stop rather than emitting duplicates.
             if cursor > 96:
                 break
 
