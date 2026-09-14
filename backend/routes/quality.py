@@ -9,10 +9,10 @@ from core.feature_flags import FeatureFlag
 from db.mongo import get_db
 from domain.production.models import RevisionStatus
 from domain.tenants.models import TenantContext
-from infrastructure.assets.filesystem import FilesystemAssetStore
+from infrastructure.assets.r4_filesystem import R4FilesystemAssetStore
 from infrastructure.mongo.production import MongoProductionRepository
 from infrastructure.mongo.quality import MongoQualityRepository
-from infrastructure.mongo.rendering import MongoRenderingRepository
+from infrastructure.mongo.rendering_r4 import MongoR4RenderingRepository
 from infrastructure.mongo.visual import MongoVisualRepository
 from infrastructure.quality.chromium import ChromiumVisualQAAdapter, VisualInspectorError
 
@@ -30,7 +30,7 @@ def _repositories(request: Request, context: TenantContext):
     return (
         MongoProductionRepository(db, context),
         MongoQualityRepository(db, context),
-        MongoRenderingRepository(db, context),
+        MongoR4RenderingRepository(db, context),
         MongoVisualRepository(db, context),
     )
 
@@ -47,7 +47,7 @@ async def execute_revision_qa(
         rendering_repository=rendering,
         visual_repository=visual,
         quality_repository=quality,
-        asset_store=FilesystemAssetStore(),
+        asset_store=R4FilesystemAssetStore(),
         visual_inspector=ChromiumVisualQAAdapter(),
     )
     try:
