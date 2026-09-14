@@ -44,7 +44,7 @@ class RenderSafeZoneV1(FrozenModel):
 
 class ResolvedRenderBlockV1(FrozenModel):
     block_id: str = Field(min_length=1, max_length=128)
-    kind: Literal["text", "shape", "icon", "diagram", "divider", "metric"]
+    kind: Literal["text", "shape", "icon", "image", "diagram", "divider", "metric"]
     role: Literal["headline", "body", "label", "footer", "microcopy"] | None = None
     text: str | None = Field(default=None, max_length=4_000)
     label: str | None = Field(default=None, max_length=1_000)
@@ -52,6 +52,9 @@ class ResolvedRenderBlockV1(FrozenModel):
     token_ref: str | None = Field(default=None, pattern=_TOKEN_PATTERN)
     icon_ref: str | None = Field(default=None, pattern=_TOKEN_PATTERN)
     shape: Literal["rect", "circle", "line"] | None = None
+    image_data_uri: str | None = Field(default=None, max_length=12 * 1024 * 1024)
+    image_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
+    image_content_type: Literal["image/png", "image/jpeg", "image/webp"] | None = None
     editorial_critical: bool = False
 
     @model_validator(mode="after")
@@ -70,8 +73,15 @@ class ResolvedRenderBlockV1(FrozenModel):
                 raise ValueError(f"resolved {self.kind} block requires token_ref")
             if self.kind == "shape" and self.shape is None:
                 raise ValueError("resolved shape block requires shape")
-        elif self.kind == "icon" and self.icon_ref is None:
-            raise ValueError("resolved icon block requires icon_ref")
+        elif self.kind == "icon":
+            if self.icon_ref is None:
+                raise ValueError("resolved icon block requires icon_ref")
+        elif self.kind == "image":
+            if not self.image_data_uri or not self.image_sha256 or not self.image_content_type:
+                raise ValueError("resolved image block requires owned data URI, digest and content type")
+            expected_prefix = f"data:{self.image_content_type};base64,"
+            if not self.image_data_uri.startswith(expected_prefix):
+                raise ValueError("resolved image block data URI/content type mismatch")
         return self
 
 
@@ -117,6 +127,30 @@ class RendererRequestV1(FrozenModel):
             raise ValueError("renderer page indices must be contiguous and ordered from zero")
         if len({page.page_id for page in self.pages}) != len(self.pages):
             raise ValueError("renderer page IDs must be unique")
+        return self
+
+
+class GeneratedSourceAssetV1(FrozenModel):
+    schema_version: Literal[1] = 1
+    source_asset_id: str = Field(min_length=1, max_length=128)
+    tenant_id: str = Field(min_length=1, max_length=128)
+    revision_id: str = Field(min_length=1, max_length=128)
+    visual_spec_id: str = Field(min_length=1, max_length=128)
+    requirement_id: str = Field(min_length=1, max_length=128)
+    provider: str = Field(min_length=1, max_length=80)
+    model: str = Field(min_length=1, max_length=160)
+    prompt_digest: str = Field(pattern=_SHA256_PATTERN)
+    content_type: Literal["image/png", "image/jpeg", "image/webp"]
+    byte_size: int = Field(gt=0, le=8 * 1024 * 1024)
+    storage_key: str = Field(pattern=_STORAGE_KEY_PATTERN, max_length=512)
+    sha256: str = Field(pattern=_SHA256_PATTERN)
+    created_at: datetime
+
+    @model_validator(mode="after")
+    def storage_key_is_relative_and_normalized(self):
+        parts = self.storage_key.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("generated source storage_key must be normalized and traversal-free")
         return self
 
 
