@@ -1,0 +1,261 @@
+name: R4 real-provider UAT harness
+
+on:
+  push:
+    branches: [r4-real-uat-cert]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-provider-uat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TARGET_SHA: 8a199821a13fdafb9ba2e815ccd14484f683ab16
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      PRODAGENTIC_DEMO_MODE: "false"
+      R4_WEB_URL: https://localhost:3000
+      R4_API_URL: https://localhost:8000
+      COMPOSE_PROJECT_NAME: prodagentic-r4-real-uat
+
+    steps:
+      - name: Require real provider secret
+        shell: bash
+        run: |
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo "::error::GEMINI_API_KEY repository secret is required for the real-provider UAT. Do not commit or print the key."
+            exit 1
+          fi
+
+      - name: Checkout exact certified candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+
+      - name: Assert candidate SHA
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          mkdir -p r4-real-uat-evidence
+          printf '%s\n' "$TARGET_SHA" > r4-real-uat-evidence/candidate-sha.txt
+
+      - name: Create ephemeral production auth secrets
+        shell: bash
+        run: |
+          echo "PRODAGENTIC_ADMIN_USER=em3rc0d-uat" >> "$GITHUB_ENV"
+          echo "PRODAGENTIC_ADMIN_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+          echo "PRODAGENTIC_SESSION_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Start strict production-like non-demo stack
+        shell: bash
+        run: |
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml up --build -d --wait --wait-timeout 600
+
+      - name: Prove real-provider readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 120); do
+            code=$(curl -k -sS -o r4-real-uat-evidence/readiness.json -w '%{http_code}' https://localhost:8000/health/ready || true)
+            status=$(python - <<'PY'
+          import json
+          try:
+              print(json.load(open('r4-real-uat-evidence/readiness.json')).get('status',''))
+          except Exception:
+              print('')
+          PY
+          )
+            if [ "$code" = "200" ] && { [ "$status" = "READY" ] || [ "$status" = "READY_WITH_STALE_CACHE" ]; }; then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          cat r4-real-uat-evidence/readiness.json
+          test "$ready" = "1"
+          python - <<'PY'
+          import json
+          payload=json.load(open('r4-real-uat-evidence/readiness.json'))
+          assert payload['status'] in {'READY','READY_WITH_STALE_CACHE'}, payload
+          assert payload['status'] != 'READY_DEMO', payload
+          PY
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install browser UAT dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Write runtime-only four-post UAT spec
+        shell: bash
+        run: |
+          cat > frontend/e2e/.r4-real-uat.runtime.spec.ts <<'TS'
+          import { expect, test } from "@playwright/test";
+          import fs from "node:fs";
+
+          test.use({ ignoreHTTPSErrors: true });
+
+          const WEB = process.env.R4_WEB_URL || "https://localhost:3000";
+          const API = process.env.R4_API_URL || "https://localhost:8000";
+          const username = process.env.PRODAGENTIC_ADMIN_USER || "";
+          const password = process.env.PRODAGENTIC_ADMIN_PASSWORD || "";
+          const evidenceDir = "../r4-real-uat-evidence";
+
+          const setup = {
+            name: "EM3RC0D R4 REAL UAT",
+            account_type: "education",
+            goals: ["educate", "build_authority"],
+            audience: "students and junior professionals in systems engineering, computing and IT who want practical technical skills",
+            voice: ["technical", "direct"],
+            batch_size: 4,
+            channels: ["manual_export"],
+            examples: [
+              {
+                kind: "caption",
+                label: "EM3RC0D technical authority",
+                text: "Explica problemas reales de sistemas, software, datos, redes, cloud y arquitectura con ejemplos concretos, sin repetir el mismo tutorial ni el mismo ángulo.",
+              },
+            ],
+          };
+
+          test("EM3RC0D produces exactly four real-provider review candidates without approval", async ({ page }) => {
+            test.setTimeout(900_000);
+            fs.mkdirSync(evidenceDir, { recursive: true });
+
+            const ready = await page.request.get(`${API}/health/ready`, { ignoreHTTPSErrors: true });
+            expect(ready.ok()).toBeTruthy();
+            const readiness = await ready.json();
+            expect(["READY", "READY_WITH_STALE_CACHE"]).toContain(readiness.status);
+            expect(readiness.status).not.toBe("READY_DEMO");
+
+            const login = await page.request.post(`${API}/api/auth/login`, {
+              ignoreHTTPSErrors: true,
+              data: { username, password },
+            });
+            expect(login.ok()).toBeTruthy();
+            const session = await login.json();
+            expect(session.authenticated).toBeTruthy();
+            expect(session.csrf_token).toBeTruthy();
+            const headers = { "X-CSRF-Token": String(session.csrf_token) };
+
+            const proposalResponse = await page.request.post(`${API}/api/profiles/inference-proposals`, {
+              ignoreHTTPSErrors: true,
+              headers,
+              data: setup,
+            });
+            expect(proposalResponse.ok()).toBeTruthy();
+            const proposal = await proposalResponse.json();
+            expect(new Set(proposal.topic_families).size).toBeGreaterThanOrEqual(4);
+
+            const acceptanceResponse = await page.request.post(`${API}/api/profiles`, {
+              ignoreHTTPSErrors: true,
+              headers,
+              data: { setup, proposal_digest: proposal.proposal_digest },
+            });
+            expect(acceptanceResponse.ok()).toBeTruthy();
+
+            await page.goto(`${WEB}/create`, { waitUntil: "domcontentloaded" });
+            await expect(page.getByRole("heading", { name: "Create for EM3RC0D R4 REAL UAT" })).toBeVisible({ timeout: 60_000 });
+            await expect(page.getByRole("button", { name: "4", exact: true })).toHaveAttribute("aria-pressed", "true");
+            await page.getByRole("button", { name: "Generate next batch" }).click();
+
+            await expect(page).toHaveURL(/\/review$/, { timeout: 600_000 });
+            const cards = page.getByTestId("r4-review-card");
+            await expect(cards).toHaveCount(4, { timeout: 60_000 });
+
+            const hrefs: string[] = [];
+            const titles: string[] = [];
+            for (let i = 0; i < 4; i += 1) {
+              const card = cards.nth(i);
+              const link = card.getByRole("link", { name: /Review exact creative/ });
+              const href = await link.getAttribute("href");
+              expect(href).toBeTruthy();
+              hrefs.push(String(href));
+              titles.push((await card.locator("h2").innerText()).trim());
+            }
+            expect(new Set(hrefs).size).toBe(4);
+            expect(new Set(titles).size).toBe(4);
+
+            const manifest: Array<Record<string, unknown>> = [];
+            for (let i = 0; i < hrefs.length; i += 1) {
+              await page.goto(`${WEB}${hrefs[i]}`, { waitUntil: "domcontentloaded" });
+              const root = page.getByTestId("s5-review-preview");
+              await expect(root).toHaveAttribute("data-qa-readiness", "READY_FOR_REVIEW", { timeout: 180_000 });
+              await expect(root).toHaveAttribute("data-s7-approval", "AVAILABLE");
+              await expect(page.getByTestId("s7-approved-receipt")).toHaveCount(0);
+
+              const pageButtons = page.getByRole("button", { name: /Show rendered page/ });
+              const pageCount = await pageButtons.count();
+              expect(pageCount).toBeGreaterThan(0);
+              for (let j = 0; j < pageCount; j += 1) {
+                await pageButtons.nth(j).click();
+                await expect(page.getByText(new RegExp(`Page ${j + 1} of ${pageCount}`))).toBeVisible();
+                await root.screenshot({ path: `${evidenceDir}/post-${i + 1}-page-${j + 1}.png` });
+              }
+
+              const revisionId = new URL(page.url()).pathname.split("/").filter(Boolean).at(-1) || "";
+              manifest.push({
+                index: i + 1,
+                title: titles[i],
+                href: hrefs[i],
+                revision_id: revisionId,
+                page_count: pageCount,
+                review_text: (await root.innerText()).trim(),
+                approval_state: "AVAILABLE",
+              });
+            }
+
+            fs.writeFileSync(`${evidenceDir}/manifest.json`, JSON.stringify({ target_sha: process.env.TARGET_SHA, readiness, posts: manifest }, null, 2));
+            await page.screenshot({ path: `${evidenceDir}/review-index.png`, fullPage: true });
+          });
+          TS
+
+      - name: Generate EM3RC0D x4 through real providers to Review only
+        working-directory: frontend
+        run: npx playwright test e2e/.r4-real-uat.runtime.spec.ts --reporter=line
+
+      - name: Prove four reviewables and zero approvals
+        shell: bash
+        run: |
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml exec -T mongo mongosh --quiet prodagentic_local --eval '
+            print(JSON.stringify({
+              revisions: db.content_revisions.countDocuments({status:"REVIEWABLE"}),
+              approvals: db.approval_bundles.countDocuments({}),
+              approved_items: db.content_items.countDocuments({editorial_state:"APPROVED"})
+            }));
+          ' | tee r4-real-uat-evidence/persistence.json
+          python - <<'PY'
+          import json
+          payload=json.load(open('r4-real-uat-evidence/persistence.json'))
+          assert payload == {'revisions':4,'approvals':0,'approved_items':0}, payload
+          PY
+
+      - name: Capture non-secret stack logs
+        if: always()
+        shell: bash
+        run: |
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml logs --no-color > r4-real-uat-evidence/compose.log 2>/dev/null || true
+
+      - name: Upload real-provider UAT evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-real-provider-uat-${{ env.TARGET_SHA }}
+          path: r4-real-uat-evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Destroy isolated UAT stack
+        if: always()
+        shell: bash
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml down -v --remove-orphans || true
