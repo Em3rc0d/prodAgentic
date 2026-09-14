@@ -15,7 +15,7 @@ class VisualInspectorError(RuntimeError):
 class ChromiumVisualQAAdapter:
     """Structural visual-QA adapter over the same isolated Chromium renderer."""
 
-    version = "dom-geometry-v1"
+    version = "dom-geometry-v2-r4"
 
     def __init__(self, base_url: str | None = None, *, timeout_seconds: float | None = None):
         configured = (base_url or os.getenv("PRODAGENTIC_RENDERER_URL", "http://127.0.0.1:4100")).strip()
@@ -28,7 +28,7 @@ class ChromiumVisualQAAdapter:
 
     async def inspect(self, request: RendererRequestV1) -> tuple[VisualQAObservationV1, ...]:
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds, trust_env=False) as client:
                 response = await client.post(
                     f"{self.base_url}/qa",
                     json=request.model_dump(mode="json"),
