@@ -37,8 +37,6 @@ def _prompt_for(
     design_profile: DesignProfileV1,
     purpose: str,
 ) -> str:
-    # Provider text is never allowed to author critical copy. The quoted content
-    # is semantic context only; exact words are overlaid later by Chromium.
     context = {
         "title": content.title,
         "hook": content.hook,
@@ -59,7 +57,12 @@ def _prompt_for(
 
 
 class GeneratedAssetResolver:
-    """Turns frozen VisualSpec requirements into immutable product-owned bytes."""
+    """Turns frozen VisualSpec requirements into immutable product-owned bytes.
+
+    Existing source authority always wins over current provider/prompt code. This
+    makes restart/retry deterministic even after a deployment changes prompt logic
+    or temporarily loses provider credentials.
+    """
 
     prompt_version = "mk1-r4-image-prompt-v1"
 
@@ -74,6 +77,29 @@ class GeneratedAssetResolver:
         self.asset_store = asset_store
         self.image_generator = image_generator
 
+    async def _existing_for_requirement(self, *, tenant_id, revision_id, visual_spec, requirement):
+        finder = getattr(self.repository, "find_source_asset", None)
+        if finder is None:
+            return None
+        existing = await finder(
+            tenant_id=tenant_id,
+            revision_id=revision_id,
+            visual_spec_id=visual_spec.visual_spec_id,
+            requirement_id=requirement.requirement_id,
+        )
+        if existing is None:
+            return None
+        if not await self.asset_store.verify(existing.storage_key, existing.sha256):
+            raise GeneratedAssetResolutionError("generated source asset bytes failed read-back verification")
+        data = await self.asset_store.get(existing.storage_key)
+        return ResolvedSourceAsset(
+            requirement_id=requirement.requirement_id,
+            data=data,
+            content_type=existing.content_type,
+            sha256=existing.sha256,
+            source_asset_id=existing.source_asset_id,
+        )
+
     async def resolve(
         self,
         *,
@@ -85,8 +111,6 @@ class GeneratedAssetResolver:
     ) -> dict[str, ResolvedSourceAsset]:
         if not visual_spec.asset_requirements:
             return {}
-        if self.image_generator is None:
-            raise GeneratedAssetResolutionError("generated visual requirement has no configured image provider")
 
         resolved: dict[str, ResolvedSourceAsset] = {}
         for index, requirement in enumerate(visual_spec.asset_requirements):
@@ -94,6 +118,23 @@ class GeneratedAssetResolver:
                 raise GeneratedAssetResolutionError(
                     f"unsupported R4 asset requirement kind: {requirement.kind.value}"
                 )
+
+            existing_semantic = await self._existing_for_requirement(
+                tenant_id=tenant_id,
+                revision_id=revision_id,
+                visual_spec=visual_spec,
+                requirement=requirement,
+            )
+            if existing_semantic is not None:
+                resolved[requirement.requirement_id] = existing_semantic
+                continue
+
+            if self.image_generator is None:
+                raise GeneratedAssetResolutionError(
+                    "generated visual requirement has no configured image provider",
+                    retryable=True,
+                )
+
             prompt = _prompt_for(
                 content=content,
                 visual_spec=visual_spec,
@@ -174,7 +215,13 @@ class GeneratedAssetResolver:
                 sha256=stored.sha256,
                 created_at=utc_now(),
             )
-            await self.repository.save_source_asset(metadata)
+            try:
+                await self.repository.save_source_asset(metadata)
+            except Exception as exc:
+                # Persisted bytes without metadata are not authority. Best-effort
+                # cleanup prevents orphan accumulation after CAS/lineage races.
+                await self.asset_store.delete(stored.storage_key)
+                raise GeneratedAssetResolutionError("generated source metadata could not be committed") from exc
             owned = await self.asset_store.get(stored.storage_key)
             resolved[requirement.requirement_id] = ResolvedSourceAsset(
                 requirement_id=requirement.requirement_id,
