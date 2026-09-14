@@ -26,9 +26,6 @@ _INTERNAL_OUTPUT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("internal.state_name", re.compile(r"\b(?:READY_FOR_REVIEW|QA_PENDING|VISUAL_PLANNING)\b")),
 )
 
-# These values belong to prodAgentic's own planning/authority vocabulary. We do
-# not reject arbitrary snake_case because developer, data and engineering clients
-# may legitimately publish code identifiers such as retry_count or user_id.
 _INTERNAL_CONTROL_TOKENS = {
     "better_decision",
     "profile_snapshot_digest",
@@ -39,12 +36,28 @@ _INTERNAL_CONTROL_TOKENS = {
     "agent_run_id",
 }
 
-_GENERIC_OPENERS = (
+# These are not stylistic opinions; they are known generic/template openings that
+# say almost nothing about the audience problem and repeatedly appeared in UAT.
+_HARD_GENERIC_OPENERS = (
     "una forma clara de pensar",
     "en este post",
     "hoy vamos a hablar de",
     "descubre todo sobre",
     "aprende todo sobre",
+    "para avanzar con",
+    "mas informacion sobre",
+    "antes de invertir mas tiempo en",
+    "to make progress with",
+    "more information about",
+    "before spending more time on",
+    "para avancar em",
+    "mais informacao sobre",
+)
+
+_TEMPLATE_BODY_PATTERNS = (
+    re.compile(r"define la decision.*elimina lo que no cambia.*siguiente accion", re.IGNORECASE | re.DOTALL),
+    re.compile(r"define the decision.*remove what does not change.*next action", re.IGNORECASE | re.DOTALL),
+    re.compile(r"defina a decisao.*elimine o que nao muda.*proxima acao", re.IGNORECASE | re.DOTALL),
 )
 
 _SNAKE_CASE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
@@ -75,12 +88,11 @@ def evaluate_publishability(
     plan: ContentPlanV1,
     profile: ProfileVersion,
 ) -> tuple[EditorialIssueV1, ...]:
-    """Deterministic floor for audience-facing quality.
+    """Deterministic minimum bar for audience-facing quality.
 
-    This does not pretend to replace model/human editorial judgment. It blocks
-    machine-internal leakage and structurally weak artifacts that should never be
-    approved, while returning warnings for softer quality risks. The rules are
-    vertical-neutral and bind only to frozen Profile/Plan/Content authority.
+    Human/model editorial judgment remains necessary, but R4 refuses known test
+    narration, template slop and structural failures even if an Editor model
+    incorrectly returns APPROVE_TEXT.
     """
 
     issues: list[EditorialIssueV1] = []
@@ -122,13 +134,24 @@ def evaluate_publishability(
         )
 
     hook_normalized = normalize_text(content.hook)
-    if any(hook_normalized.startswith(normalize_text(prefix)) for prefix in _GENERIC_OPENERS):
+    if any(hook_normalized.startswith(normalize_text(prefix)) for prefix in _HARD_GENERIC_OPENERS):
         issues.append(
             _issue(
                 "copy.generic_hook",
-                EditorialIssueSeverity.WARNING,
-                "Hook starts with generic framing instead of the Profile audience's specific tension, payoff or decision.",
+                EditorialIssueSeverity.BLOCKING,
+                "Hook uses a known generic/template opener instead of the Profile audience's specific tension, payoff or decision.",
                 "hook",
+            )
+        )
+
+    body_normalized = normalize_text(content.body)
+    if any(pattern.search(body_normalized) for pattern in _TEMPLATE_BODY_PATTERNS):
+        issues.append(
+            _issue(
+                "copy.template_body",
+                EditorialIssueSeverity.BLOCKING,
+                "Body matches a known generic production template instead of delivering topic-specific substance.",
+                "body",
             )
         )
 
@@ -152,7 +175,6 @@ def evaluate_publishability(
             )
         )
 
-    body_normalized = normalize_text(content.body)
     if body_normalized == hook_normalized:
         issues.append(
             _issue(
@@ -255,7 +277,6 @@ def evaluate_publishability(
                 )
             )
 
-    # Profile-aware but vertical-neutral checks.
     if profile.copy_policy.target_language != content.language:
         issues.append(
             _issue(
@@ -276,7 +297,6 @@ def evaluate_publishability(
             )
         )
 
-    # Deduplicate identical codes while preserving deterministic order.
     deduped: list[EditorialIssueV1] = []
     seen: set[str] = set()
     for item in issues:
