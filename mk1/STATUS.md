@@ -1,132 +1,130 @@
 # prodAgentic MK1 Status
 
 **As of:** 2026-09-13  
-**Stable release authority:** `main`  
-**Active design / implementation authority:** `developer`
+**Stable authority:** `main@790f1e86312e13f4b14f1320db5d83f94ed8a97e` — MK1-R3 certified  
+**Development authority:** `developer` — MK1-R4 Creative Production  
+**R4 state:** DESIGN + IMPLEMENTATION HARDENING / NOT CERTIFIED
 
-## Branch model
+## Canonical branch model
 
 ```text
-main       stable / certified integration line
-developer  active MK1-R4 design, hardening and implementation line
+main
+  └─ stable/certified authority only
+
+developer
+  └─ active brainstorming → design → architecture → plan → build → test
 ```
 
-All other branch refs are historical or superseded and are not current authority. See `mk1/build/REPOSITORY_HYGIENE.md`.
+No other branch is current product authority. Historical refs remain audit/archive material only.
 
-## Stable authority — MK1-R3
+## Current stable product boundary
 
-State: **CERTIFIED / MERGED / POST-MERGE GREEN**
+R3 remains the latest certified product authority on `main`:
 
 ```text
-pre-certified candidate
-7fc4f5fd08e190885da8206762a28863b8808e08
-
-main merge / certified stable authority
 790f1e86312e13f4b14f1320db5d83f94ed8a97e
-
-pre-merge workflows   14 / 14 SUCCESS
-pre-merge checks      17 / 17 SUCCESS
-post-merge workflows  14 / 14 SUCCESS
-post-merge checks     17 / 17 SUCCESS
 ```
 
-R3 authority includes the previously certified R2 product journey plus the profile-driven content-quality layer: Creative Brief, deterministic publishability floor, profile-derived topic/visual intelligence, semantic visual direction and cross-client behavior without vertical hardcoding.
+R4 is not allowed to inherit the word “certified” from R3 merely because it descends from it.
 
-Certified product/local-release boundary includes:
+## R4 objective
+
+R4 closes the remaining gap between a governed technical content pipeline and a governed creative-production system capable of producing complete, profile-driven, publishable editorial packages with real visual production.
+
+Canonical R4 authority:
+
+- `mk1/build/r4/README.md`
+- `mk1/build/r4/ARCHITECTURE.md`
+- `mk1/build/r4/BUILD_RECORD.md`
+- `mk1/build/r4/ERROR_LEDGER.md`
+- `mk1/build/r4/CANDIDATE.md`
+- `mk1/build/r4/CERTIFICATION_GRAPH.json`
+- `mk1/plan/R4_EXECUTION_PLAN.md`
+- `mk1/test/R4_ACCEPTANCE.md`
+- `mk1/mining-site/R4_RESEARCH_LEDGER.md`
+- `scripts/verify_r4_cert_graph.py`
+
+## R4 validation model
+
+R4 uses a reciprocal validation graph rather than isolated pipeline stages:
 
 ```text
-Profile
-  ↓
-Batch + Editorial Memory + Novelty
-  ↓
-Structured content production
-  ↓
-Publishability gate
-  ↓
+ProfileVersion
+  ↕
+CreativeBrief
+  ↕
+CandidatePool / EditorialMemory
+  ↕
+ContentPlan
+  ↕
+ResearchPack
+  ↕
+ContentSpec
+  ↕
+EditorialGate
+  ↕
 VisualSpec
-  ↓
-Chromium render + owned assets
-  ↓
-QA + recovery
-  ↓
-Review + approval
-  ↓
-Manual export
-  ↓
-Persistence + backend restart recovery
+  ↕
+Owned Source Assets
+  ↕
+Rendered Assets
+  ↕
+Visual QA
+  ↕
+Human Review
+  ↕
+ApprovalBundle
+  ↕
+Export / Publication
+  ↕
+Analytics / Learning
+  ↕
+EditorialMemory / next planning cycle
 ```
 
-R3 does not by itself claim public SaaS hosting, live publication to every provider, or live provider analytics.
+The machine-readable graph must contain reciprocal predecessor/successor edges and no orphan start/end nodes. Candidate mode additionally requires digest/evidence population.
 
-## Active authority — MK1-R4
+## R4 implemented but uncertified
 
-State: **IMPLEMENTED / DESIGN + HARDENING OPEN / NOT CERTIFIED**
+- model-backed creative candidate generation for production mode;
+- deterministic novelty/memory/diversity planning authority;
+- Profile-derived CreativeBrief;
+- strict R4 editorial publishability gate;
+- demo/production separation;
+- generated-image requirement and provider adapter path;
+- product-owned generated source assets with SHA lineage;
+- Chromium composition with resolved local/data-backed imagery;
+- QA reconstruction from persisted source lineage;
+- Review visual-board improvements.
 
-R4 implementation lineage currently consolidated into `developer`.
+## R4 blocking work
 
-Implementation anchor before branch consolidation:
+R4 remains open until all blockers in `mk1/build/r4/ERROR_LEDGER.md` and `mk1/test/R4_ACCEPTANCE.md` close. Major remaining proof includes full regression, legacy-profile handling, complete Review package visibility, real-provider UAT, four-piece publishability UAT, exact-head pre-cert and exact-main post-cert.
+
+## Candidate law
+
+A candidate is an exact `developer` SHA, not another branch.
 
 ```text
-7f0eac200c7c533cd8e09dd43a5a5546bcdad343
+developer@candidate SHA
+      ↓
+exact-head PRE-CERT
+      ↓
+real-profile/product UAT
+      ↓
+merge to main
+      ↓
+exact-main POST-CERT
+      ↓
+release receipt
 ```
 
-The former refs `mk1-r4-creative-production` and `mk1-r4-production-hardening` were verified identical at that SHA before `developer` became the single active R4 line.
+Any tracked mutation after freeze supersedes the candidate. A failed SHA is immutable evidence and is never relabeled certified.
 
-R4 work extends the system around creative production, source/asset lineage, stronger validation and the next design cycle. Documentation and design may continue to change on `developer`; therefore its moving HEAD is **not** a release certificate.
+## Historical MK1 evidence
 
-## Historical MK1 authority
+Earlier S0–S12/R2/R3 slice records remain valid historical evidence for the exact boundaries they certified. They do not supersede the current branch model or automatically certify R4.
 
-Earlier certified slice receipts remain valid historical evidence. They are not active branch requirements. The current stable product authority is the R3 `main` SHA above.
+## Build authorization
 
-Important previous release anchor:
-
-```text
-MK1-R2 final certified main
-6b6a73c554eab4926800c5c24df887c70aa678cc
-```
-
-R2 established the end-to-end local product machinery later inherited and extended by R3.
-
-## Promotion gate
-
-R4 may move from `developer` to `main` only through:
-
-```text
-close design / architecture / plan nodes
-        ↓
-freeze exact developer candidate SHA
-        ↓
-run all required exact-SHA workflows + checks
-        ↓
-no tracked mutation after green candidate
-        ↓
-PR developer -> main
-        ↓
-merge exact certified candidate only
-        ↓
-run exact-main post-merge certification
-        ↓
-record final release certificate
-```
-
-A candidate that fails or changes after freezing is superseded. It is never relabeled certified.
-
-## Repository cleanup state
-
-```text
-Active branches desired: main + developer
-Historical open PRs #24/#25: CLOSED / SUPERSEDED
-Historical refs: eligible for mechanical deletion
-```
-
-The connected GitHub automation surface currently exposes branch create/move but not delete-ref authority. Historical refs must not be force-moved to pretend they were deleted; branch deletion is a mechanical repository-admin cleanup and does not change product authority.
-
-## Next work
-
-Continue R4 from `developer` using the MK method:
-
-```text
-brainstorming → design → architecture → plan → build → test
-```
-
-with `mining-site` and `quarries` providing research/provenance evidence. Do not open additional long-lived branches for each stage.
+The phrase **“Take the hummer”** still means that the active design/architecture/plan graph is sufficiently closed to enter implementation. It never bypasses exact-SHA gates, product-quality UAT or post-merge certification.
