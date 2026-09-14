@@ -20,6 +20,7 @@ from domain.visual.models import (
     IconBlockV1,
     ImageBlockV1,
     MetricBlockV1,
+    RenderStrategy,
     ShapeBlockV1,
     TextBlockV1,
     VisualSpecV1,
@@ -29,6 +30,15 @@ from domain.visual.models import (
 
 class UnsupportedRenderInput(ValueError):
     pass
+
+
+_CERTIFIED_RENDER_STRATEGIES = {
+    RenderStrategy.COMPOSED_STATIC,
+    RenderStrategy.GENERATED_VISUAL_PLUS_COMPOSITE,
+    RenderStrategy.DIAGRAM,
+    RenderStrategy.CAROUSEL,
+    RenderStrategy.INFOGRAPHIC,
+}
 
 
 def _resolve_ref(copy_map: dict[str, str], ref: str) -> str:
@@ -130,6 +140,10 @@ def build_renderer_request(
     renderer_version: str,
     resolved_assets: dict[str, ResolvedSourceAsset] | None = None,
 ) -> RendererRequestV1:
+    if visual_spec.render_strategy not in _CERTIFIED_RENDER_STRATEGIES:
+        raise UnsupportedRenderInput(
+            f"render strategy {visual_spec.render_strategy.value} is not certified"
+        )
     if visual_spec.revision_id != revision_id:
         raise UnsupportedRenderInput("VisualSpec revision authority mismatch")
     if visual_spec.content_spec_id != content.content_spec_id:
