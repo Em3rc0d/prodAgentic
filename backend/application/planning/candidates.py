@@ -43,14 +43,14 @@ _EFFECT_BY_ROLE = {
 
 
 class DeterministicCandidateSource:
-    """Provider-free bounded candidate source for demo/certification fallback.
+    """Provider-free bounded S2/R4 fallback candidate generator.
 
-    R4 production uses a model-backed source. This deterministic implementation is
-    intentionally retained for offline certification and degraded environments; it
-    still passes through the same novelty/diversity planner policy.
+    Production R4 may precompute a model-backed creative pool and adapt it through
+    CandidateSourcePort. This deterministic source remains for demo/certification
+    and degraded provider-free execution only.
     """
 
-    async def generate(
+    def generate(
         self,
         profile: ProfileVersion,
         target_window: TargetWindow,
