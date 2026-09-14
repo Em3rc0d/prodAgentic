@@ -172,6 +172,8 @@ export function Mk1BatchCreate() {
       </section>
 
       {result && <section className={styles.result} aria-live="polite">
+        {result.creative_source === "deterministic_demo" && <div className={styles.productionGate} data-testid="r4-demo-mode-notice"><div><strong>Simulation mode · deterministic fixtures</strong><span>This run proves workflow, QA, approval and persistence. It does not represent production content quality. Set PRODAGENTIC_DEMO_MODE=false with a valid GEMINI_API_KEY to exercise R4 creative production.</span></div></div>}
+        {result.creative_source === "model_router" && <div className={styles.signal} data-testid="r4-real-creative-source"><span aria-hidden="true" />R4 model-backed creative planning</div>}
         <div className={styles.resultHeader}>
           <div><span className={styles.kicker}>Batch planned</span><h2>{result.batch.selected_size} of {result.batch.requested_size} ideas committed</h2><p>{result.batch.selected_size < result.batch.requested_size ? "We returned fewer ideas instead of repeating recent content." : "Freshness and current-batch diversity gates passed."}</p></div>
           <div className={styles.metrics}><div><small>Memory</small><strong>{result.memory_count}</strong></div><div><small>Pool</small><strong>{result.batch.summary_counts.candidates_generated}</strong></div><div><small>Blocked</small><strong>{result.batch.summary_counts.candidates_blocked + result.batch.summary_counts.candidates_rewrite}</strong></div></div>
