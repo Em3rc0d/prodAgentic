@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from application.learning import PerformanceSummaryService, PlannerPerformanceSource
 from application.planning import BatchPlannerService, DeterministicCandidateSource, PlanningConflict
 from application.planning.formats import AutoFormatCandidateSource, R4_AUTO_FORMAT_POLICY_VERSION
+from application.planning.strict import R4StrictBatchPlannerService
 from application.tenancy.context import require_tenant_context
 from core.demo import demo_mode_enabled
 from core.feature_flags import FeatureFlag
@@ -116,7 +117,10 @@ async def create_batch(
         profile_id=profile_id,
         body=body,
     )
-    service = BatchPlannerService(
+    # R4 API semantics are fail-closed: 201 means the complete requested batch
+    # exists and passed batch-level semantic distinctness. Historical S2 direct
+    # callers keep BatchPlannerService PARTIAL semantics for compatibility.
+    service = R4StrictBatchPlannerService(
         profiles,
         planning,
         candidate_source,
@@ -145,6 +149,7 @@ async def create_batch(
         "memory_count": result.memory_count,
         "creative_source": "deterministic_demo" if demo_mode_enabled() else "model_router",
         "format_policy": R4_AUTO_FORMAT_POLICY_VERSION,
+        "completeness_policy": "r4-exact-request-v1",
     }
 
 
