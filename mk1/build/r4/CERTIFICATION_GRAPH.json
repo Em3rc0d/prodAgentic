@@ -1,0 +1,45 @@
+{
+  "schema_version": "prodAgentic-cert-graph/v1",
+  "release": "MK1-R4",
+  "state": "DESIGNED_NOT_CERTIFIED",
+  "digest_algorithm": "sha256",
+  "graphs": [
+    {
+      "graph_id": "runtime-authority-cycle",
+      "require_strong_connectivity": true,
+      "nodes": [
+        {"id":"profile-version","type":"ProfileVersion","status":"implemented_uncertified","predecessors":["human-profile-decision"],"successors":["creative-brief"],"digest":null,"evidence":[]},
+        {"id":"creative-brief","type":"CreativeBrief","status":"implemented_uncertified","predecessors":["profile-version"],"successors":["candidate-pool"],"digest":null,"evidence":[]},
+        {"id":"candidate-pool","type":"CandidatePool","status":"implemented_uncertified","predecessors":["creative-brief","editorial-memory"],"successors":["content-plan"],"digest":null,"evidence":[]},
+        {"id":"content-plan","type":"ContentPlanV1","status":"implemented_uncertified","predecessors":["candidate-pool"],"successors":["research-pack"],"digest":null,"evidence":[]},
+        {"id":"research-pack","type":"ResearchPackV1","status":"implemented_uncertified","predecessors":["content-plan"],"successors":["content-spec"],"digest":null,"evidence":[]},
+        {"id":"content-spec","type":"ContentSpecV1","status":"implemented_uncertified","predecessors":["research-pack"],"successors":["editorial-gate"],"digest":null,"evidence":[]},
+        {"id":"editorial-gate","type":"EditorialPublishabilityGate","status":"implemented_uncertified","predecessors":["content-spec"],"successors":["visual-spec"],"digest":null,"evidence":[]},
+        {"id":"visual-spec","type":"VisualSpecV1","status":"implemented_uncertified","predecessors":["editorial-gate"],"successors":["source-assets"],"digest":null,"evidence":[]},
+        {"id":"source-assets","type":"OwnedSourceAssets","status":"implemented_uncertified","predecessors":["visual-spec"],"successors":["render-assets"],"digest":null,"evidence":[]},
+        {"id":"render-assets","type":"RenderedAssets","status":"implemented_uncertified","predecessors":["source-assets"],"successors":["visual-qa"],"digest":null,"evidence":[]},
+        {"id":"visual-qa","type":"VisualQAReport","status":"implemented_uncertified","predecessors":["render-assets"],"successors":["human-review"],"digest":null,"evidence":[]},
+        {"id":"human-review","type":"HumanReviewDecision","status":"implemented_uncertified","predecessors":["visual-qa"],"successors":["approval-bundle"],"digest":null,"evidence":[]},
+        {"id":"approval-bundle","type":"ApprovalBundle","status":"implemented_uncertified","predecessors":["human-review"],"successors":["export-publication"],"digest":null,"evidence":[]},
+        {"id":"export-publication","type":"ExportOrPublicationReceipt","status":"implemented_uncertified","predecessors":["approval-bundle"],"successors":["analytics-outcome"],"digest":null,"evidence":[]},
+        {"id":"analytics-outcome","type":"AnalyticsOutcome","status":"implemented_uncertified","predecessors":["export-publication"],"successors":["editorial-memory"],"digest":null,"evidence":[]},
+        {"id":"editorial-memory","type":"EditorialMemory","status":"implemented_uncertified","predecessors":["analytics-outcome"],"successors":["candidate-pool","learning-proposal"],"digest":null,"evidence":[]},
+        {"id":"learning-proposal","type":"LearningProposal","status":"design_required","predecessors":["editorial-memory"],"successors":["human-profile-decision"],"digest":null,"evidence":[]},
+        {"id":"human-profile-decision","type":"HumanProfileDecision","status":"design_required","predecessors":["learning-proposal"],"successors":["profile-version"],"digest":null,"evidence":[]}
+      ]
+    },
+    {
+      "graph_id": "release-certification-cycle",
+      "require_strong_connectivity": true,
+      "nodes": [
+        {"id":"developer-work","type":"DeveloperAuthority","status":"active","predecessors":["certified-main-base"],"successors":["candidate-freeze"],"digest":null,"evidence":[]},
+        {"id":"candidate-freeze","type":"ExactShaCandidate","status":"open","predecessors":["developer-work"],"successors":["pre-cert"],"digest":null,"evidence":[]},
+        {"id":"pre-cert","type":"ExactHeadPreCertification","status":"open","predecessors":["candidate-freeze"],"successors":["merge-receipt"],"digest":null,"evidence":[]},
+        {"id":"merge-receipt","type":"MergeReceipt","status":"open","predecessors":["pre-cert"],"successors":["post-cert"],"digest":null,"evidence":[]},
+        {"id":"post-cert","type":"ExactMainPostCertification","status":"open","predecessors":["merge-receipt"],"successors":["release-receipt"],"digest":null,"evidence":[]},
+        {"id":"release-receipt","type":"ReleaseReceipt","status":"open","predecessors":["post-cert"],"successors":["certified-main-base"],"digest":null,"evidence":[]},
+        {"id":"certified-main-base","type":"CertifiedMainAuthority","status":"r3_current","predecessors":["release-receipt"],"successors":["developer-work"],"digest":null,"evidence":["main@790f1e86312e13f4b14f1320db5d83f94ed8a97e"]}
+      ]
+    }
+  ]
+}
