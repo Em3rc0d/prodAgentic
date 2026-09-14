@@ -18,6 +18,7 @@ export interface ReviewQueueItem {
   hook?: string | null;
   format?: string | null;
   qa_report_id?: string | null;
+  preview_asset_id?: string | null;
 }
 
 export interface ReviewQueueResponse {
