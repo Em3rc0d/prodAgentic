@@ -36,9 +36,7 @@ _INTERNAL_CONTROL_TOKENS = {
     "agent_run_id",
 }
 
-# These are not stylistic opinions; they are known generic/template openings that
-# say almost nothing about the audience problem and repeatedly appeared in UAT.
-_HARD_GENERIC_OPENERS = (
+_GENERIC_OPENERS = (
     "una forma clara de pensar",
     "en este post",
     "hoy vamos a hablar de",
@@ -59,6 +57,18 @@ _TEMPLATE_BODY_PATTERNS = (
     re.compile(r"define the decision.*remove what does not change.*next action", re.IGNORECASE | re.DOTALL),
     re.compile(r"defina a decisao.*elimine o que nao muda.*proxima acao", re.IGNORECASE | re.DOTALL),
 )
+
+# These warnings are intentionally tolerated by deterministic demo fixtures so
+# CI can remain provider-free. R4 real production promotes them to hard failures
+# through strict_publishability_issues().
+_STRICT_PROMOTION_CODES = {
+    "copy.generic_hook",
+    "copy.template_body",
+    "copy.body_hook_duplicate",
+    "copy.value_density_low",
+    "visual.carousel_duplicate_headlines",
+    "visual.infographic_duplicate_labels",
+}
 
 _SNAKE_CASE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
 
@@ -88,11 +98,11 @@ def evaluate_publishability(
     plan: ContentPlanV1,
     profile: ProfileVersion,
 ) -> tuple[EditorialIssueV1, ...]:
-    """Deterministic minimum bar for audience-facing quality.
+    """Vertical-neutral audience-facing quality signals.
 
-    Human/model editorial judgment remains necessary, but R4 refuses known test
-    narration, template slop and structural failures even if an Editor model
-    incorrectly returns APPROVE_TEXT.
+    BLOCKING issues are universal safety/authority failures. Some WARNING issues
+    are promoted to hard failures only by the R4 real-production service, keeping
+    deterministic demo/certification fixtures separate from product-quality claims.
     """
 
     issues: list[EditorialIssueV1] = []
@@ -134,12 +144,12 @@ def evaluate_publishability(
         )
 
     hook_normalized = normalize_text(content.hook)
-    if any(hook_normalized.startswith(normalize_text(prefix)) for prefix in _HARD_GENERIC_OPENERS):
+    if any(hook_normalized.startswith(normalize_text(prefix)) for prefix in _GENERIC_OPENERS):
         issues.append(
             _issue(
                 "copy.generic_hook",
-                EditorialIssueSeverity.BLOCKING,
-                "Hook uses a known generic/template opener instead of the Profile audience's specific tension, payoff or decision.",
+                EditorialIssueSeverity.WARNING,
+                "Hook uses generic/template framing instead of the Profile audience's specific tension, payoff or decision.",
                 "hook",
             )
         )
@@ -149,7 +159,7 @@ def evaluate_publishability(
         issues.append(
             _issue(
                 "copy.template_body",
-                EditorialIssueSeverity.BLOCKING,
+                EditorialIssueSeverity.WARNING,
                 "Body matches a known generic production template instead of delivering topic-specific substance.",
                 "body",
             )
@@ -317,4 +327,18 @@ def blocking_publishability_issues(
         issue
         for issue in evaluate_publishability(content=content, plan=plan, profile=profile)
         if issue.severity == EditorialIssueSeverity.BLOCKING
+    )
+
+
+def strict_publishability_issues(
+    *,
+    content: ContentSpecV1,
+    plan: ContentPlanV1,
+    profile: ProfileVersion,
+) -> tuple[EditorialIssueV1, ...]:
+    """R4 product-quality gate used only for real provider-backed production."""
+    return tuple(
+        issue
+        for issue in evaluate_publishability(content=content, plan=plan, profile=profile)
+        if issue.severity == EditorialIssueSeverity.BLOCKING or issue.code in _STRICT_PROMOTION_CODES
     )
