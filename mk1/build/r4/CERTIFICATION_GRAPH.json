@@ -24,8 +24,8 @@
         {"id":"export-publication","type":"ExportOrPublicationReceipt","status":"implemented_uncertified","predecessors":["approval-bundle"],"successors":["analytics-outcome"],"digest":null,"evidence":[]},
         {"id":"analytics-outcome","type":"AnalyticsOutcome","status":"implemented_uncertified","predecessors":["export-publication"],"successors":["editorial-memory"],"digest":null,"evidence":[]},
         {"id":"editorial-memory","type":"EditorialMemory","status":"implemented_uncertified","predecessors":["analytics-outcome"],"successors":["candidate-pool","learning-proposal"],"digest":null,"evidence":[]},
-        {"id":"learning-proposal","type":"LearningProposal","status":"design_required","predecessors":["editorial-memory"],"successors":["human-profile-decision"],"digest":null,"evidence":[]},
-        {"id":"human-profile-decision","type":"HumanProfileDecision","status":"design_required","predecessors":["learning-proposal"],"successors":["profile-version"],"digest":null,"evidence":[]}
+        {"id":"learning-proposal","type":"LearningProposal","status":"designed_unimplemented","predecessors":["editorial-memory"],"successors":["human-profile-decision"],"digest":null,"evidence":["mk1/quarries/R4_LEARNING_AND_PROFILE_AUTHORITY.md"]},
+        {"id":"human-profile-decision","type":"HumanProfileDecision","status":"designed_unimplemented","predecessors":["learning-proposal"],"successors":["profile-version"],"digest":null,"evidence":["mk1/design/R4_CREATIVE_PRODUCTION.md"]}
       ]
     },
     {
