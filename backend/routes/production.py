@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from agents.router import ModelRouter
 from application.production.lifecycle import ContentProductionConflict, ContentProductionLifecycle
 from application.production.r4_service import R4StructuredAgentCellService
 from application.production.service import ProductionAuthorityError, ProductionContractViolation, ProductionDomainStop, RevisionBudgetExhausted, StructuredAgentCellService
@@ -65,6 +66,20 @@ def _repositories(request: Request, context: TenantContext):
     return MongoPlanningRepository(db, context), MongoProfileRepository(db, context), MongoProductionRepository(db, context)
 
 
+def _isolated_router(router_instance: ModelRouter) -> ModelRouter:
+    """Keep circuit-breaker state inside one independent production request.
+
+    Provider adapters and routing policy are reusable configuration, but model/provider
+    breaker state is runtime state. Sharing it across unrelated content items lets a
+    transient failure in one GenerationRun suppress provider attempts in the next.
+    """
+    return ModelRouter(
+        google_adapter=router_instance.google_adapter,
+        n8n_adapter=router_instance.n8n_adapter,
+        routing_policy=router_instance.policy,
+    )
+
+
 def _build_service(request: Request, repository: MongoProductionRepository) -> StructuredAgentCellService:
     factory = getattr(request.app.state, "s3_service_factory", None)
     if factory is not None:
@@ -78,11 +93,12 @@ def _build_service(request: Request, repository: MongoProductionRepository) -> S
     router_instance = getattr(container, "router", None) if container is not None else None
     if router_instance is None:
         raise HTTPException(status_code=503, detail="Model router is unavailable")
+    production_router = _isolated_router(router_instance)
     return R4StructuredAgentCellService(
         repository=repository,
-        research_agent=RouterResearchAgent(router_instance),
-        writer_agent=RouterWriterAgent(router_instance),
-        editor_agent=RouterEditorAgent(router_instance),
+        research_agent=RouterResearchAgent(production_router),
+        writer_agent=RouterWriterAgent(production_router),
+        editor_agent=RouterEditorAgent(production_router),
     )
 
 
