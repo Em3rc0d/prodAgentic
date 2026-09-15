@@ -268,14 +268,26 @@ class ModelRouter:
                             yield AttemptFailed(exec_error.sanitized_message, attempt_id)
 
                         if exec_error.category in (
-                            ErrorCode.INVALID_REQUEST, 
-                            ErrorCode.AUTHENTICATION, 
+                            ErrorCode.INVALID_REQUEST,
+                            ErrorCode.AUTHENTICATION,
                             ErrorCode.CANCELLED,
-                            ErrorCode.QUOTA_EXHAUSTED,
                             ErrorCode.UNKNOWN
                         ):
                             yield RoutingExhausted(f"Terminal error: {exec_error.category.value}")
                             return
+
+                        # Quota can be model/tier-specific. Treat it as exhaustion of
+                        # this route, not proof that every eligible model is unusable.
+                        # A truly project-wide quota still fails closed because every
+                        # subsequent model will independently return quota exhaustion.
+                        if exec_error.category == ErrorCode.QUOTA_EXHAUSTED:
+                            self._get_model_breaker(provider_name, model_def.model_id).record_failure(exec_error.category.value)
+                            if provider_name == "n8n":
+                                self._get_provider_breaker(provider_name).record_failure(exec_error.category.value)
+                                if not self.policy.allow_direct_provider_fallback_after_n8n_failure:
+                                    yield RoutingExhausted("n8n provider quota exhausted and bypass is disabled")
+                                    return
+                            break
                             
                         if exec_error.category == ErrorCode.MODEL_NOT_FOUND:
                             self._get_model_breaker(provider_name, model_def.model_id).record_failure(exec_error.category.value)
