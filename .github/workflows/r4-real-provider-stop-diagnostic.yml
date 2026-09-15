@@ -145,12 +145,18 @@ jobs:
                 record("network.jsonl", { target_sha: targetSha, event: "response", phase, status });
                 if (phase === "BATCH" && status >= 400) finishSignal?.(`BATCH_HTTP_${status}`);
                 if (phase === "READINESS") {
-                  let state = "UNKNOWN";
+                  let state = "UNREACHABLE";
+                  let upstreamStatus: number | null = null;
                   try {
                     const parsed = JSON.parse(await response.text());
-                    state = typeof parsed?.state === "string" ? parsed.state : "UNKNOWN";
+                    upstreamStatus = typeof parsed?.upstream_status === "number" ? parsed.upstream_status : null;
+                    state = parsed?.reachable === true && parsed?.ready === true
+                      ? "READY"
+                      : parsed?.reachable === true
+                        ? "DEGRADED"
+                        : "UNREACHABLE";
                   } catch {}
-                  record("network.jsonl", { target_sha: targetSha, event: "readiness_state", state });
+                  record("network.jsonl", { target_sha: targetSha, event: "readiness_state", state, upstream_status: upstreamStatus });
                   if (state !== "READY") finishSignal?.(`READINESS_${state}`);
                 }
                 if (phase === "PRODUCE_TEXT") {
@@ -209,9 +215,6 @@ jobs:
             const counts = cardStates.reduce<Record<string, number>>((acc, state) => { acc[state] = (acc[state] || 0) + 1; return acc; }, {});
             writeFileSync(join(evidenceDir, "terminal.json"), JSON.stringify({ target_sha: targetSha, signal, url_path: new URL(page.url()).pathname, production_state_counts: counts }, null, 2), "utf8");
 
-            // Diagnostic runs are evidence collectors, never certification gates.
-            // A captured stop is considered a successful diagnostic observation;
-            // promotion remains fail-closed in the workflow's final step.
             expect(signal).not.toBe("DIAGNOSTIC_TIMEOUT");
           });
           TS
