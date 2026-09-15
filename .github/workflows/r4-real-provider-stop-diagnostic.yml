@@ -16,7 +16,6 @@ jobs:
       TARGET_SHA: 61bf7f93b37b00f3315c3f710d8005fed977e672
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       PRODAGENTIC_DEMO_MODE: "false"
-      R4_WEB_URL: https://localhost:3000
       R4_API_URL: https://localhost:8000
       COMPOSE_PROJECT_NAME: prodagentic-r4-stop-diagnostic
       R4_EVIDENCE_DIR: /tmp/r4-evidence
@@ -27,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$R4_EVIDENCE_DIR"
-          printf 'workflow_sha=%s\ntarget_sha=%s\nrun_id=%s\nrun_attempt=%s\nmode=production_non_demo\n' \
+          printf 'workflow_sha=%s\ntarget_sha=%s\nrun_id=%s\nrun_attempt=%s\nmode=production_non_demo\ndiagnostic=direct_api_authority\n' \
             "$GITHUB_SHA" "$TARGET_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$R4_EVIDENCE_DIR/metadata.txt"
 
       - name: Require real provider secret
@@ -68,22 +67,18 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install browser dependencies
+      - name: Install diagnostic dependencies
         working-directory: frontend
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium
+        run: npm ci
 
-      - name: Write phase-aware runtime diagnostic spec
+      - name: Write direct API authority diagnostic
         shell: bash
         run: |
-          cat > frontend/e2e/.r4-real-stop.runtime.spec.ts <<'TS'
-          import { expect, test } from "@playwright/test";
+          cat > frontend/e2e/.r4-real-stop.api.spec.ts <<'TS'
+          import { expect, request, test } from "@playwright/test";
           import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
           import { join } from "node:path";
 
-          test.use({ ignoreHTTPSErrors: true });
-          const WEB = process.env.R4_WEB_URL || "https://localhost:3000";
           const API = process.env.R4_API_URL || "https://localhost:8000";
           const username = process.env.PRODAGENTIC_ADMIN_USER || "";
           const password = process.env.PRODAGENTIC_ADMIN_PASSWORD || "";
@@ -91,21 +86,27 @@ jobs:
           const evidenceDir = process.env.R4_EVIDENCE_DIR || "/tmp/r4-evidence";
           mkdirSync(evidenceDir, { recursive: true });
 
-          type SafePhase = "BATCH" | "READINESS" | "PRODUCE_TEXT" | "OTHER";
-          function phaseFor(url: string): SafePhase {
-            if (/\/api\/profiles\/[^/]+\/batches(?:\?|$)/.test(url)) return "BATCH";
-            if (url.includes("runtime-readiness")) return "READINESS";
-            if (url.includes("/produce-text")) return "PRODUCE_TEXT";
-            return "OTHER";
+          function record(value: Record<string, unknown>) {
+            appendFileSync(join(evidenceDir, "api-phases.jsonl"), `${JSON.stringify({ target_sha: targetSha, ...value })}\n`, "utf8");
           }
-          function safeStopCode(detail: string): string {
+
+          function stopCode(detail: string): string {
             if (detail.includes("Research verdict NO_GO")) return "RESEARCH_NO_GO";
             if (detail.includes("Editor verdict REJECT")) return "EDITOR_REJECTED";
             if (detail.toLowerCase().includes("revision budget")) return "REVISION_BUDGET_EXHAUSTED";
             return "PRODUCTION_DOMAIN_STOP";
           }
-          function record(name: string, value: unknown) {
-            appendFileSync(join(evidenceDir, name), `${JSON.stringify(value)}\n`, "utf8");
+
+          async function safeJson(response: { json(): Promise<unknown> }): Promise<any> {
+            try { return await response.json(); } catch { return null; }
+          }
+
+          async function phase<T>(name: string, fn: () => Promise<T>): Promise<{ value: T; elapsed_ms: number }> {
+            const started = Date.now();
+            const value = await fn();
+            const elapsed_ms = Date.now() - started;
+            record({ phase: name, event: "completed", elapsed_ms });
+            return { value, elapsed_ms };
           }
 
           const setup = {
@@ -123,107 +124,115 @@ jobs:
             }],
           };
 
-          test("capture the first failing real-provider phase without leaking content", async ({ page }) => {
-            test.setTimeout(420_000);
-            writeFileSync(join(evidenceDir, "network.jsonl"), "", "utf8");
+          test("isolate exact real-provider production stop at API authority boundary", async () => {
+            test.setTimeout(1_500_000);
+            writeFileSync(join(evidenceDir, "api-phases.jsonl"), "", "utf8");
             writeFileSync(join(evidenceDir, "produce-text.jsonl"), "", "utf8");
-            const captureTasks: Promise<void>[] = [];
-            let finishSignal: ((value: string) => void) | null = null;
-            const terminal = new Promise<string>((resolve) => { finishSignal = resolve; });
 
-            page.on("request", (request) => {
-              const phase = phaseFor(request.url());
-              if (phase === "OTHER") return;
-              record("network.jsonl", { target_sha: targetSha, event: "request", phase, method: request.method() });
-            });
-
-            page.on("response", (response) => {
-              const phase = phaseFor(response.url());
-              if (phase === "OTHER") return;
-              const task = (async () => {
-                const status = response.status();
-                record("network.jsonl", { target_sha: targetSha, event: "response", phase, status });
-                if (phase === "BATCH" && status >= 400) finishSignal?.(`BATCH_HTTP_${status}`);
-                if (phase === "READINESS") {
-                  let state = "UNREACHABLE";
-                  let upstreamStatus: number | null = null;
-                  try {
-                    const parsed = JSON.parse(await response.text());
-                    upstreamStatus = typeof parsed?.upstream_status === "number" ? parsed.upstream_status : null;
-                    state = parsed?.reachable === true && parsed?.ready === true
-                      ? "READY"
-                      : parsed?.reachable === true
-                        ? "DEGRADED"
-                        : "UNREACHABLE";
-                  } catch {}
-                  record("network.jsonl", { target_sha: targetSha, event: "readiness_state", state, upstream_status: upstreamStatus });
-                  if (state !== "READY") finishSignal?.(`READINESS_${state}`);
-                }
-                if (phase === "PRODUCE_TEXT") {
-                  let detail = "";
-                  try {
-                    const parsed = JSON.parse(await response.text());
-                    detail = typeof parsed?.detail === "string" ? parsed.detail : "";
-                  } catch {}
-                  const stopCode = status === 422 ? safeStopCode(detail) : "NONE";
-                  record("produce-text.jsonl", { target_sha: targetSha, status, stop_code: stopCode });
-                  finishSignal?.(`PRODUCE_TEXT_${status}_${stopCode}`);
-                }
-              })();
-              captureTasks.push(task);
-            });
-
-            const login = await page.request.post(`${API}/api/auth/login`, {
+            const api = await request.newContext({
+              baseURL: API,
               ignoreHTTPSErrors: true,
-              data: { username, password },
+              extraHTTPHeaders: { "Content-Type": "application/json" },
             });
-            expect(login.ok()).toBeTruthy();
-            const session = await login.json();
-            const headers = { "X-CSRF-Token": String(session.csrf_token) };
 
-            const proposalResponse = await page.request.post(`${API}/api/profiles/inference-proposals`, {
-              ignoreHTTPSErrors: true,
-              headers,
-              data: setup,
-            });
-            expect(proposalResponse.ok()).toBeTruthy();
-            const proposal = await proposalResponse.json();
+            try {
+              const ready = await phase("READINESS", () => api.get("/health/ready"));
+              record({ phase: "READINESS", status: ready.value.status(), ready: ready.value.ok(), elapsed_ms: ready.elapsed_ms });
+              expect(ready.value.ok()).toBeTruthy();
 
-            const acceptanceResponse = await page.request.post(`${API}/api/profiles`, {
-              ignoreHTTPSErrors: true,
-              headers,
-              data: { setup, proposal_digest: proposal.proposal_digest },
-            });
-            expect(acceptanceResponse.ok()).toBeTruthy();
+              const login = await phase("LOGIN", () => api.post("/api/auth/login", { data: { username, password } }));
+              record({ phase: "LOGIN", status: login.value.status(), ok: login.value.ok(), elapsed_ms: login.elapsed_ms });
+              expect(login.value.ok()).toBeTruthy();
+              const session = await safeJson(login.value);
+              const csrf = typeof session?.csrf_token === "string" ? session.csrf_token : "";
+              expect(csrf.length).toBeGreaterThan(0);
+              const headers = { "X-CSRF-Token": csrf };
 
-            await page.goto(`${WEB}/create`, { waitUntil: "domcontentloaded" });
-            await expect(page.getByRole("heading", { name: "Create for EM3RC0D R4 REAL DIAGNOSTIC" })).toBeVisible({ timeout: 60_000 });
-            await page.getByRole("button", { name: "Generate next batch" }).click();
+              const proposal = await phase("PROFILE_PROPOSAL", () => api.post("/api/profiles/inference-proposals", { headers, data: setup }));
+              record({ phase: "PROFILE_PROPOSAL", status: proposal.value.status(), ok: proposal.value.ok(), elapsed_ms: proposal.elapsed_ms });
+              expect(proposal.value.ok()).toBeTruthy();
+              const proposalBody = await safeJson(proposal.value);
+              const proposalDigest = typeof proposalBody?.proposal_digest === "string" ? proposalBody.proposal_digest : "";
+              expect(proposalDigest).toMatch(/^[0-9a-f]{64}$/);
 
-            const reviewSignal = page.waitForURL(/\/review$/, { timeout: 360_000 }).then(() => "REVIEW_REACHED").catch(() => "NO_REVIEW");
-            const alertSignal = page.getByRole("alert").waitFor({ state: "visible", timeout: 360_000 }).then(async () => {
-              const text = (await page.getByRole("alert").innerText()).trim();
-              const match = text.match(/(?:failed|unavailable|Batch planning failed:)\s*:?[ ]*(\d{3})?/i);
-              return match?.[1] ? `UI_ALERT_HTTP_${match[1]}` : "UI_ALERT_PRESENT";
-            }).catch(() => "NO_ALERT");
-            const gateSignal = page.getByText("Production is paused truthfully.").waitFor({ state: "visible", timeout: 360_000 }).then(() => "PRODUCTION_GATE_PRESENT").catch(() => "NO_GATE");
-            const timeoutSignal = new Promise<string>((resolve) => setTimeout(() => resolve("DIAGNOSTIC_TIMEOUT"), 360_000));
+              const acceptance = await phase("PROFILE_ACCEPTANCE", () => api.post("/api/profiles", { headers, data: { setup, proposal_digest: proposalDigest } }));
+              record({ phase: "PROFILE_ACCEPTANCE", status: acceptance.value.status(), ok: acceptance.value.ok(), elapsed_ms: acceptance.elapsed_ms });
+              expect(acceptance.value.ok()).toBeTruthy();
+              const acceptanceBody = await safeJson(acceptance.value);
+              const profileId = typeof acceptanceBody?.profile?.profile_id === "string" ? acceptanceBody.profile.profile_id : "";
+              expect(profileId.length).toBeGreaterThan(0);
 
-            const signal = await Promise.race([terminal, reviewSignal, alertSignal, gateSignal, timeoutSignal]);
-            await Promise.allSettled(captureTasks);
-            const cardStates = await page.locator("[data-production-state]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-production-state") || "UNKNOWN")).catch(() => [] as string[]);
-            const counts = cardStates.reduce<Record<string, number>>((acc, state) => { acc[state] = (acc[state] || 0) + 1; return acc; }, {});
-            writeFileSync(join(evidenceDir, "terminal.json"), JSON.stringify({ target_sha: targetSha, signal, url_path: new URL(page.url()).pathname, production_state_counts: counts }, null, 2), "utf8");
+              const start = new Date();
+              start.setUTCDate(start.getUTCDate() + 1);
+              start.setUTCHours(0, 0, 0, 0);
+              const end = new Date(start);
+              end.setUTCDate(end.getUTCDate() + 1);
+              const batchPayload = {
+                target_window: { start_at: start.toISOString(), end_at: end.toISOString(), timezone: "UTC" },
+                requested_size: 4,
+                constraints: { campaign_goal: null, include_topics: [], avoid_topics: [], desired_format: null },
+              };
 
-            expect(signal).not.toBe("DIAGNOSTIC_TIMEOUT");
+              const batch = await phase("BATCH", () => api.post(`/api/profiles/${encodeURIComponent(profileId)}/batches`, { headers, data: batchPayload, timeout: 300_000 }));
+              const batchBody = await safeJson(batch.value);
+              const contentItems = Array.isArray(batchBody?.content_items) ? batchBody.content_items : [];
+              record({
+                phase: "BATCH",
+                status: batch.value.status(),
+                ok: batch.value.ok(),
+                elapsed_ms: batch.elapsed_ms,
+                creative_source: typeof batchBody?.creative_source === "string" ? batchBody.creative_source : null,
+                completeness_policy: typeof batchBody?.completeness_policy === "string" ? batchBody.completeness_policy : null,
+                content_count: contentItems.length,
+              });
+              if (!batch.value.ok()) {
+                writeFileSync(join(evidenceDir, "terminal.json"), JSON.stringify({ target_sha: targetSha, terminal_phase: "BATCH", status: batch.value.status() }, null, 2));
+                return;
+              }
+              expect(batchBody?.creative_source).toBe("model_router");
+              expect(contentItems).toHaveLength(4);
+
+              const results: Array<Record<string, unknown>> = [];
+              for (let index = 0; index < contentItems.length; index += 1) {
+                const contentId = typeof contentItems[index]?.content_id === "string" ? contentItems[index].content_id : "";
+                expect(contentId.length).toBeGreaterThan(0);
+                const produced = await phase(`PRODUCE_TEXT_${index + 1}`, () => api.post(`/api/content-items/${encodeURIComponent(contentId)}/produce-text`, { headers, data: { parent_revision_id: null }, timeout: 360_000 }));
+                const body = await safeJson(produced.value);
+                const detail = typeof body?.detail === "string" ? body.detail : "";
+                const code = produced.value.status() === 422 ? stopCode(detail) : "NONE";
+                const row = { ordinal: index + 1, status: produced.value.status(), ok: produced.value.ok(), stop_code: code, elapsed_ms: produced.elapsed_ms };
+                results.push(row);
+                appendFileSync(join(evidenceDir, "produce-text.jsonl"), `${JSON.stringify({ target_sha: targetSha, ...row })}\n`, "utf8");
+              }
+
+              const statusCounts = results.reduce<Record<string, number>>((acc, row) => {
+                const key = String(row.status);
+                acc[key] = (acc[key] || 0) + 1;
+                return acc;
+              }, {});
+              const stopCounts = results.reduce<Record<string, number>>((acc, row) => {
+                const key = String(row.stop_code);
+                acc[key] = (acc[key] || 0) + 1;
+                return acc;
+              }, {});
+              writeFileSync(join(evidenceDir, "terminal.json"), JSON.stringify({
+                target_sha: targetSha,
+                terminal_phase: "PRODUCE_TEXT",
+                content_count: contentItems.length,
+                status_counts: statusCounts,
+                stop_code_counts: stopCounts,
+              }, null, 2));
+            } finally {
+              await api.dispose();
+            }
           });
           TS
 
-      - name: Run real-provider phase diagnostic
-        id: real_uat
+      - name: Run direct real-provider API diagnostic
+        id: api_diagnostic
         continue-on-error: true
         working-directory: frontend
-        run: npx playwright test e2e/.r4-real-stop.runtime.spec.ts --reporter=line
+        run: npx playwright test e2e/.r4-real-stop.api.spec.ts --reporter=line
 
       - name: Persist sanitized stack evidence
         if: always()
@@ -232,7 +241,7 @@ jobs:
           set +e
           docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml logs --no-color 2>&1 \
             | grep -E 'R4 production domain stop code=' > "$R4_EVIDENCE_DIR/domain-stop.log"
-          printf 'playwright_outcome=%s\n' '${{ steps.real_uat.outcome }}' >> "$R4_EVIDENCE_DIR/metadata.txt"
+          printf 'api_diagnostic_outcome=%s\n' '${{ steps.api_diagnostic.outcome }}' >> "$R4_EVIDENCE_DIR/metadata.txt"
 
       - name: Destroy isolated stack
         if: always()
@@ -242,7 +251,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r4-phase-diagnostic-${{ env.TARGET_SHA }}-${{ github.run_id }}
+          name: r4-api-diagnostic-${{ env.TARGET_SHA }}-${{ github.run_id }}
           path: ${{ env.R4_EVIDENCE_DIR }}
           if-no-files-found: error
           retention-days: 14
