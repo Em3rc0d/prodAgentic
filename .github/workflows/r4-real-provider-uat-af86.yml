@@ -1,0 +1,199 @@
+name: R4 real-provider UAT af86d88
+
+on:
+  push:
+    branches: [r4-real-uat-cert-af86d88]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-provider-uat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TARGET_SHA: af86d8831daa7dc915881287630aca95c64ca462
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      PRODAGENTIC_DEMO_MODE: "false"
+      COMPOSE_PROJECT_NAME: prodagentic-r4-uat-af86d88
+      EVIDENCE_DIR: /tmp/r4-uat-evidence
+    steps:
+      - name: Initialize evidence
+        run: |
+          mkdir -p "$EVIDENCE_DIR"
+          printf 'certifier_sha=%s\ntarget_sha=%s\nrun_id=%s\nattempt=%s\nmode=production_non_demo\n' "$GITHUB_SHA" "$TARGET_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$EVIDENCE_DIR/metadata.txt"
+          test -n "${GEMINI_API_KEY:-}"
+
+      - name: Checkout exact product candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+
+      - name: Bind exact SHA
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Create ephemeral auth secrets
+        run: |
+          password="$(openssl rand -hex 24)"
+          session_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          echo "::add-mask::$session_secret"
+          echo "PRODAGENTIC_ADMIN_USER=em3rc0d-r4-uat" >> "$GITHUB_ENV"
+          echo "PRODAGENTIC_ADMIN_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "PRODAGENTIC_SESSION_SECRET=$session_secret" >> "$GITHUB_ENV"
+
+      - name: Start production non-demo stack
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml up --build -d --wait --wait-timeout 600
+
+      - name: Run exact-four EM3RC0D real-provider UAT
+        id: uat
+        continue-on-error: true
+        shell: bash
+        run: |
+          python - <<'PY'
+          import http.cookiejar, json, os, ssl, time, urllib.error, urllib.request
+          from pathlib import Path
+
+          API='https://localhost:8000'
+          target=os.environ['TARGET_SHA']
+          root=Path(os.environ['EVIDENCE_DIR'])
+          phases=root/'api-phases.jsonl'
+          produced_log=root/'produce-text.jsonl'
+          phases.write_text('', encoding='utf-8')
+          produced_log.write_text('', encoding='utf-8')
+
+          jar=http.cookiejar.CookieJar()
+          ctx=ssl._create_unverified_context()
+          opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), urllib.request.HTTPSHandler(context=ctx))
+
+          def append(path, obj):
+              with path.open('a', encoding='utf-8') as f:
+                  f.write(json.dumps({'target_sha': target, **obj}, separators=(',',':'))+'\n')
+
+          def call(name, method, path, payload=None, csrf=None, timeout=360):
+              headers={'Content-Type':'application/json'}
+              if csrf: headers['X-CSRF-Token']=csrf
+              data=None if payload is None else json.dumps(payload).encode()
+              req=urllib.request.Request(API+path, data=data, headers=headers, method=method)
+              started=time.monotonic()
+              try:
+                  with opener.open(req, timeout=timeout) as r:
+                      status=r.status; raw=r.read().decode()
+              except urllib.error.HTTPError as e:
+                  status=e.code; raw=e.read().decode()
+              elapsed=int((time.monotonic()-started)*1000)
+              try: body=json.loads(raw) if raw else None
+              except Exception: body=None
+              append(phases, {'phase':name,'status':status,'elapsed_ms':elapsed})
+              return status, body, elapsed
+
+          status, ready, _=call('READINESS','GET','/health/ready')
+          assert status==200 and 'DEMO' not in str((ready or {}).get('status','')), (status,ready)
+
+          status, session, _=call('LOGIN','POST','/api/auth/login',{
+              'username':os.environ['PRODAGENTIC_ADMIN_USER'],
+              'password':os.environ['PRODAGENTIC_ADMIN_PASSWORD']})
+          assert status==200, (status,session)
+          csrf=(session or {}).get('csrf_token','')
+          assert csrf
+
+          setup={
+            'name':'EM3RC0D R4 REAL UAT',
+            'account_type':'education',
+            'goals':['educate','build_authority'],
+            'audience':'students and junior professionals in systems engineering, computing and IT who want practical technical skills',
+            'voice':['technical','direct'],
+            'batch_size':4,
+            'channels':['manual_export'],
+            'examples':[{'kind':'caption','label':'EM3RC0D technical authority','text':'Explica problemas reales de sistemas, software, datos, redes, cloud y arquitectura con ejemplos concretos, sin repetir el mismo tutorial ni el mismo ángulo.'}]
+          }
+          status, proposal, _=call('PROFILE_PROPOSAL','POST','/api/profiles/inference-proposals',setup,csrf)
+          assert status==200, (status,proposal)
+          digest=(proposal or {}).get('proposal_digest','')
+          assert len(digest)==64
+
+          status, accepted, _=call('PROFILE_ACCEPTANCE','POST','/api/profiles',{'setup':setup,'proposal_digest':digest},csrf)
+          assert status==201, (status,accepted)
+          profile_id=((accepted or {}).get('profile') or {}).get('profile_id','')
+          assert profile_id
+
+          import datetime
+          start=datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(days=1)
+          start=start.replace(hour=0,minute=0,second=0,microsecond=0)
+          end=start+datetime.timedelta(days=1)
+          batch_payload={
+            'target_window':{'start_at':start.isoformat().replace('+00:00','Z'),'end_at':end.isoformat().replace('+00:00','Z'),'timezone':'UTC'},
+            'requested_size':4,
+            'constraints':{'campaign_goal':None,'include_topics':[],'avoid_topics':[],'desired_format':None}
+          }
+          status, batch, elapsed=call('BATCH','POST',f'/api/profiles/{profile_id}/batches',batch_payload,csrf)
+          items=(batch or {}).get('content_items') or []
+          append(phases, {'phase':'BATCH_AUTHORITY','creative_source':(batch or {}).get('creative_source'),'completeness_policy':(batch or {}).get('completeness_policy'),'content_count':len(items)})
+          assert status==201, (status,batch)
+          assert (batch or {}).get('creative_source')=='model_router'
+          assert (batch or {}).get('completeness_policy')=='r4-exact-request-v1'
+          assert len(items)==4
+
+          results=[]
+          for idx,item in enumerate(items,1):
+              cid=item.get('content_id','')
+              assert cid
+              status, body, elapsed=call(f'PRODUCE_TEXT_{idx}','POST',f'/api/content-items/{cid}/produce-text',{'parent_revision_id':None},csrf)
+              row={'ordinal':idx,'content_id':cid,'status':status,'elapsed_ms':elapsed,'creative_mode':(body or {}).get('creative_mode'),'revision_status':((body or {}).get('revision') or {}).get('status'),'run_state':((body or {}).get('run') or {}).get('state'),'has_research':bool((body or {}).get('research')),'has_content':bool((body or {}).get('content')),'has_editorial_review':bool((body or {}).get('editorial_review'))}
+              append(produced_log,row); results.append(row)
+              assert status==201, row
+              assert row['creative_mode']=='model_router_r4', row
+              assert row['revision_status']=='REVIEWABLE', row
+              assert row['has_research'] and row['has_content'] and row['has_editorial_review'], row
+
+          terminal={'target_sha':target,'result':'PASS','mode':'production_non_demo','real_provider':'gemini','profile':'EM3RC0D','requested_count':4,'produced_count':len(results),'successful_201_count':sum(r['status']==201 for r in results)}
+          (root/'terminal.json').write_text(json.dumps(terminal,indent=2),encoding='utf-8')
+          PY
+
+      - name: Persist safe Mongo lineage
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml exec -T mongo mongosh --quiet prodagentic_local --eval '
+            const runs=db.generation_runs.find({}, {_id:0,run_id:1,content_id:1,state:1,failure:1}).sort({started_at:1}).toArray();
+            const revisions=db.content_revisions.find({}, {_id:0,revision_id:1,content_id:1,run_id:1,status:1}).toArray();
+            const attempts=db.agent_run_attempts.find({}, {_id:0,run_id:1,agent:1,provider:1,model:1,attempt:1,status:1,safe_failure_code:1,latency_ms:1}).toArray();
+            print(JSON.stringify({generation_run_count:runs.length,failed_run_count:runs.filter(r=>r.failure!=null).length,reviewable_revision_count:revisions.filter(r=>r.status==="REVIEWABLE").length,attempt_count:attempts.length,runs,revisions,attempts}));' > "$EVIDENCE_DIR/persistence.json" 2> "$EVIDENCE_DIR/persistence.stderr" || true
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml logs --no-color 2>&1 | grep -E 'R4 production domain stop code=' > "$EVIDENCE_DIR/domain-stop.log" || true
+          printf 'uat_outcome=%s\n' '${{ steps.uat.outcome }}' >> "$EVIDENCE_DIR/metadata.txt"
+
+      - name: Enforce PASS ALL UAT contract
+        if: always()
+        run: |
+          set -euo pipefail
+          test '${{ steps.uat.outcome }}' = 'success'
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path(os.environ['EVIDENCE_DIR'])
+          terminal=json.loads((root/'terminal.json').read_text())
+          persistence=json.loads((root/'persistence.json').read_text())
+          assert terminal['target_sha']==os.environ['TARGET_SHA']
+          assert terminal['result']=='PASS' and terminal['produced_count']==4 and terminal['successful_201_count']==4
+          assert persistence['generation_run_count']==4
+          assert persistence['failed_run_count']==0
+          assert persistence['reviewable_revision_count']==4
+          assert persistence['attempt_count']>=12
+          PY
+          echo 'pass_all_uat=true' >> "$EVIDENCE_DIR/metadata.txt"
+
+      - name: Upload immutable sanitized UAT evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-real-provider-uat-${{ env.TARGET_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Destroy isolated stack
+        if: always()
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml down -v --remove-orphans || true
