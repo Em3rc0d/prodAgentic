@@ -1,7 +1,10 @@
 from enum import Enum
+import logging
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 from google import genai
+
+logger = logging.getLogger(__name__)
 
 class ModelProfile(str, Enum):
     ECONOMY_TEXT = "ECONOMY_TEXT"
@@ -24,7 +27,10 @@ REGISTRY: Dict[ModelProfile, List[ModelDefinition]] = {
     ],
     ModelProfile.QUALITY_TEXT: [
         ModelDefinition(model_id="gemini-3.6-flash", supported_params=["system_instruction"]),
-        ModelDefinition(model_id="gemini-3.5-flash", supported_params=["system_instruction"])
+        # The R4 handoff observed quota/unavailability on full Flash routes while
+        # this Lite route remained usable. This is a fallback choice, not a
+        # guarantee of independent infrastructure or future availability.
+        ModelDefinition(model_id="gemini-3.5-flash-lite", supported_params=["system_instruction"])
     ]
 }
 
@@ -69,13 +75,15 @@ class PreflightCache:
                 self.expires_at = self.checked_at + timedelta(seconds=self.ttl_seconds)
                 self.is_valid = True
                 self.last_error_category = None
-                print(f"[INFO] Preflight refresh complete. Discovered {len(self.discoverable_models)} models.")
+                logger.info("Preflight refresh discovered %s models", len(self.discoverable_models))
             except TimeoutError:
                 self.last_error_category = "TIMEOUT"
-                print("[WARN] Preflight refresh failed: Timeout")
-            except Exception as e:
-                self.last_error_category = str(e)
-                print(f"[WARN] Preflight refresh failed: {e}")
+                logger.warning("Preflight refresh failed: TIMEOUT")
+            except Exception:
+                # Discovery errors can include request URLs or provider debug data.
+                # Keep the last successful catalog for readiness, never raw errors.
+                self.last_error_category = "MODEL_DISCOVERY_FAILED"
+                logger.warning("Preflight refresh failed: MODEL_DISCOVERY_FAILED")
 
 _cache = PreflightCache()
 
@@ -108,10 +116,16 @@ def get_profile_readiness() -> str:
     return "READY_WITH_STALE_CACHE" if is_stale else "READY"
 
 def get_models_for_profile(profile: ModelProfile) -> List[ModelDefinition]:
-    """Returns the list of models for a given profile, prioritizing those that are discoverable."""
+    """Prioritize fresh discovery without removing configured fallback routes."""
     definitions = REGISTRY.get(profile, [])
-    if not _cache.is_valid:
-        return definitions # Return all if preflight failed/skipped
-    
-    return [d for d in definitions if d.model_id in _cache.discoverable_models]
+    if (
+        not _cache.is_valid
+        or _cache.last_error_category is not None
+        or _cache.expires_at is None
+        or datetime.now(timezone.utc) >= _cache.expires_at
+    ):
+        return list(definitions)
 
+    discovered = [d for d in definitions if d.model_id in _cache.discoverable_models]
+    remaining = [d for d in definitions if d.model_id not in _cache.discoverable_models]
+    return discovered + remaining

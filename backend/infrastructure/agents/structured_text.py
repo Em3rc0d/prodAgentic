@@ -8,6 +8,7 @@ from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from agents.adapters.types import ErrorCode
 from agents.router import (
     AttemptCompleted,
     AttemptFailed,
@@ -156,7 +157,7 @@ class StructuredRouterExecutor(Generic[ArtifactT]):
                                 buffer=buffer,
                                 input_digest=input_digest,
                                 status=AgentAttemptStatus.FAILED,
-                                failure_code=self._safe_failure_code(event.reason),
+                                failure_code=self._safe_failure_code(event.reason, event.failure_code),
                             )
                         )
                         buffer.finalized = True
@@ -264,17 +265,13 @@ class StructuredRouterExecutor(Generic[ArtifactT]):
         return value[:2_000]
 
     @staticmethod
-    def _safe_failure_code(reason: str) -> str:
+    def _safe_failure_code(reason: str, failure_code: str | None = None) -> str:
+        known = ("LANGUAGE_MISMATCH", *(code.value for code in ErrorCode))
+        if failure_code is not None:
+            return failure_code if failure_code in known else "MODEL_ATTEMPT_FAILED"
+        # Compatibility with older in-process event producers. New router events
+        # carry taxonomy explicitly, including message-free protocol/timeout errors.
         upper = reason.upper()
-        known = (
-            "LANGUAGE_MISMATCH",
-            "RATE_LIMITED",
-            "TIMEOUT",
-            "SERVICE_UNAVAILABLE",
-            "AUTHENTICATION",
-            "MODEL_NOT_FOUND",
-            "INVALID_REQUEST",
-        )
         for code in known:
             if code in upper:
                 return code

@@ -140,3 +140,58 @@ Recovery is a graph traversal, not regeneration by default. A retry first resolv
 ## 10. Certification implication
 
 A release is not certified because individual services are green. Certification requires that all required graph edges have tests/evidence and that product UAT proves the final package is publishable. Technical integrity and content quality are separate gates and both are blocking.
+
+## 11. Model routing and safe failure lineage
+
+Agents request the semantic `QUALITY_TEXT` profile. The configured primary is
+`gemini-3.6-flash`; the fallback is `gemini-3.5-flash-lite`. The execution handoff
+reported quota/unavailability on full Flash routes and a usable Lite route with
+the same credential. This observation motivates the fallback; it does not prove
+future availability or independent provider infrastructure.
+
+`QUOTA_EXHAUSTED` may be model/tier scoped. A direct Google quota failure opens
+only that model's breaker, skips further retries on that route and proceeds to
+the next eligible model. Exhausting all routes produces `RoutingExhausted` and a
+durable failed run. `AUTHENTICATION`, `INVALID_REQUEST`, `CANCELLED` and `UNKNOWN`
+remain terminal. The Google adapter marks quota/rate-limit fallback as allowed;
+SDK `RESOURCE_EXHAUSTED` on HTTP 429 is quota exhaustion even without the word
+"quota" in its message.
+
+The n8n policy is separate: quota or exhausted transport failures open its
+provider breaker and do not bypass n8n unless the existing explicit bypass
+policy allows it. The existing model-not-found behavior is unchanged.
+
+Each production request and each model-backed batch-planning request uses
+`ModelRouter.isolated()`. Adapters and routing configuration are reused, while
+provider/model breaker dictionaries start empty. Research, Writer and Editorial
+retain breaker history inside the same production request. Failures cannot
+contaminate another content item or batch request through those dictionaries.
+
+Routing remains bounded per `stream_generation` call: one transport retry per
+route, one language repair across the stage, two models, five total attempts
+and a 75-second transport deadline. Retry backoff consumes that same deadline.
+The existing separate structured-contract repair budget remains unchanged;
+each contract repair starts a new bounded router call. These are not an
+end-to-end 75-second bound for the whole multi-agent HTTP request.
+
+Model discovery is advisory to routing. A fresh successful catalog prioritizes
+discovered models but never deletes configured routes. Failed, expired or absent
+discovery restores configured priority. Readiness still reports its existing
+catalog/dependency statuses, including NOT_READY/UNKNOWN; discovery is not proof
+that a generation will succeed. Refresh failures retain the last successful
+catalog and log only safe categories, never exception payloads.
+
+`AttemptFailed.failure_code` carries the typed category into
+`AgentAttemptEvidenceV1.safe_failure_code`. It accepts the provider ErrorCode
+taxonomy plus `LANGUAGE_MISMATCH`; an unrecognized explicit code becomes
+`MODEL_ATTEMPT_FAILED`. The legacy reason-only path remains compatible. Router
+provider-failure reasons contain only a category, and stage deadline failures
+carry `TIMEOUT` explicitly. Raw provider messages/responses are not durable
+failure evidence. Existing run-level stage codes still bind the detailed attempt
+records without changing the persistence schema.
+
+This routing policy does not change Research NO_GO, Writer claim restrictions,
+Editorial REJECT, the stricter R4 publishability floor, or human approval.
+Production domain refusals remain HTTP 422 and upstream contract failures remain
+HTTP 502. Production still requires explicit non-demo operation with credentials
+supplied externally; missing credentials never select demo mode automatically.

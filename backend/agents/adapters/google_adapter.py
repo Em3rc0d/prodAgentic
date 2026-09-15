@@ -1,4 +1,4 @@
-import traceback
+import httpx
 from typing import AsyncGenerator
 from google import genai
 from google.genai.errors import APIError
@@ -30,7 +30,8 @@ class GoogleDirectAdapter(ProviderAdapter):
                 category = ErrorCode.MODEL_NOT_FOUND
                 fallback_allowed = True
             elif code == 429:
-                if "quota" in message:
+                fallback_allowed = True
+                if "quota" in message or provider_error_code == "RESOURCE_EXHAUSTED":
                     category = ErrorCode.QUOTA_EXHAUSTED
                 else:
                     category = ErrorCode.RATE_LIMITED
@@ -43,7 +44,7 @@ class GoogleDirectAdapter(ProviderAdapter):
                 category = ErrorCode.TIMEOUT
                 retryable = True
                 fallback_allowed = True
-        elif "timeout" in str(e).lower():
+        elif isinstance(e, (TimeoutError, httpx.TimeoutException)) or "timeout" in message:
             category = ErrorCode.TIMEOUT
             retryable = True
             fallback_allowed = True
