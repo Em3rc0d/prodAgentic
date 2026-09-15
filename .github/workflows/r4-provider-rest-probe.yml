@@ -1,0 +1,43 @@
+name: R4 Gemini REST probe
+
+on:
+  push:
+    branches: [r4-provider-probe-af86d88]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - name: Probe serving routes with hard timeout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GEMINI_API_KEY:-}"
+          : > provider-rest-probe.jsonl
+          for model in gemini-3.6-flash gemini-3.5-flash gemini-3.5-flash-lite gemini-3.1-flash-lite; do
+            body="$(mktemp)"
+            started="$(date +%s%3N)"
+            code="$(curl --max-time 15 -sS -o "$body" -w '%{http_code}' \
+              -H 'Content-Type: application/json' \
+              -X POST \
+              "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}" \
+              -d '{"contents":[{"parts":[{"text":"Return only OK."}]}]}' || true)"
+            ended="$(date +%s%3N)"
+            status="$(jq -r '.error.status // empty' "$body" 2>/dev/null || true)"
+            printf '{"model":"%s","http_code":"%s","status":"%s","elapsed_ms":%s}\n' "$model" "$code" "$status" "$((ended-started))" >> provider-rest-probe.jsonl
+            rm -f "$body"
+          done
+          cat provider-rest-probe.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: r4-provider-rest-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: provider-rest-probe.jsonl
+          if-no-files-found: error
+          retention-days: 30
