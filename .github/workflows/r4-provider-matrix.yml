@@ -1,0 +1,49 @@
+name: R4 Gemini serving matrix
+
+on:
+  push:
+    branches: [r4-real-uat-cert-af86d88]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provider-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install exact provider SDK
+        run: python -m pip install -q google-genai==2.13.0
+      - name: Probe model serving without persisting model output
+        shell: bash
+        run: |
+          test -n "${GEMINI_API_KEY:-}"
+          python - <<'PY' | tee provider-matrix.json
+          import json, os, time
+          from google import genai
+          from google.genai.errors import APIError
+
+          client=genai.Client(api_key=os.environ['GEMINI_API_KEY'])
+          models=['gemini-3.6-flash','gemini-3.5-flash','gemini-3.5-flash-lite','gemini-3.1-flash-lite']
+          rows=[]
+          for model in models:
+              started=time.monotonic()
+              try:
+                  response=client.models.generate_content(model=model, contents='Return only the word OK.')
+                  rows.append({'model':model,'ok':bool(getattr(response,'text',None)),'code':200,'status':'OK','elapsed_ms':int((time.monotonic()-started)*1000)})
+              except Exception as exc:
+                  rows.append({'model':model,'ok':False,'code':getattr(exc,'code',None) if isinstance(exc,APIError) else None,'status':str(getattr(exc,'status',None) or type(exc).__name__),'elapsed_ms':int((time.monotonic()-started)*1000)})
+          print(json.dumps(rows,separators=(',',':')))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: r4-provider-matrix-${{ github.run_id }}-${{ github.run_attempt }}
+          path: provider-matrix.json
+          if-no-files-found: error
+          retention-days: 30
