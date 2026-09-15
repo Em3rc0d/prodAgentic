@@ -79,7 +79,7 @@ async def _candidate_source_for_request(
 
     target_pool_size = min(BatchPlannerService.candidate_cap, max(8, body.requested_size * 3))
     try:
-        candidates = await RouterCandidateSource(router_instance).generate(
+        candidates = await RouterCandidateSource(router_instance.isolated()).generate(
             version,
             body.target_window,
             body.constraints,

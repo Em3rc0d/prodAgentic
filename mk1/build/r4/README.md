@@ -1,7 +1,10 @@
 # MK1-R4 — Creative Production
 
 Status: **DESIGN + IMPLEMENTATION HARDENING / NOT CERTIFIED**  
-Active branch: `developer`  
+Implementation audit candidate branch: `r4-final-execution`
+
+Promotion branch: `developer` (unchanged pending independent audit)
+
 Stable authority: `main@790f1e86312e13f4b14f1320db5d83f94ed8a97e`  
 R4 implementation ancestor: `7f0eac200c7c533cd8e09dd43a5a5546bcdad343`
 

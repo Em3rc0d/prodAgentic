@@ -2,7 +2,7 @@ name: R4 full historical regression
 
 on:
   push:
-    branches: [main, developer, r4-root-cause-fix-61bf7f]
+    branches: [main, developer]
   pull_request:
     branches: [main, developer]
   workflow_dispatch:

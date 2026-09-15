@@ -3,6 +3,7 @@ import pytest
 from agents.adapters.types import ErrorCode, ModelExecutionError, ProviderAdapter
 from agents.router import (
     AttemptCompleted,
+    AttemptFailed,
     AttemptResetRequired,
     AttemptStarted,
     CircuitState,
@@ -119,7 +120,7 @@ async def test_n8n_provider_failure_no_bypass():
 
 
 @pytest.mark.asyncio
-async def test_terminal_taxonomy():
+async def test_n8n_quota_keeps_provider_no_bypass_policy():
     google = MockAdapter("google")
     n8n = MockAdapter("n8n")
     router = ModelRouter(google, n8n)
@@ -139,7 +140,37 @@ async def test_terminal_taxonomy():
 
     events = [evt async for evt in router.stream_generation(_request())]
     assert isinstance(events[-1], RoutingExhausted)
-    assert events[-1].reason == "Terminal error: QUOTA_EXHAUSTED"
+    assert events[-1].reason == "n8n provider quota exhausted and bypass is disabled"
+    assert router._get_provider_breaker("n8n").state == CircuitState.OPEN
+    assert google.last_system_instruction is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("all_exhausted", [False, True])
+async def test_google_quota_is_route_scoped_and_attempts_are_bounded(monkeypatch, all_exhausted):
+    models = REGISTRY[ModelProfile.QUALITY_TEXT]
+    monkeypatch.setattr("agents.router.get_models_for_profile", lambda _: models)
+    calls = []
+
+    class QuotaAdapter(ProviderAdapter):
+        async def stream(self, model, prompt, **kwargs):
+            calls.append(model)
+            if all_exhausted or model == models[0].model_id:
+                raise ModelExecutionError(
+                    ErrorCode.QUOTA_EXHAUSTED, "google", model, kwargs["attempt_id"],
+                    429, "RESOURCE_EXHAUSTED", False, True, "provider-private-detail",
+                )
+            yield ("chunk", "A short reply.")
+
+    router = ModelRouter(QuotaAdapter())
+    events = [event async for event in router.stream_generation(_request())]
+    assert calls == [model.model_id for model in models]
+    assert router._get_model_breaker("google", models[0].model_id).state == CircuitState.OPEN
+    assert router._get_provider_breaker("google").state == CircuitState.CLOSED
+    failures = [event for event in events if isinstance(event, AttemptFailed)]
+    assert all(event.failure_code == "QUOTA_EXHAUSTED" for event in failures)
+    assert "provider-private-detail" not in repr(events)
+    assert isinstance(events[-1], RoutingExhausted if all_exhausted else AttemptCompleted)
 
 
 @pytest.mark.asyncio

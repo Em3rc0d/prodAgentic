@@ -73,11 +73,7 @@ def _isolated_router(router_instance: ModelRouter) -> ModelRouter:
     breaker state is runtime state. Sharing it across unrelated content items lets a
     transient failure in one GenerationRun suppress provider attempts in the next.
     """
-    return ModelRouter(
-        google_adapter=router_instance.google_adapter,
-        n8n_adapter=router_instance.n8n_adapter,
-        routing_policy=router_instance.policy,
-    )
+    return router_instance.isolated()
 
 
 def _build_service(request: Request, repository: MongoProductionRepository) -> StructuredAgentCellService:

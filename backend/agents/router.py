@@ -24,6 +24,8 @@ class ContentChunk:
 class AttemptFailed:
     reason: str
     attempt_id: str
+    # Internal typed lineage; reason remains compatible with existing consumers.
+    failure_code: str | None = None
 
 @dataclass
 class AttemptResetRequired:
@@ -131,6 +133,14 @@ class ModelRouter:
         self._provider_breakers: dict[str, CircuitBreaker] = {}
         self._model_breakers: dict[str, CircuitBreaker] = {}
 
+    def isolated(self) -> "ModelRouter":
+        """Reuse configuration/adapters without inheriting another request's breakers."""
+        return ModelRouter(
+            google_adapter=self.google_adapter,
+            n8n_adapter=self.n8n_adapter,
+            routing_policy=self.policy,
+        )
+
     def _get_provider_breaker(self, provider: str) -> CircuitBreaker:
         if provider not in self._provider_breakers:
             self._provider_breakers[provider] = CircuitBreaker()
@@ -164,6 +174,7 @@ class ModelRouter:
         models = get_models_for_profile(request.model_profile)
         total_attempts = 0
         models_tried = 0
+        language_repairs = 0
         
         for model_def in models:
             if models_tried >= self.policy.max_models_per_stage:
@@ -182,7 +193,6 @@ class ModelRouter:
                     continue
                 
                 transport_retries = 0
-                language_repairs = 0
                 current_system_instruction = request.system_instruction
                 
                 while transport_retries <= self.policy.max_transport_retries_per_route and total_attempts < self.policy.max_total_attempts:
@@ -233,7 +243,7 @@ class ModelRouter:
                             
                         if validation_result.status == ValidationStatus.MISMATCH:
                             error_msg = f"LANGUAGE_MISMATCH: {validation_result.reason}"
-                            yield AttemptFailed(error_msg, attempt_id)
+                            yield AttemptFailed(error_msg, attempt_id, "LANGUAGE_MISMATCH")
                             yield AttemptResetRequired(error_msg, attempt_id)
                             
                             if language_repairs < self.policy.max_language_repairs_per_stage:
@@ -253,7 +263,7 @@ class ModelRouter:
 
                     except TimeoutError:
                         timeout_reason = "Model stage deadline exceeded."
-                        yield AttemptFailed(timeout_reason, attempt_id)
+                        yield AttemptFailed(timeout_reason, attempt_id, ErrorCode.TIMEOUT.value)
                         if successful_start:
                             yield AttemptResetRequired(timeout_reason, attempt_id)
                         self._get_model_breaker(provider_name, model_def.model_id).record_failure(ErrorCode.TIMEOUT.value)
@@ -261,11 +271,12 @@ class ModelRouter:
                         return
                         
                     except ModelExecutionError as exec_error:
+                        # Provider messages are not taxonomy and may contain raw data.
+                        # Emit the allowlisted category, never provider payloads.
+                        failure_reason = f"Model execution failed: {exec_error.category.value}"
+                        yield AttemptFailed(failure_reason, attempt_id, exec_error.category.value)
                         if successful_start:
-                            yield AttemptFailed(exec_error.sanitized_message, attempt_id)
-                            yield AttemptResetRequired(exec_error.sanitized_message, attempt_id)
-                        else:
-                            yield AttemptFailed(exec_error.sanitized_message, attempt_id)
+                            yield AttemptResetRequired(failure_reason, attempt_id)
 
                         if exec_error.category in (
                             ErrorCode.INVALID_REQUEST,
@@ -297,7 +308,10 @@ class ModelRouter:
                         if exec_error.category in (ErrorCode.TIMEOUT, ErrorCode.SERVICE_UNAVAILABLE, ErrorCode.PROVIDER_PROTOCOL_ERROR, ErrorCode.RATE_LIMITED, ErrorCode.MODEL_MISMATCH):
                             if exec_error.retryable and transport_retries < self.policy.max_transport_retries_per_route:
                                 transport_retries += 1
-                                await asyncio.sleep(2 ** transport_retries)
+                                await asyncio.sleep(min(
+                                    2 ** transport_retries,
+                                    max(0.0, stage_deadline - loop.time()),
+                                ))
                                 continue # retry same provider/model
                                 
                             self._get_model_breaker(provider_name, model_def.model_id).record_failure(exec_error.category.value)
