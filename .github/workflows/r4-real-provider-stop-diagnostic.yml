@@ -19,8 +19,17 @@ jobs:
       R4_WEB_URL: https://localhost:3000
       R4_API_URL: https://localhost:8000
       COMPOSE_PROJECT_NAME: prodagentic-r4-stop-diagnostic
+      R4_EVIDENCE_DIR: ${{ runner.temp }}/r4-evidence
 
     steps:
+      - name: Initialize immutable evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$R4_EVIDENCE_DIR"
+          printf 'workflow_sha=%s\ntarget_sha=%s\nrun_id=%s\nrun_attempt=%s\nmode=production_non_demo\n' \
+            "$GITHUB_SHA" "$TARGET_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$R4_EVIDENCE_DIR/metadata.txt"
+
       - name: Require real provider secret
         run: test -n "${GEMINI_API_KEY:-}"
 
@@ -31,7 +40,12 @@ jobs:
           persist-credentials: false
 
       - name: Assert candidate SHA
-        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          printf 'checked_out_sha=%s\n' "$actual" >> "$R4_EVIDENCE_DIR/metadata.txt"
+          test "$actual" = "$TARGET_SHA"
 
       - name: Create masked ephemeral production auth secrets
         shell: bash
@@ -65,12 +79,24 @@ jobs:
         run: |
           cat > frontend/e2e/.r4-real-stop.runtime.spec.ts <<'TS'
           import { expect, test } from "@playwright/test";
+          import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+          import { join } from "node:path";
 
           test.use({ ignoreHTTPSErrors: true });
           const WEB = process.env.R4_WEB_URL || "https://localhost:3000";
           const API = process.env.R4_API_URL || "https://localhost:8000";
           const username = process.env.PRODAGENTIC_ADMIN_USER || "";
           const password = process.env.PRODAGENTIC_ADMIN_PASSWORD || "";
+          const targetSha = process.env.TARGET_SHA || "unknown";
+          const evidenceDir = process.env.R4_EVIDENCE_DIR || "/tmp/r4-evidence";
+          mkdirSync(evidenceDir, { recursive: true });
+
+          function safeStopCode(detail: string): string {
+            if (detail.includes("Research verdict NO_GO")) return "RESEARCH_NO_GO";
+            if (detail.includes("Editor verdict REJECT")) return "EDITOR_REJECTED";
+            if (detail.toLowerCase().includes("revision budget")) return "REVISION_BUDGET_EXHAUSTED";
+            return "PRODUCTION_DOMAIN_STOP";
+          }
 
           const setup = {
             name: "EM3RC0D R4 REAL DIAGNOSTIC",
@@ -89,12 +115,27 @@ jobs:
 
           test("capture real-provider production stop", async ({ page }) => {
             test.setTimeout(720_000);
-            page.on("response", async (response) => {
-              if (response.request().method() === "POST" && response.url().includes("/produce-text")) {
-                let body = "";
-                try { body = await response.text(); } catch {}
-                console.log(`[R4_PRODUCE_TEXT] status=${response.status()} body=${body.slice(0, 500)}`);
-              }
+            const captureTasks: Promise<void>[] = [];
+            let produceCount = 0;
+            writeFileSync(join(evidenceDir, "produce-text.jsonl"), "", "utf8");
+
+            page.on("response", (response) => {
+              if (response.request().method() !== "POST" || !response.url().includes("/produce-text")) return;
+              const ordinal = ++produceCount;
+              const task = (async () => {
+                let detail = "";
+                try {
+                  const raw = await response.text();
+                  const parsed = JSON.parse(raw);
+                  detail = typeof parsed?.detail === "string" ? parsed.detail : "";
+                } catch {}
+                const status = response.status();
+                const stopCode = status === 422 ? safeStopCode(detail) : "NONE";
+                const record = { target_sha: targetSha, ordinal, status, stop_code: stopCode };
+                appendFileSync(join(evidenceDir, "produce-text.jsonl"), `${JSON.stringify(record)}\n`, "utf8");
+                console.log(`[R4_DIAGNOSTIC] ordinal=${ordinal} status=${status} stop_code=${stopCode}`);
+              })();
+              captureTasks.push(task);
             });
 
             const login = await page.request.post(`${API}/api/auth/login`, {
@@ -123,18 +164,44 @@ jobs:
             await page.goto(`${WEB}/create`, { waitUntil: "domcontentloaded" });
             await expect(page.getByRole("heading", { name: "Create for EM3RC0D R4 REAL DIAGNOSTIC" })).toBeVisible({ timeout: 60_000 });
             await page.getByRole("button", { name: "Generate next batch" }).click();
-            await expect(page).toHaveURL(/\/review$/, { timeout: 600_000 });
+            try {
+              await expect(page).toHaveURL(/\/review$/, { timeout: 600_000 });
+            } finally {
+              await Promise.allSettled(captureTasks);
+            }
           });
           TS
 
       - name: Run real-provider stop diagnostic
+        id: real_uat
+        continue-on-error: true
         working-directory: frontend
         run: npx playwright test e2e/.r4-real-stop.runtime.spec.ts --reporter=line
 
-      - name: Capture stack logs
+      - name: Persist sanitized stack evidence
         if: always()
-        run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml logs --no-color || true
+        shell: bash
+        run: |
+          set +e
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml logs --no-color 2>&1 \
+            | grep -E 'R4 production domain stop code=' > "$R4_EVIDENCE_DIR/domain-stop.log"
+          printf 'playwright_outcome=%s\n' '${{ steps.real_uat.outcome }}' >> "$R4_EVIDENCE_DIR/metadata.txt"
 
       - name: Destroy isolated stack
         if: always()
         run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml down -v --remove-orphans || true
+
+      - name: Upload immutable sanitized diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-stop-diagnostic-${{ env.TARGET_SHA }}-${{ github.run_id }}
+          path: ${{ env.R4_EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Fail closed after evidence persistence
+        if: always()
+        shell: bash
+        run: |
+          test '${{ steps.real_uat.outcome }}' = 'success'
