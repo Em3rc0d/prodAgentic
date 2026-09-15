@@ -1,0 +1,140 @@
+name: R4 real-provider stop diagnostic
+
+on:
+  push:
+    branches: [r4-real-uat-cert-61bf7f]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-provider-stop-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TARGET_SHA: 61bf7f93b37b00f3315c3f710d8005fed977e672
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      PRODAGENTIC_DEMO_MODE: "false"
+      R4_WEB_URL: https://localhost:3000
+      R4_API_URL: https://localhost:8000
+      COMPOSE_PROJECT_NAME: prodagentic-r4-stop-diagnostic
+
+    steps:
+      - name: Require real provider secret
+        run: test -n "${GEMINI_API_KEY:-}"
+
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+
+      - name: Assert candidate SHA
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Create masked ephemeral production auth secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          password="$(openssl rand -hex 24)"
+          session_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          echo "::add-mask::$session_secret"
+          echo "PRODAGENTIC_ADMIN_USER=em3rc0d-diagnostic" >> "$GITHUB_ENV"
+          echo "PRODAGENTIC_ADMIN_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "PRODAGENTIC_SESSION_SECRET=$session_secret" >> "$GITHUB_ENV"
+
+      - name: Start strict production-like non-demo stack
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml up --build -d --wait --wait-timeout 600
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install browser dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Write runtime diagnostic spec
+        shell: bash
+        run: |
+          cat > frontend/e2e/.r4-real-stop.runtime.spec.ts <<'TS'
+          import { expect, test } from "@playwright/test";
+
+          test.use({ ignoreHTTPSErrors: true });
+          const WEB = process.env.R4_WEB_URL || "https://localhost:3000";
+          const API = process.env.R4_API_URL || "https://localhost:8000";
+          const username = process.env.PRODAGENTIC_ADMIN_USER || "";
+          const password = process.env.PRODAGENTIC_ADMIN_PASSWORD || "";
+
+          const setup = {
+            name: "EM3RC0D R4 REAL DIAGNOSTIC",
+            account_type: "education",
+            goals: ["educate", "build_authority"],
+            audience: "students and junior professionals in systems engineering, computing and IT who want practical technical skills",
+            voice: ["technical", "direct"],
+            batch_size: 4,
+            channels: ["manual_export"],
+            examples: [{
+              kind: "caption",
+              label: "EM3RC0D technical authority",
+              text: "Explica problemas reales de sistemas, software, datos, redes, cloud y arquitectura con ejemplos concretos, sin repetir el mismo tutorial ni el mismo ángulo.",
+            }],
+          };
+
+          test("capture real-provider production stop", async ({ page }) => {
+            test.setTimeout(720_000);
+            page.on("response", async (response) => {
+              if (response.request().method() === "POST" && response.url().includes("/produce-text")) {
+                let body = "";
+                try { body = await response.text(); } catch {}
+                console.log(`[R4_PRODUCE_TEXT] status=${response.status()} body=${body.slice(0, 500)}`);
+              }
+            });
+
+            const login = await page.request.post(`${API}/api/auth/login`, {
+              ignoreHTTPSErrors: true,
+              data: { username, password },
+            });
+            expect(login.ok()).toBeTruthy();
+            const session = await login.json();
+            const headers = { "X-CSRF-Token": String(session.csrf_token) };
+
+            const proposalResponse = await page.request.post(`${API}/api/profiles/inference-proposals`, {
+              ignoreHTTPSErrors: true,
+              headers,
+              data: setup,
+            });
+            expect(proposalResponse.ok()).toBeTruthy();
+            const proposal = await proposalResponse.json();
+
+            const acceptanceResponse = await page.request.post(`${API}/api/profiles`, {
+              ignoreHTTPSErrors: true,
+              headers,
+              data: { setup, proposal_digest: proposal.proposal_digest },
+            });
+            expect(acceptanceResponse.ok()).toBeTruthy();
+
+            await page.goto(`${WEB}/create`, { waitUntil: "domcontentloaded" });
+            await expect(page.getByRole("heading", { name: "Create for EM3RC0D R4 REAL DIAGNOSTIC" })).toBeVisible({ timeout: 60_000 });
+            await page.getByRole("button", { name: "Generate next batch" }).click();
+            await expect(page).toHaveURL(/\/review$/, { timeout: 600_000 });
+          });
+          TS
+
+      - name: Run real-provider stop diagnostic
+        working-directory: frontend
+        run: npx playwright test e2e/.r4-real-stop.runtime.spec.ts --reporter=line
+
+      - name: Capture stack logs
+        if: always()
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml logs --no-color || true
+
+      - name: Destroy isolated stack
+        if: always()
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml down -v --remove-orphans || true
