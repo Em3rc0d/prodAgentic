@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$R4_EVIDENCE_DIR"
-          printf 'workflow_sha=%s\ntarget_sha=%s\nrun_id=%s\nrun_attempt=%s\nmode=production_non_demo\ndiagnostic=direct_api_authority\n' \
+          printf 'workflow_sha=%s\ntarget_sha=%s\nrun_id=%s\nrun_attempt=%s\nmode=production_non_demo\ndiagnostic=direct_api_authority_plus_safe_lineage\n' \
             "$GITHUB_SHA" "$TARGET_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$R4_EVIDENCE_DIR/metadata.txt"
 
       - name: Require real provider secret
@@ -200,7 +200,7 @@ jobs:
                 const body = await safeJson(produced.value);
                 const detail = typeof body?.detail === "string" ? body.detail : "";
                 const code = produced.value.status() === 422 ? stopCode(detail) : "NONE";
-                const row = { ordinal: index + 1, status: produced.value.status(), ok: produced.value.ok(), stop_code: code, elapsed_ms: produced.elapsed_ms };
+                const row = { ordinal: index + 1, content_id: contentId, status: produced.value.status(), ok: produced.value.ok(), stop_code: code, elapsed_ms: produced.elapsed_ms };
                 results.push(row);
                 appendFileSync(join(evidenceDir, "produce-text.jsonl"), `${JSON.stringify({ target_sha: targetSha, ...row })}\n`, "utf8");
               }
@@ -234,6 +234,66 @@ jobs:
         working-directory: frontend
         run: npx playwright test e2e/.r4-real-stop.api.spec.ts --reporter=line
 
+      - name: Persist sanitized Mongo failure lineage
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml exec -T mongo \
+            mongosh --quiet prodagentic_local --eval '
+              const runs = db.generation_runs.find({}, {
+                _id: 0,
+                tenant_id: 0,
+                profile_id: 0,
+                profile_snapshot_digest: 0,
+                plan_id: 0,
+                plan_digest: 0,
+                contract_versions: 0,
+                research_pack_ref: 0,
+                content_spec_ref: 0,
+                editorial_review_ref: 0,
+                visual_spec_ref: 0,
+                qa_report_refs: 0
+              }).sort({started_at: 1}).toArray();
+              for (const run of runs) {
+                const attempts = db.agent_run_attempts.find({run_id: run.run_id}, {
+                  _id: 0,
+                  tenant_id: 0,
+                  run_id: 0,
+                  input_digest: 0,
+                  output_digest: 0
+                }).sort({created_at: 1, attempt: 1}).toArray();
+                const safeRun = {
+                  run_id: run.run_id,
+                  content_id: run.content_id,
+                  state: run.state,
+                  failure: run.failure ? {
+                    code: run.failure.code,
+                    stage: run.failure.stage,
+                    retryable: run.failure.retryable,
+                    safe_message: run.failure.safe_message
+                  } : null,
+                  started_at: run.started_at,
+                  completed_at: run.completed_at,
+                  attempts: attempts.map((a) => ({
+                    agent_run_id: a.agent_run_id,
+                    agent: a.agent,
+                    contract_version: a.contract_version,
+                    prompt_version: a.prompt_version,
+                    provider: a.provider,
+                    model: a.model,
+                    attempt: a.attempt,
+                    latency_ms: a.latency_ms,
+                    status: a.status,
+                    safe_failure_code: a.safe_failure_code,
+                    created_at: a.created_at
+                  }))
+                };
+                print(EJSON.stringify(safeRun));
+              }
+            ' > "$R4_EVIDENCE_DIR/safe-lineage.jsonl" 2> "$R4_EVIDENCE_DIR/safe-lineage.stderr" || true
+          test -s "$R4_EVIDENCE_DIR/safe-lineage.jsonl" || printf 'NO_LINEAGE_ROWS\n' > "$R4_EVIDENCE_DIR/safe-lineage.jsonl"
+
       - name: Persist sanitized stack evidence
         if: always()
         shell: bash
@@ -251,7 +311,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r4-api-diagnostic-${{ env.TARGET_SHA }}-${{ github.run_id }}
+          name: r4-api-lineage-${{ env.TARGET_SHA }}-${{ github.run_id }}
           path: ${{ env.R4_EVIDENCE_DIR }}
           if-no-files-found: error
           retention-days: 14
