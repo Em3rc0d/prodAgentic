@@ -19,7 +19,7 @@ jobs:
       R4_WEB_URL: https://localhost:3000
       R4_API_URL: https://localhost:8000
       COMPOSE_PROJECT_NAME: prodagentic-r4-stop-diagnostic
-      R4_EVIDENCE_DIR: ${{ runner.temp }}/r4-evidence
+      R4_EVIDENCE_DIR: /tmp/r4-evidence
 
     steps:
       - name: Initialize immutable evidence directory
