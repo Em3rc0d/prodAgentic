@@ -24,7 +24,11 @@ REGISTRY: Dict[ModelProfile, List[ModelDefinition]] = {
     ],
     ModelProfile.QUALITY_TEXT: [
         ModelDefinition(model_id="gemini-3.6-flash", supported_params=["system_instruction"]),
-        ModelDefinition(model_id="gemini-3.5-flash", supported_params=["system_instruction"])
+        # Production evidence showed simultaneous SERVICE_UNAVAILABLE responses from
+        # both full Flash routes while the Flash-Lite route remained operational.
+        # Keep the quality model primary, but make the bounded secondary route a
+        # different serving tier so transport failover is actually independent.
+        ModelDefinition(model_id="gemini-3.5-flash-lite", supported_params=["system_instruction"])
     ]
 }
 
