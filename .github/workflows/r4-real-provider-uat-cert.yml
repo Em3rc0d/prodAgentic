@@ -1,0 +1,308 @@
+name: R4 real-provider UAT certification
+
+on:
+  push:
+    branches: [r4-real-uat-cert-7518e73]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-provider-uat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TARGET_SHA: 7518e73cd45c36311b9ab8edc44a600120c7860a
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      PRODAGENTIC_DEMO_MODE: "false"
+      R4_API_URL: https://localhost:8000
+      COMPOSE_PROJECT_NAME: prodagentic-r4-uat-7518e73
+      R4_EVIDENCE_DIR: /tmp/r4-uat-evidence
+
+    steps:
+      - name: Initialize immutable evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$R4_EVIDENCE_DIR"
+          printf 'workflow_sha=%s\ntarget_sha=%s\nrun_id=%s\nrun_attempt=%s\nmode=production_non_demo\ncertifier=real_provider_em3rc0d_exact_four\n' \
+            "$GITHUB_SHA" "$TARGET_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$R4_EVIDENCE_DIR/metadata.txt"
+
+      - name: Require real Gemini credential
+        run: test -n "${GEMINI_API_KEY:-}"
+
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+
+      - name: Bind UAT to exact candidate SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          printf 'checked_out_sha=%s\n' "$actual" >> "$R4_EVIDENCE_DIR/metadata.txt"
+          test "$actual" = "$TARGET_SHA"
+
+      - name: Create masked ephemeral production auth secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          password="$(openssl rand -hex 24)"
+          session_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          echo "::add-mask::$session_secret"
+          echo "PRODAGENTIC_ADMIN_USER=em3rc0d-r4-uat" >> "$GITHUB_ENV"
+          echo "PRODAGENTIC_ADMIN_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "PRODAGENTIC_SESSION_SECRET=$session_secret" >> "$GITHUB_ENV"
+
+      - name: Start strict production non-demo stack
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml up --build -d --wait --wait-timeout 600
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install UAT dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Write exact-four real-provider UAT
+        shell: bash
+        run: |
+          cat > frontend/e2e/.r4-real-provider-uat.api.spec.ts <<'TS'
+          import { expect, request, test } from "@playwright/test";
+          import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          const API = process.env.R4_API_URL || "https://localhost:8000";
+          const username = process.env.PRODAGENTIC_ADMIN_USER || "";
+          const password = process.env.PRODAGENTIC_ADMIN_PASSWORD || "";
+          const targetSha = process.env.TARGET_SHA || "unknown";
+          const evidenceDir = process.env.R4_EVIDENCE_DIR || "/tmp/r4-uat-evidence";
+          mkdirSync(evidenceDir, { recursive: true });
+
+          function record(value: Record<string, unknown>) {
+            appendFileSync(join(evidenceDir, "api-phases.jsonl"), `${JSON.stringify({ target_sha: targetSha, ...value })}\n`, "utf8");
+          }
+
+          async function safeJson(response: { json(): Promise<unknown> }): Promise<any> {
+            try { return await response.json(); } catch { return null; }
+          }
+
+          async function phase<T>(name: string, fn: () => Promise<T>): Promise<{ value: T; elapsed_ms: number }> {
+            const started = Date.now();
+            const value = await fn();
+            const elapsed_ms = Date.now() - started;
+            record({ phase: name, event: "completed", elapsed_ms });
+            return { value, elapsed_ms };
+          }
+
+          const setup = {
+            name: "EM3RC0D R4 REAL UAT",
+            account_type: "education",
+            goals: ["educate", "build_authority"],
+            audience: "students and junior professionals in systems engineering, computing and IT who want practical technical skills",
+            voice: ["technical", "direct"],
+            batch_size: 4,
+            channels: ["manual_export"],
+            examples: [{
+              kind: "caption",
+              label: "EM3RC0D technical authority",
+              text: "Explica problemas reales de sistemas, software, datos, redes, cloud y arquitectura con ejemplos concretos, sin repetir el mismo tutorial ni el mismo ángulo.",
+            }],
+          };
+
+          test("certifies EM3RC0D exact-four with Gemini real in production non-demo", async () => {
+            test.setTimeout(1_500_000);
+            writeFileSync(join(evidenceDir, "api-phases.jsonl"), "", "utf8");
+            writeFileSync(join(evidenceDir, "produce-text.jsonl"), "", "utf8");
+
+            const api = await request.newContext({
+              baseURL: API,
+              ignoreHTTPSErrors: true,
+              extraHTTPHeaders: { "Content-Type": "application/json" },
+            });
+
+            try {
+              const ready = await phase("READINESS", () => api.get("/health/ready"));
+              const readyBody = await safeJson(ready.value);
+              record({ phase: "READINESS", status: ready.value.status(), ready_status: readyBody?.status ?? null, elapsed_ms: ready.elapsed_ms });
+              expect(ready.value.ok()).toBeTruthy();
+              expect(String(readyBody?.status || "")).not.toContain("DEMO");
+
+              const login = await phase("LOGIN", () => api.post("/api/auth/login", { data: { username, password } }));
+              record({ phase: "LOGIN", status: login.value.status(), elapsed_ms: login.elapsed_ms });
+              expect(login.value.ok()).toBeTruthy();
+              const session = await safeJson(login.value);
+              const csrf = typeof session?.csrf_token === "string" ? session.csrf_token : "";
+              expect(csrf.length).toBeGreaterThan(0);
+              const headers = { "X-CSRF-Token": csrf };
+
+              const proposal = await phase("PROFILE_PROPOSAL", () => api.post("/api/profiles/inference-proposals", { headers, data: setup, timeout: 180_000 }));
+              record({ phase: "PROFILE_PROPOSAL", status: proposal.value.status(), elapsed_ms: proposal.elapsed_ms });
+              expect(proposal.value.ok()).toBeTruthy();
+              const proposalBody = await safeJson(proposal.value);
+              const proposalDigest = typeof proposalBody?.proposal_digest === "string" ? proposalBody.proposal_digest : "";
+              expect(proposalDigest).toMatch(/^[0-9a-f]{64}$/);
+
+              const acceptance = await phase("PROFILE_ACCEPTANCE", () => api.post("/api/profiles", { headers, data: { setup, proposal_digest: proposalDigest }, timeout: 180_000 }));
+              record({ phase: "PROFILE_ACCEPTANCE", status: acceptance.value.status(), elapsed_ms: acceptance.elapsed_ms });
+              expect(acceptance.value.status()).toBe(201);
+              const acceptanceBody = await safeJson(acceptance.value);
+              const profileId = typeof acceptanceBody?.profile?.profile_id === "string" ? acceptanceBody.profile.profile_id : "";
+              expect(profileId.length).toBeGreaterThan(0);
+
+              const start = new Date();
+              start.setUTCDate(start.getUTCDate() + 1);
+              start.setUTCHours(0, 0, 0, 0);
+              const end = new Date(start);
+              end.setUTCDate(end.getUTCDate() + 1);
+              const batchPayload = {
+                target_window: { start_at: start.toISOString(), end_at: end.toISOString(), timezone: "UTC" },
+                requested_size: 4,
+                constraints: { campaign_goal: null, include_topics: [], avoid_topics: [], desired_format: null },
+              };
+
+              const batch = await phase("BATCH", () => api.post(`/api/profiles/${encodeURIComponent(profileId)}/batches`, { headers, data: batchPayload, timeout: 300_000 }));
+              const batchBody = await safeJson(batch.value);
+              const contentItems = Array.isArray(batchBody?.content_items) ? batchBody.content_items : [];
+              record({
+                phase: "BATCH",
+                status: batch.value.status(),
+                elapsed_ms: batch.elapsed_ms,
+                creative_source: batchBody?.creative_source ?? null,
+                completeness_policy: batchBody?.completeness_policy ?? null,
+                content_count: contentItems.length,
+              });
+              expect(batch.value.status()).toBe(201);
+              expect(batchBody?.creative_source).toBe("model_router");
+              expect(batchBody?.completeness_policy).toBe("r4-exact-request-v1");
+              expect(contentItems).toHaveLength(4);
+
+              const results: Array<Record<string, unknown>> = [];
+              for (let index = 0; index < contentItems.length; index += 1) {
+                const contentId = typeof contentItems[index]?.content_id === "string" ? contentItems[index].content_id : "";
+                expect(contentId.length).toBeGreaterThan(0);
+                const produced = await phase(`PRODUCE_TEXT_${index + 1}`, () => api.post(`/api/content-items/${encodeURIComponent(contentId)}/produce-text`, {
+                  headers,
+                  data: { parent_revision_id: null },
+                  timeout: 360_000,
+                }));
+                const body = await safeJson(produced.value);
+                const row = {
+                  ordinal: index + 1,
+                  content_id: contentId,
+                  status: produced.value.status(),
+                  elapsed_ms: produced.elapsed_ms,
+                  creative_mode: body?.creative_mode ?? null,
+                  revision_status: body?.revision?.status ?? null,
+                  run_state: body?.run?.state ?? null,
+                  has_research: Boolean(body?.research),
+                  has_content: Boolean(body?.content),
+                  has_editorial_review: Boolean(body?.editorial_review),
+                };
+                results.push(row);
+                appendFileSync(join(evidenceDir, "produce-text.jsonl"), `${JSON.stringify({ target_sha: targetSha, ...row })}\n`, "utf8");
+                expect(produced.value.status(), JSON.stringify(row)).toBe(201);
+                expect(body?.creative_mode).toBe("model_router_r4");
+                expect(body?.revision?.status).toBe("REVIEWABLE");
+                expect(body?.research).toBeTruthy();
+                expect(body?.content).toBeTruthy();
+                expect(body?.editorial_review).toBeTruthy();
+              }
+
+              expect(results).toHaveLength(4);
+              expect(results.every((row) => row.status === 201)).toBeTruthy();
+              writeFileSync(join(evidenceDir, "terminal.json"), JSON.stringify({
+                target_sha: targetSha,
+                result: "PASS",
+                mode: "production_non_demo",
+                real_provider: "gemini",
+                profile: "EM3RC0D",
+                requested_count: 4,
+                produced_count: results.length,
+                successful_201_count: results.filter((row) => row.status === 201).length,
+              }, null, 2));
+            } finally {
+              await api.dispose();
+            }
+          });
+          TS
+
+      - name: Run real-provider exact-four UAT
+        id: uat
+        continue-on-error: true
+        working-directory: frontend
+        run: npx playwright test e2e/.r4-real-provider-uat.api.spec.ts --reporter=line
+
+      - name: Persist safe Mongo authority evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml exec -T mongo \
+            mongosh --quiet prodagentic_local --eval '
+              const runs=db.generation_runs.find({}, {_id:0,run_id:1,content_id:1,state:1,failure:1,started_at:1,completed_at:1}).sort({started_at:1}).toArray();
+              const revisions=db.content_revisions.find({}, {_id:0,revision_id:1,content_id:1,run_id:1,status:1}).sort({created_at:1}).toArray();
+              const attempts=db.agent_run_attempts.find({}, {_id:0,run_id:1,agent:1,provider:1,model:1,attempt:1,status:1,safe_failure_code:1,latency_ms:1}).sort({created_at:1,attempt:1}).toArray();
+              print(JSON.stringify({
+                generation_run_count:runs.length,
+                failed_run_count:runs.filter(r=>r.failure!=null).length,
+                reviewable_revision_count:revisions.filter(r=>r.status==="REVIEWABLE").length,
+                attempt_count:attempts.length,
+                runs,
+                revisions,
+                attempts
+              }));
+            ' > "$R4_EVIDENCE_DIR/persistence.json" 2> "$R4_EVIDENCE_DIR/persistence.stderr" || true
+
+      - name: Capture sanitized domain-stop evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml logs --no-color 2>&1 \
+            | grep -E 'R4 production domain stop code=' > "$R4_EVIDENCE_DIR/domain-stop.log" || true
+          printf 'uat_outcome=%s\n' '${{ steps.uat.outcome }}' >> "$R4_EVIDENCE_DIR/metadata.txt"
+
+      - name: Enforce PASS ALL UAT contract
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test '${{ steps.uat.outcome }}' = 'success'
+          python - <<'PY'
+          import json, os
+          root=os.environ['R4_EVIDENCE_DIR']
+          terminal=json.load(open(os.path.join(root,'terminal.json'), encoding='utf-8'))
+          assert terminal['target_sha']==os.environ['TARGET_SHA'], terminal
+          assert terminal['result']=='PASS', terminal
+          assert terminal['mode']=='production_non_demo', terminal
+          assert terminal['requested_count']==4, terminal
+          assert terminal['produced_count']==4, terminal
+          assert terminal['successful_201_count']==4, terminal
+          persistence=json.load(open(os.path.join(root,'persistence.json'), encoding='utf-8'))
+          assert persistence['generation_run_count']==4, persistence
+          assert persistence['failed_run_count']==0, persistence
+          assert persistence['reviewable_revision_count']==4, persistence
+          assert persistence['attempt_count'] >= 12, persistence
+          PY
+          printf 'pass_all_uat=true\n' >> "$R4_EVIDENCE_DIR/metadata.txt"
+
+      - name: Upload immutable sanitized UAT evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-real-provider-uat-${{ env.TARGET_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.R4_EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Destroy isolated stack
+        if: always()
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml down -v --remove-orphans || true
