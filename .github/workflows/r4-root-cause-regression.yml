@@ -41,14 +41,45 @@ jobs:
       - name: Compile changed production modules
         working-directory: backend
         run: python -m py_compile routes/production.py core/validator.py
-      - name: Run exact root-cause regressions
+      - name: Run exact root-cause regressions with durable evidence
         working-directory: backend
+        shell: bash
         run: |
+          set -o pipefail
+          set +e
           python -m pytest -q \
             tests/test_language_validator.py \
             tests/test_r4_router_isolation.py \
             tests/test_model_router.py \
-            tests/test_language_recovery.py
+            tests/test_language_recovery.py \
+            --junitxml=targeted-junit.xml 2>&1 | tee targeted.log
+          status=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$status" > targeted-exit-code.txt
+          {
+            echo "candidate_sha=$GITHUB_SHA"
+            echo "workflow_run_id=${{ github.run_id }}"
+            echo "workflow_run_attempt=${{ github.run_attempt }}"
+            echo "pytest_exit_code=$status"
+          } > targeted-metadata.txt
+      - name: Upload targeted evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-targeted-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            backend/targeted-junit.xml
+            backend/targeted.log
+            backend/targeted-exit-code.txt
+            backend/targeted-metadata.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Enforce targeted regression result
+        if: always()
+        working-directory: backend
+        run: |
+          test -f targeted-exit-code.txt
+          test "$(cat targeted-exit-code.txt)" = "0"
 
   backend-full:
     runs-on: ubuntu-latest
@@ -96,6 +127,37 @@ jobs:
       - name: Compile backend
         working-directory: backend
         run: python -m compileall .
-      - name: Run complete backend suite
+      - name: Run complete backend suite with durable evidence
         working-directory: backend
-        run: python -m pytest -q
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          python -m pytest -q --junitxml=backend-full-junit.xml 2>&1 | tee backend-full.log
+          status=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$status" > backend-full-exit-code.txt
+          {
+            echo "candidate_sha=$GITHUB_SHA"
+            echo "workflow_run_id=${{ github.run_id }}"
+            echo "workflow_run_attempt=${{ github.run_attempt }}"
+            echo "pytest_exit_code=$status"
+          } > backend-full-metadata.txt
+      - name: Upload backend full evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-backend-full-root-cause-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            backend/backend-full-junit.xml
+            backend/backend-full.log
+            backend/backend-full-exit-code.txt
+            backend/backend-full-metadata.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Enforce backend full result
+        if: always()
+        working-directory: backend
+        run: |
+          test -f backend-full-exit-code.txt
+          test "$(cat backend-full-exit-code.txt)" = "0"
