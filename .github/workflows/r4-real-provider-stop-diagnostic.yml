@@ -74,7 +74,7 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
-      - name: Write runtime diagnostic spec
+      - name: Write phase-aware runtime diagnostic spec
         shell: bash
         run: |
           cat > frontend/e2e/.r4-real-stop.runtime.spec.ts <<'TS'
@@ -91,11 +91,21 @@ jobs:
           const evidenceDir = process.env.R4_EVIDENCE_DIR || "/tmp/r4-evidence";
           mkdirSync(evidenceDir, { recursive: true });
 
+          type SafePhase = "BATCH" | "READINESS" | "PRODUCE_TEXT" | "OTHER";
+          function phaseFor(url: string): SafePhase {
+            if (/\/api\/profiles\/[^/]+\/batches(?:\?|$)/.test(url)) return "BATCH";
+            if (url.includes("runtime-readiness")) return "READINESS";
+            if (url.includes("/produce-text")) return "PRODUCE_TEXT";
+            return "OTHER";
+          }
           function safeStopCode(detail: string): string {
             if (detail.includes("Research verdict NO_GO")) return "RESEARCH_NO_GO";
             if (detail.includes("Editor verdict REJECT")) return "EDITOR_REJECTED";
             if (detail.toLowerCase().includes("revision budget")) return "REVISION_BUDGET_EXHAUSTED";
             return "PRODUCTION_DOMAIN_STOP";
+          }
+          function record(name: string, value: unknown) {
+            appendFileSync(join(evidenceDir, name), `${JSON.stringify(value)}\n`, "utf8");
           }
 
           const setup = {
@@ -113,27 +123,46 @@ jobs:
             }],
           };
 
-          test("capture real-provider production stop", async ({ page }) => {
-            test.setTimeout(720_000);
-            const captureTasks: Promise<void>[] = [];
-            let produceCount = 0;
+          test("capture the first failing real-provider phase without leaking content", async ({ page }) => {
+            test.setTimeout(420_000);
+            writeFileSync(join(evidenceDir, "network.jsonl"), "", "utf8");
             writeFileSync(join(evidenceDir, "produce-text.jsonl"), "", "utf8");
+            const captureTasks: Promise<void>[] = [];
+            let finishSignal: ((value: string) => void) | null = null;
+            const terminal = new Promise<string>((resolve) => { finishSignal = resolve; });
+
+            page.on("request", (request) => {
+              const phase = phaseFor(request.url());
+              if (phase === "OTHER") return;
+              record("network.jsonl", { target_sha: targetSha, event: "request", phase, method: request.method() });
+            });
 
             page.on("response", (response) => {
-              if (response.request().method() !== "POST" || !response.url().includes("/produce-text")) return;
-              const ordinal = ++produceCount;
+              const phase = phaseFor(response.url());
+              if (phase === "OTHER") return;
               const task = (async () => {
-                let detail = "";
-                try {
-                  const raw = await response.text();
-                  const parsed = JSON.parse(raw);
-                  detail = typeof parsed?.detail === "string" ? parsed.detail : "";
-                } catch {}
                 const status = response.status();
-                const stopCode = status === 422 ? safeStopCode(detail) : "NONE";
-                const record = { target_sha: targetSha, ordinal, status, stop_code: stopCode };
-                appendFileSync(join(evidenceDir, "produce-text.jsonl"), `${JSON.stringify(record)}\n`, "utf8");
-                console.log(`[R4_DIAGNOSTIC] ordinal=${ordinal} status=${status} stop_code=${stopCode}`);
+                record("network.jsonl", { target_sha: targetSha, event: "response", phase, status });
+                if (phase === "BATCH" && status >= 400) finishSignal?.(`BATCH_HTTP_${status}`);
+                if (phase === "READINESS") {
+                  let state = "UNKNOWN";
+                  try {
+                    const parsed = JSON.parse(await response.text());
+                    state = typeof parsed?.state === "string" ? parsed.state : "UNKNOWN";
+                  } catch {}
+                  record("network.jsonl", { target_sha: targetSha, event: "readiness_state", state });
+                  if (state !== "READY") finishSignal?.(`READINESS_${state}`);
+                }
+                if (phase === "PRODUCE_TEXT") {
+                  let detail = "";
+                  try {
+                    const parsed = JSON.parse(await response.text());
+                    detail = typeof parsed?.detail === "string" ? parsed.detail : "";
+                  } catch {}
+                  const stopCode = status === 422 ? safeStopCode(detail) : "NONE";
+                  record("produce-text.jsonl", { target_sha: targetSha, status, stop_code: stopCode });
+                  finishSignal?.(`PRODUCE_TEXT_${status}_${stopCode}`);
+                }
               })();
               captureTasks.push(task);
             });
@@ -164,15 +193,30 @@ jobs:
             await page.goto(`${WEB}/create`, { waitUntil: "domcontentloaded" });
             await expect(page.getByRole("heading", { name: "Create for EM3RC0D R4 REAL DIAGNOSTIC" })).toBeVisible({ timeout: 60_000 });
             await page.getByRole("button", { name: "Generate next batch" }).click();
-            try {
-              await expect(page).toHaveURL(/\/review$/, { timeout: 600_000 });
-            } finally {
-              await Promise.allSettled(captureTasks);
-            }
+
+            const reviewSignal = page.waitForURL(/\/review$/, { timeout: 360_000 }).then(() => "REVIEW_REACHED").catch(() => "NO_REVIEW");
+            const alertSignal = page.getByRole("alert").waitFor({ state: "visible", timeout: 360_000 }).then(async () => {
+              const text = (await page.getByRole("alert").innerText()).trim();
+              const match = text.match(/(?:failed|unavailable|Batch planning failed:)\s*:?[ ]*(\d{3})?/i);
+              return match?.[1] ? `UI_ALERT_HTTP_${match[1]}` : "UI_ALERT_PRESENT";
+            }).catch(() => "NO_ALERT");
+            const gateSignal = page.getByText("Production is paused truthfully.").waitFor({ state: "visible", timeout: 360_000 }).then(() => "PRODUCTION_GATE_PRESENT").catch(() => "NO_GATE");
+            const timeoutSignal = new Promise<string>((resolve) => setTimeout(() => resolve("DIAGNOSTIC_TIMEOUT"), 360_000));
+
+            const signal = await Promise.race([terminal, reviewSignal, alertSignal, gateSignal, timeoutSignal]);
+            await Promise.allSettled(captureTasks);
+            const cardStates = await page.locator("[data-production-state]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-production-state") || "UNKNOWN")).catch(() => [] as string[]);
+            const counts = cardStates.reduce<Record<string, number>>((acc, state) => { acc[state] = (acc[state] || 0) + 1; return acc; }, {});
+            writeFileSync(join(evidenceDir, "terminal.json"), JSON.stringify({ target_sha: targetSha, signal, url_path: new URL(page.url()).pathname, production_state_counts: counts }, null, 2), "utf8");
+
+            // Diagnostic runs are evidence collectors, never certification gates.
+            // A captured stop is considered a successful diagnostic observation;
+            // promotion remains fail-closed in the workflow's final step.
+            expect(signal).not.toBe("DIAGNOSTIC_TIMEOUT");
           });
           TS
 
-      - name: Run real-provider stop diagnostic
+      - name: Run real-provider phase diagnostic
         id: real_uat
         continue-on-error: true
         working-directory: frontend
@@ -195,13 +239,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r4-stop-diagnostic-${{ env.TARGET_SHA }}-${{ github.run_id }}
+          name: r4-phase-diagnostic-${{ env.TARGET_SHA }}-${{ github.run_id }}
           path: ${{ env.R4_EVIDENCE_DIR }}
           if-no-files-found: error
           retention-days: 14
 
-      - name: Fail closed after evidence persistence
+      - name: Fail closed because diagnostic evidence cannot certify R4
         if: always()
         shell: bash
         run: |
-          test '${{ steps.real_uat.outcome }}' = 'success'
+          echo "Diagnostic-only workflow: evidence persisted; certification intentionally blocked."
+          exit 1
