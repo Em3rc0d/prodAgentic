@@ -1,0 +1,100 @@
+name: R4 real-provider stop artifact
+
+on:
+  push:
+    branches: [r4-real-stop-artifact-61bf7f]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stop-artifact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TARGET_SHA: 61bf7f93b37b00f3315c3f710d8005fed977e672
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      PRODAGENTIC_DEMO_MODE: "false"
+      R4_WEB_URL: https://localhost:3000
+      R4_API_URL: https://localhost:8000
+      COMPOSE_PROJECT_NAME: prodagentic-r4-stop-artifact
+    steps:
+      - run: test -n "${GEMINI_API_KEY:-}"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+      - run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Create masked auth
+        shell: bash
+        run: |
+          p="$(openssl rand -hex 24)"; s="$(openssl rand -hex 32)"
+          echo "::add-mask::$p"; echo "::add-mask::$s"
+          echo "PRODAGENTIC_ADMIN_USER=em3rc0d-stop" >> "$GITHUB_ENV"
+          echo "PRODAGENTIC_ADMIN_PASSWORD=$p" >> "$GITHUB_ENV"
+          echo "PRODAGENTIC_SESSION_SECRET=$s" >> "$GITHUB_ENV"
+      - name: Start production-like stack
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml up --build -d --wait --wait-timeout 600
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install browser
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Write artifact diagnostic
+        shell: bash
+        run: |
+          mkdir -p r4-stop-evidence
+          cat > frontend/e2e/.r4-stop-artifact.runtime.spec.ts <<'TS'
+          import { expect, test } from "@playwright/test";
+          import fs from "node:fs";
+          test.use({ ignoreHTTPSErrors: true });
+          const WEB=process.env.R4_WEB_URL||"https://localhost:3000";
+          const API=process.env.R4_API_URL||"https://localhost:8000";
+          const OUT="../r4-stop-evidence/stops.json";
+          const stops:Array<Record<string,unknown>>=[];
+          const save=()=>fs.writeFileSync(OUT,JSON.stringify(stops,null,2));
+          test("persist safe production stop", async ({page})=>{
+            test.setTimeout(720_000);
+            page.on("response", async r=>{
+              if(r.request().method()==="POST"&&r.url().includes("/produce-text")){
+                let detail=""; try{ const b=await r.json(); detail=String(b?.detail||""); }catch{}
+                stops.push({status:r.status(),detail}); save();
+              }
+            });
+            const login=await page.request.post(`${API}/api/auth/login`,{ignoreHTTPSErrors:true,data:{username:process.env.PRODAGENTIC_ADMIN_USER,password:process.env.PRODAGENTIC_ADMIN_PASSWORD}});
+            expect(login.ok()).toBeTruthy(); const session=await login.json(); const headers={"X-CSRF-Token":String(session.csrf_token)};
+            const setup={name:"EM3RC0D R4 REAL STOP",account_type:"education",goals:["educate","build_authority"],audience:"students and junior professionals in systems engineering, computing and IT who want practical technical skills",voice:["technical","direct"],batch_size:4,channels:["manual_export"],examples:[{kind:"caption",label:"EM3RC0D technical authority",text:"Explica problemas reales de sistemas, software, datos, redes, cloud y arquitectura con ejemplos concretos, sin repetir el mismo tutorial ni el mismo ángulo."}]};
+            const pr=await page.request.post(`${API}/api/profiles/inference-proposals`,{ignoreHTTPSErrors:true,headers,data:setup}); expect(pr.ok()).toBeTruthy(); const proposal=await pr.json();
+            const ar=await page.request.post(`${API}/api/profiles`,{ignoreHTTPSErrors:true,headers,data:{setup,proposal_digest:proposal.proposal_digest}}); expect(ar.ok()).toBeTruthy();
+            await page.goto(`${WEB}/create`,{waitUntil:"domcontentloaded"});
+            await expect(page.getByRole("heading",{name:"Create for EM3RC0D R4 REAL STOP"})).toBeVisible({timeout:60000});
+            await page.getByRole("button",{name:"Generate next batch"}).click();
+            try{await expect(page).toHaveURL(/\/review$/,{timeout:600000});}finally{save();}
+          });
+          TS
+      - name: Run stop diagnostic
+        working-directory: frontend
+        continue-on-error: true
+        run: npx playwright test e2e/.r4-stop-artifact.runtime.spec.ts --reporter=line
+      - name: Extract safe stop codes from backend logs
+        if: always()
+        shell: bash
+        run: |
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml logs backend 2>/dev/null | grep 'R4 production domain stop code=' | sed -E 's/.*code=([^ ]+).*/\1/' > r4-stop-evidence/codes.txt || true
+      - name: Upload safe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-stop-evidence-${{ env.TARGET_SHA }}
+          path: r4-stop-evidence
+          if-no-files-found: error
+          retention-days: 30
+      - name: Destroy stack
+        if: always()
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.local-production.yml down -v --remove-orphans || true
