@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import uuid4
+
+from domain.production.evidence import EvidenceAcquisitionPort, EvidenceBundleV1, verify_research_evidence
+from domain.production.failures import recovery_for, safe_exception_code, failure_message, ProductionRecoveryAction
 
 from application.content_quality.policy import blocking_publishability_issues
 from domain.planning.models import ContentPlanV1, canonical_sha256 as planning_sha256
@@ -83,9 +88,11 @@ class StructuredAgentCellService:
         writer_agent: WriterAgentPort,
         editor_agent: EditorAgentPort,
         max_editor_revision_cycles: int = 2,
+        evidence_provider: EvidenceAcquisitionPort | None = None,
     ):
         if max_editor_revision_cycles < 0 or max_editor_revision_cycles > 5:
             raise ValueError("max_editor_revision_cycles must be between 0 and 5")
+        self.evidence_provider = evidence_provider
         self.repository = repository
         self.research_agent = research_agent
         self.writer_agent = writer_agent
@@ -101,6 +108,7 @@ class StructuredAgentCellService:
         plan_digest: str,
         profile: ProfileVersion,
         parent_revision_id: str | None = None,
+        retry_of_run_id: str | None = None,
         now: datetime | None = None,
     ) -> TextCellResult:
         clock = now or utc_now()
@@ -112,6 +120,17 @@ class StructuredAgentCellService:
             profile=profile,
         )
 
+        previous = None
+        if retry_of_run_id:
+            previous = await self.repository.get_run(tenant_id, retry_of_run_id)
+            if (previous is None or previous.state != GenerationRunState.FAILED
+                    or previous.content_id != content_id or previous.plan_id != plan.plan_id
+                    or previous.plan_digest != plan_digest or previous.profile_snapshot_digest != profile.digest
+                    or previous.profile_id != profile.profile_id or previous.profile_version != profile.version
+                    or previous.failure is None
+                    or previous.failure.recovery_action != ProductionRecoveryAction.RETRY_PRODUCTION):
+                raise ProductionAuthorityError("Retry predecessor is not eligible")
+
         run = GenerationRunV1(
             run_id=str(uuid4()),
             tenant_id=tenant_id,
@@ -122,34 +141,72 @@ class StructuredAgentCellService:
             plan_id=plan.plan_id,
             plan_digest=plan_digest,
             state=GenerationRunState.CREATED,
-            contract_versions=self.contract_versions,
+            contract_versions=self.contract_versions + (("EvidenceBundleV1@1",) if self.evidence_provider else ()),
+            retry_of_run_id=retry_of_run_id,
             started_at=clock,
         )
         await self.repository.create_run(run)
 
-        # RESEARCH
+        bundle = None
+        if self.evidence_provider is not None:
+            run = await self._transition(run, GenerationRunState.ACQUIRING_EVIDENCE)
+            try:
+                if previous and previous.evidence_bundle_ref:
+                    record = await self.repository.get_artifact(tenant_id, previous.evidence_bundle_ref)
+                    if record is None or record.get("artifact_type") != "EvidenceBundleV1":
+                        raise ProductionAuthorityError("Retry evidence is unavailable")
+                    bundle = EvidenceBundleV1.model_validate(record["payload"])
+                    if (record.get("digest") != canonical_sha256(bundle)
+                            or previous.evidence_bundle_digest != canonical_sha256(bundle)
+                            or bundle.bundle_id != previous.evidence_bundle_ref
+                            or bundle.plan_id != plan.plan_id or bundle.plan_digest != plan_digest
+                            or bundle.tenant_id != tenant_id):
+                        raise ProductionAuthorityError("Retry evidence lineage mismatch")
+                    if bundle.expires_at <= utc_now():
+                        bundle = None  # New immutable acquisition; old evidence remains untouched.
+                if bundle is None:
+                    bundle = await self.evidence_provider.acquire(
+                        tenant_id=tenant_id, run_id=run.run_id, plan=plan, profile=profile,
+                    )
+                    if (bundle.tenant_id != tenant_id or bundle.plan_id != plan.plan_id
+                            or bundle.plan_digest != plan_digest or bundle.expires_at <= utc_now()):
+                        raise ProductionAuthorityError("Acquired evidence predecessor mismatch")
+                    await self.repository.save_artifact(
+                        tenant_id=tenant_id, run_id=run.run_id, artifact_type="EvidenceBundleV1",
+                        artifact_id=bundle.bundle_id, digest=canonical_sha256(bundle),
+                        payload=bundle.model_dump(mode="json"),
+                    )
+                run = run.model_copy(update={"evidence_bundle_ref": bundle.bundle_id,
+                                             "evidence_bundle_digest": canonical_sha256(bundle)})
+                await self.repository.update_run(run)
+            except Exception as exc:
+                await self._fail_run(run, safe_exception_code(exc, "EVIDENCE_CONTRACT_VIOLATION"),
+                                     "evidence", retryable=False)
+                raise ProductionContractViolation("Evidence acquisition failed safely") from None
+
+        # RESEARCH: bind the exact persisted bundle into the agent input digest.
         run = await self._transition(run, GenerationRunState.RESEARCHING)
-        research_input_digest = canonical_sha256(
-            {
-                "plan": plan.model_dump(mode="json"),
-                "profile": profile.snapshot(),
-            }
-        )
+        research_input = {"plan": plan.model_dump(mode="json"), "profile": profile.snapshot()}
+        if bundle is not None:
+            research_input["evidence_bundle"] = bundle.model_dump(mode="json")
+        research_input_digest = canonical_sha256(research_input)
         try:
             research_result = await self.research_agent.research(
                 tenant_id=tenant_id,
                 run_id=run.run_id,
                 plan=plan,
                 profile=profile,
+                **({"evidence_bundle": bundle} if bundle is not None else {}),
             )
         except Exception as exc:
-            run = await self._fail_run(run, "RESEARCH_AGENT_FAILED", "research", retryable=True)
             await self._persist_exception_attempts(
                 run=run,
                 expected_agent=AgentKind.RESEARCH,
                 expected_input_digest=research_input_digest,
                 exc=exc,
             )
+            run = await self.repository.get_run(tenant_id, run.run_id)
+            await self._fail_run(run, safe_exception_code(exc, "RESEARCH_AGENT_FAILED"), "research", retryable=False)
             raise ProductionContractViolation(
                 "Research agent failed before producing a valid typed artifact"
             ) from exc
@@ -166,6 +223,11 @@ class StructuredAgentCellService:
             )
             run = await self._bind_attempt_refs(run, research_refs)
             self._verify_research(plan, research)
+            if bundle is not None:
+                try:
+                    verify_research_evidence(research, bundle)
+                except ValueError as exc:
+                    raise ProductionContractViolation("Research/evidence binding rejected") from exc
         except ProductionContractViolation:
             await self._fail_run(
                 run,
@@ -214,13 +276,14 @@ class StructuredAgentCellService:
                 research=research,
             )
         except Exception as exc:
-            run = await self._fail_run(run, "WRITER_AGENT_FAILED", "writing", retryable=True)
             await self._persist_exception_attempts(
                 run=run,
                 expected_agent=AgentKind.WRITER,
                 expected_input_digest=writer_input_digest,
                 exc=exc,
             )
+            run = await self.repository.get_run(tenant_id, run.run_id)
+            await self._fail_run(run, safe_exception_code(exc, "WRITER_AGENT_FAILED"), "writing", retryable=False)
             raise ProductionContractViolation(
                 "Writer agent failed before producing a valid typed artifact"
             ) from exc
@@ -282,13 +345,14 @@ class StructuredAgentCellService:
                     revision_cycle=revision_cycle,
                 )
             except Exception as exc:
-                run = await self._fail_run(run, "EDITOR_AGENT_FAILED", "editing", retryable=True)
                 await self._persist_exception_attempts(
                     run=run,
                     expected_agent=AgentKind.EDITOR,
                     expected_input_digest=editor_input_digest,
                     exc=exc,
                 )
+                run = await self.repository.get_run(tenant_id, run.run_id)
+                await self._fail_run(run, safe_exception_code(exc, "EDITOR_AGENT_FAILED"), "editing", retryable=False)
                 raise ProductionContractViolation(
                     "Editor agent failed before producing a valid typed artifact"
                 ) from exc
@@ -647,17 +711,28 @@ class StructuredAgentCellService:
             "A production stage failed before a valid authoritative artifact was produced."
         ),
     ) -> GenerationRunV1:
+        action = recovery_for(code)
+        safe_message = failure_message(code)
         failed = run.model_copy(
             update={
                 "state": GenerationRunState.FAILED,
                 "failure": GenerationFailureV1(
                     code=code,
                     stage=stage,
-                    retryable=retryable,
+                    retryable=action == ProductionRecoveryAction.RETRY_PRODUCTION,
+                    recovery_action=action,
                     safe_message=safe_message,
                 ),
                 "completed_at": utc_now(),
             }
         )
         await self.repository.update_run(failed)
+        attempts = await self.repository.list_agent_attempts(run.tenant_id, run.run_id)
+        terminal = attempts[-1] if attempts else None
+        logging.getLogger(__name__).warning(
+            "event=production_failed content_id=%s run_id=%s stage=%s code=%s retryable=%s recovery_action=%s model=%s fallback_attempted=%s",
+            run.content_id, run.run_id, stage, code, failed.failure.retryable, action.value,
+            terminal.model if terminal else "none",
+            len({(a.provider, a.model) for a in attempts if a.agent == terminal.agent}) > 1 if terminal else False,
+        )
         return failed

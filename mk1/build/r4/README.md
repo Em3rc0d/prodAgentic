@@ -1,7 +1,11 @@
 # MK1-R4 — Creative Production
 
 Status: **DESIGN + IMPLEMENTATION HARDENING / NOT CERTIFIED**  
-Implementation audit candidate branch: `r4-final-execution`
+Implementation audit candidate branch: `r4.1-reliability-evidence-authority`
+
+Exact R4.1 base: `dc9e072846b94b6476ff8c246e83388df10dad7b`
+
+Implementation handoff: [R4_1_HANDOFF.md](R4_1_HANDOFF.md) — audit pending; no tests/UAT/certification claimed.
 
 Promotion branch: `developer` (unchanged pending independent audit)
 
@@ -37,7 +41,7 @@ R4 is intentionally distributed across the standard MK1 evidence structure while
 
 A normal production cycle must preserve this authority chain:
 
-`ProfileVersion ↔ CreativeBrief ↔ CandidatePool ↔ ContentPlan ↔ ResearchPack ↔ ContentSpec ↔ EditorialGate ↔ VisualSpec ↔ SourceAsset ↔ RenderAsset ↔ VisualQA ↔ HumanReview ↔ ApprovalBundle ↔ Export/Publication ↔ Analytics/Learning ↔ EditorialMemory ↔ next CandidatePool`.
+`ProfileVersion ↔ CreativeBrief ↔ CandidatePool ↔ ContentPlan ↔ EvidenceBundle ↔ ResearchPack ↔ ContentSpec ↔ EditorialGate ↔ VisualSpec ↔ SourceAsset ↔ RenderAsset ↔ VisualQA ↔ HumanReview ↔ ApprovalBundle ↔ Export/Publication ↔ Analytics/Learning ↔ EditorialMemory ↔ next CandidatePool`.
 
 The graph is intentionally closed by the learning loop. No publication is treated as a terminal node and no new candidate pool is treated as an unexplained beginning.
 
@@ -73,3 +77,21 @@ The verifier proves graph structure only. It does not replace editorial/visual U
 ## Closure rule
 
 R4 may be marked `CERTIFIED / CLOSED` only when every blocking node in `mk1/test/R4_ACCEPTANCE.md` has evidence, the graph verifier passes, the exact candidate SHA passes all required automated gates, a real-profile UAT meets publishability expectations, and the exact merged `main` SHA passes post-merge certification.
+
+
+## R4.1 implementation delta
+
+- Provider-independent external evidence authority, native Gemini grounding adapter,
+  bounded normalized sources and factual claim/evidence binding.
+- Shared structured-stage budget across contract repairs; per-route/per-attempt
+  deadlines with fallback reserves and model-scoped timeout/quota handling.
+- Structured prose language validation with source/schema/identifier exclusion.
+- Durable recovery taxonomy, new-run transient retry, immutable candidate replacement
+  ledger, active-batch projection and per-piece UI actions with reload support.
+- Safe production/render error details and structured failure logs; downstream QA
+  and approval revalidate evidence lineage.
+
+See the R4.1 section of [ARCHITECTURE.md](ARCHITECTURE.md) for exact behavior and
+limitations. The certification graph contains evidence/replacement nodes with
+null certification digests. Existing R4 release records are historical evidence,
+not proof that R4.1 passed. Jett owns all post-handoff tests and certification.

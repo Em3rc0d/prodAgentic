@@ -8,6 +8,7 @@ from core.model_registry import ModelProfile, get_models_for_profile
 from .adapters.types import ModelExecutionError, ErrorCode, ProviderAdapter
 from core.validator import LanguageValidator, ValidationStatus, ArtifactType
 from core.context import GenerationContext, LanguageCode
+from core.execution_budget import stage_deadline as bounded_deadline
 
 @dataclass
 class AttemptStarted:
@@ -39,6 +40,7 @@ class AttemptCompleted:
 @dataclass
 class RoutingExhausted:
     reason: str
+    failure_code: str = "ROUTING_EXHAUSTED"
 
 @dataclass
 class ValidationWarning:
@@ -115,6 +117,24 @@ class RoutingPolicy:
     # below the browser/API request budget so a hung provider fails closed instead
     # of leaving the UI waiting after its request has already been aborted.
     max_stage_seconds: float = 75.0
+    per_attempt_seconds: float = 25.0
+    minimum_fallback_seconds: float = 10.0
+
+
+@dataclass
+class RoutingBudget:
+    deadline: float
+    attempts: int = 0
+    language_repairs: int = 0
+
+
+def allocate_route_seconds(remaining: float, eligible_routes: int, policy: RoutingPolicy) -> float:
+    """Reserve time for every remaining route; repairs consume this route's slice."""
+    if remaining <= 0 or eligible_routes <= 0:
+        return 0.0
+    fair_share = remaining / eligible_routes
+    reserve = min(policy.minimum_fallback_seconds, fair_share) * (eligible_routes - 1)
+    return max(0.0, min(remaining - reserve, max(fair_share, policy.per_attempt_seconds)))
 
 @dataclass
 class ModelExecutionRequest:
@@ -124,6 +144,7 @@ class ModelExecutionRequest:
     system_instruction: str
     user_prompt: str
     expected_output_language: LanguageCode
+    budget: RoutingBudget | None = None
 
 class ModelRouter:
     def __init__(self, google_adapter: ProviderAdapter, n8n_adapter: ProviderAdapter = None, routing_policy: RoutingPolicy = None):
@@ -165,167 +186,128 @@ class ModelRouter:
         return adapters
 
     async def stream_generation(self, request: ModelExecutionRequest) -> AsyncGenerator[RouterEvent, None]:
-        if not self._get_adapters():
-            yield RoutingExhausted("No viable provider adapters available.")
-            return
-
         loop = asyncio.get_running_loop()
-        stage_deadline = loop.time() + max(0.01, float(self.policy.max_stage_seconds))
-        models = get_models_for_profile(request.model_profile)
-        total_attempts = 0
-        models_tried = 0
-        language_repairs = 0
-        
-        for model_def in models:
-            if models_tried >= self.policy.max_models_per_stage:
+        budget = request.budget or RoutingBudget(bounded_deadline(self.policy.max_stage_seconds))
+        adapters = self._get_adapters()
+        # An n8n installation cannot silently escape to direct Google.
+        if self.n8n_adapter and not self.policy.allow_direct_provider_fallback_after_n8n_failure:
+            adapters = [(name, adapter) for name, adapter in adapters if name == "n8n"]
+        models = get_models_for_profile(request.model_profile)[:self.policy.max_models_per_stage]
+        routes = [(model.model_id, name, adapter) for model in models for name, adapter in adapters]
+        last_code = "ROUTING_EXHAUSTED"
+        for index, (model, provider, adapter) in enumerate(routes):
+            if budget.attempts >= self.policy.max_total_attempts:
                 break
-                
-            models_tried += 1
-            
-            for provider_name, adapter in self._get_adapters():
-                if not self._get_provider_breaker(provider_name).is_allowed():
-                    if provider_name == "n8n" and not self.policy.allow_direct_provider_fallback_after_n8n_failure:
-                        yield RoutingExhausted("n8n provider circuit is open and bypass is disabled")
-                        return
-                    continue
-                    
-                if not self._get_model_breaker(provider_name, model_def.model_id).is_allowed():
-                    continue
-                
-                transport_retries = 0
-                current_system_instruction = request.system_instruction
-                
-                while transport_retries <= self.policy.max_transport_retries_per_route and total_attempts < self.policy.max_total_attempts:
-                    remaining_seconds = stage_deadline - loop.time()
-                    if remaining_seconds <= 0:
-                        yield RoutingExhausted("Model stage deadline exceeded.")
-                        return
-
-                    total_attempts += 1
-                    attempt_id = str(uuid.uuid4())
-                    successful_start = False
-                    accumulated_text = ""
-                    
-                    try:
-                        stream_gen = adapter.stream(
-                            model=model_def.model_id,
-                            prompt=request.user_prompt,
-                            system_instruction=current_system_instruction,
-                            attempt_id=attempt_id,
-                            run_id=request.context.run_id,
-                            profile_name=request.model_profile.value
-                        )
-                        
-                        yield AttemptStarted(model_def.model_id, attempt_id, provider_name)
-
-                        # Provider SDKs may wait indefinitely when transport stalls.
-                        # Bound the complete routing stage here so every adapter,
-                        # current or future, inherits the same fail-closed contract.
-                        async with asyncio.timeout(remaining_seconds):
-                            async for chunk_type, chunk_text in stream_gen:
-                                successful_start = True
-                                accumulated_text += chunk_text
-                                yield ContentChunk(chunk_text, attempt_id)
-                        
-                        # Validate the language
-                        validation_result = LanguageValidator.validate(accumulated_text, request.expected_output_language, request.artifact_type)
-                        
-                        if validation_result.status == ValidationStatus.INDETERMINATE:
-                            yield ValidationWarning(
-                                code="LANGUAGE_INDETERMINATE",
-                                expected_language=validation_result.expected_language.value,
-                                detected_language=validation_result.detected_language.value,
-                                confidence=validation_result.confidence,
-                                artifact_type=request.artifact_type.value,
-                                attempt_id=attempt_id,
-                                reason=validation_result.reason
+            if loop.time() >= budget.deadline:
+                yield RoutingExhausted("Model stage deadline exceeded.", "STAGE_TIMEOUT")
+                return
+            if not self._get_provider_breaker(provider).is_allowed():
+                continue
+            if not self._get_model_breaker(provider, model).is_allowed():
+                continue
+            remaining_routes = 1 + sum(
+                self._get_provider_breaker(name).state != CircuitState.OPEN
+                and self._get_model_breaker(name, other_model).state != CircuitState.OPEN
+                for other_model, name, _ in routes[index + 1:]
+            )
+            remaining_routes = min(remaining_routes, self.policy.max_total_attempts - budget.attempts)
+            route_deadline = loop.time() + allocate_route_seconds(
+                budget.deadline - loop.time(), remaining_routes, self.policy,
+            )
+            transport_retries = 0
+            instruction = request.system_instruction
+            while budget.attempts < self.policy.max_total_attempts:
+                seconds = min(self.policy.per_attempt_seconds, route_deadline - loop.time(), budget.deadline - loop.time())
+                if seconds <= 0:
+                    break
+                budget.attempts += 1
+                attempt_id = str(uuid.uuid4())
+                text = ""
+                stream = None
+                yield AttemptStarted(model, attempt_id, provider)
+                try:
+                    stream = adapter.stream(
+                        model=model, prompt=request.user_prompt, system_instruction=instruction,
+                        attempt_id=attempt_id, run_id=request.context.run_id,
+                        profile_name=request.model_profile.value,
+                    )
+                    async with asyncio.timeout(seconds):
+                        async for _, chunk in stream:
+                            if not isinstance(chunk, str) or len(text) + len(chunk) > 1_000_000:
+                                raise ValueError("Provider text exceeds the bounded artifact envelope")
+                            text += chunk
+                            yield ContentChunk(chunk, attempt_id)
+                    result = LanguageValidator.validate(text, request.expected_output_language, request.artifact_type)
+                    if result.status == ValidationStatus.INDETERMINATE:
+                        yield ValidationWarning("LANGUAGE_INDETERMINATE", result.expected_language.value,
+                                                result.detected_language.value, result.confidence,
+                                                request.artifact_type.value, attempt_id, result.reason)
+                    if result.status == ValidationStatus.MISMATCH:
+                        last_code = "LANGUAGE_MISMATCH"
+                        yield AttemptFailed("Language contract mismatch.", attempt_id, last_code)
+                        yield AttemptResetRequired("Language contract mismatch.", attempt_id)
+                        # Retain an attempt as well as time for each next route.
+                        can_repair = budget.attempts < self.policy.max_total_attempts - (remaining_routes - 1)
+                        if (can_repair and budget.language_repairs < self.policy.max_language_repairs_per_stage
+                                and route_deadline - loop.time() > 0.05):
+                            budget.language_repairs += 1
+                            instruction += (
+                                f"\nRewrite human-facing prose in {request.expected_output_language.value}. "
+                                "Preserve JSON keys, enums, IDs, source excerpts, code and API names. "
+                                "Return the complete artifact without adding facts."
                             )
-                            
-                        if validation_result.status == ValidationStatus.MISMATCH:
-                            error_msg = f"LANGUAGE_MISMATCH: {validation_result.reason}"
-                            yield AttemptFailed(error_msg, attempt_id, "LANGUAGE_MISMATCH")
-                            yield AttemptResetRequired(error_msg, attempt_id)
-                            
-                            if language_repairs < self.policy.max_language_repairs_per_stage:
-                                language_repairs += 1
-                                # Instruction for semantic retry
-                                repair_instruction = f"\n\nThe previous response violated the language contract.\nRewrite the complete response in {request.expected_output_language.value}.\nDo not summarize it.\nDo not add or remove facts.\nPreserve code, API names, identifiers and product names."
-                                current_system_instruction += repair_instruction
-                                continue # retry same provider/model with repaired prompt
-                            else:
-                                # Open circuit for this model because semantic repairs failed
-                                self._get_model_breaker(provider_name, model_def.model_id).record_failure("LANGUAGE_MISMATCH")
-                                break # break while loop to move to next provider/model
-
-                        self._record_success(provider_name, model_def.model_id)
-                        yield AttemptCompleted(attempt_id)
-                        return # fully successful
-
-                    except TimeoutError:
-                        timeout_reason = "Model stage deadline exceeded."
-                        yield AttemptFailed(timeout_reason, attempt_id, ErrorCode.TIMEOUT.value)
-                        if successful_start:
-                            yield AttemptResetRequired(timeout_reason, attempt_id)
-                        self._get_model_breaker(provider_name, model_def.model_id).record_failure(ErrorCode.TIMEOUT.value)
-                        yield RoutingExhausted(timeout_reason)
+                            continue
+                        self._get_model_breaker(provider, model).record_failure(last_code)
+                        break
+                    self._record_success(provider, model)
+                    yield AttemptCompleted(attempt_id)
+                    return
+                except (TimeoutError, ModelExecutionError) as exc:
+                    category = exc.category if isinstance(exc, ModelExecutionError) else ErrorCode.TIMEOUT
+                    last_code = ("STAGE_TIMEOUT" if loop.time() >= budget.deadline else "MODEL_TIMEOUT") if category == ErrorCode.TIMEOUT else category.value
+                    yield AttemptFailed("Model attempt failed: " + last_code, attempt_id, last_code)
+                    if text:
+                        yield AttemptResetRequired("Discard failed attempt.", attempt_id)
+                    if last_code == "STAGE_TIMEOUT":
+                        self._get_model_breaker(provider, model).record_failure(last_code)
+                        yield RoutingExhausted("Model stage deadline exceeded.", last_code)
                         return
-                        
-                    except ModelExecutionError as exec_error:
-                        # Provider messages are not taxonomy and may contain raw data.
-                        # Emit the allowlisted category, never provider payloads.
-                        failure_reason = f"Model execution failed: {exec_error.category.value}"
-                        yield AttemptFailed(failure_reason, attempt_id, exec_error.category.value)
-                        if successful_start:
-                            yield AttemptResetRequired(failure_reason, attempt_id)
-
-                        if exec_error.category in (
-                            ErrorCode.INVALID_REQUEST,
-                            ErrorCode.AUTHENTICATION,
-                            ErrorCode.CANCELLED,
-                            ErrorCode.UNKNOWN
-                        ):
-                            yield RoutingExhausted(f"Terminal error: {exec_error.category.value}")
+                    if category in (ErrorCode.INVALID_REQUEST, ErrorCode.AUTHENTICATION, ErrorCode.CANCELLED, ErrorCode.UNKNOWN):
+                        yield RoutingExhausted("Terminal provider failure.", last_code)
+                        return
+                    # Route timeout always opens the model breaker and moves on.
+                    if category == ErrorCode.TIMEOUT:
+                        self._get_model_breaker(provider, model).record_failure(last_code)
+                        break
+                    retryable = isinstance(exc, ModelExecutionError) and exc.retryable
+                    can_retry = budget.attempts < self.policy.max_total_attempts - (remaining_routes - 1)
+                    delay = 2 ** (transport_retries + 1)
+                    if (category != ErrorCode.QUOTA_EXHAUSTED and retryable and can_retry
+                            and transport_retries < self.policy.max_transport_retries_per_route
+                            and route_deadline - loop.time() > delay + 0.05):
+                        transport_retries += 1
+                        await asyncio.sleep(delay)
+                        continue
+                    self._get_model_breaker(provider, model).record_failure(last_code)
+                    if provider == "n8n":
+                        self._get_provider_breaker(provider).record_failure(last_code)
+                        if not self.policy.allow_direct_provider_fallback_after_n8n_failure:
+                            yield RoutingExhausted("n8n route failed; direct bypass is disabled.", last_code)
                             return
-
-                        # Quota can be model/tier-specific. Treat it as exhaustion of
-                        # this route, not proof that every eligible model is unusable.
-                        # A truly project-wide quota still fails closed because every
-                        # subsequent model will independently return quota exhaustion.
-                        if exec_error.category == ErrorCode.QUOTA_EXHAUSTED:
-                            self._get_model_breaker(provider_name, model_def.model_id).record_failure(exec_error.category.value)
-                            if provider_name == "n8n":
-                                self._get_provider_breaker(provider_name).record_failure(exec_error.category.value)
-                                if not self.policy.allow_direct_provider_fallback_after_n8n_failure:
-                                    yield RoutingExhausted("n8n provider quota exhausted and bypass is disabled")
-                                    return
-                            break
-                            
-                        if exec_error.category == ErrorCode.MODEL_NOT_FOUND:
-                            self._get_model_breaker(provider_name, model_def.model_id).record_failure(exec_error.category.value)
-                            break # Move to next provider/model
-                        
-                        # Provider endpoint failures -> transport retries
-                        if exec_error.category in (ErrorCode.TIMEOUT, ErrorCode.SERVICE_UNAVAILABLE, ErrorCode.PROVIDER_PROTOCOL_ERROR, ErrorCode.RATE_LIMITED, ErrorCode.MODEL_MISMATCH):
-                            if exec_error.retryable and transport_retries < self.policy.max_transport_retries_per_route:
-                                transport_retries += 1
-                                await asyncio.sleep(min(
-                                    2 ** transport_retries,
-                                    max(0.0, stage_deadline - loop.time()),
-                                ))
-                                continue # retry same provider/model
-                                
-                            self._get_model_breaker(provider_name, model_def.model_id).record_failure(exec_error.category.value)
-                            
-                            if provider_name == "n8n":
-                                self._get_provider_breaker(provider_name).record_failure(exec_error.category.value)
-                                if not self.policy.allow_direct_provider_fallback_after_n8n_failure:
-                                    yield RoutingExhausted("n8n provider failed and bypass is disabled")
-                                    return
-                            
-                            break # Move to next provider
-                            
-                        # Catch-all unhandled categories -> terminal conservative
-                        yield RoutingExhausted(f"Terminal error: {exec_error.category.value}")
-                        return
-                            
-        yield RoutingExhausted("All eligible models and providers exhausted or failed.")
+                    break
+                except Exception:
+                    last_code = "PROVIDER_PROTOCOL_ERROR"
+                    yield AttemptFailed("Provider stream failed safely.", attempt_id, last_code)
+                    if text:
+                        yield AttemptResetRequired("Discard failed attempt.", attempt_id)
+                    self._get_model_breaker(provider, model).record_failure(last_code)
+                    break
+                finally:
+                    if stream is not None and hasattr(stream, "aclose"):
+                        try:
+                            async with asyncio.timeout(0.1):
+                                await stream.aclose()
+                        except Exception:
+                            pass  # Never expose provider cleanup bodies.
+        code = "STAGE_TIMEOUT" if loop.time() >= budget.deadline else last_code
+        yield RoutingExhausted("All eligible routes or attempt budgets exhausted.", code)

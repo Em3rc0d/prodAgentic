@@ -357,6 +357,9 @@ class BatchPlannerService:
             "created_at": clock.isoformat(),
         }
         trace = BatchPlanningTraceV1(**trace_payload, digest=canonical_sha256(trace_payload))
+        # Hash the typed JSON representation (including UTC serialization), not
+        # the pre-validation datetime string, so persisted authority round-trips.
+        trace = trace.model_copy(update={"digest": canonical_sha256(trace.model_dump(mode="json", exclude={"digest"}))})
         await self.planning_repository.save_batch(batch, items, plans, trace)
         return PlannedBatchResult(
             batch=batch,

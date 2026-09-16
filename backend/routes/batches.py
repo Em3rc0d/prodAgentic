@@ -16,6 +16,7 @@ from domain.planning.models import BatchRequestConstraints, TargetWindow, utc_no
 from domain.tenants.models import TenantContext
 from infrastructure.mongo.editorial_memory import MongoEditorialMemoryProjector
 from infrastructure.mongo.learning import MongoPerformanceEvidenceRepository, MongoPerformanceSummaryRepository
+from infrastructure.mongo.recovery import MongoRecoveryRepository
 from infrastructure.mongo.planning import MongoPlanningRepository
 from infrastructure.mongo.profiles import MongoProfileRepository
 from infrastructure.planning.model_candidates import CandidateGenerationError, PrecomputedCandidateSource, RouterCandidateSource
@@ -159,17 +160,26 @@ async def get_batch(
     request: Request,
     context: TenantContext = Depends(require_tenant_context),
 ):
-    _, _, _, planning, _ = _repositories(request, context)
+    _, db, _, planning, _ = _repositories(request, context)
     batch = await planning.get_batch(batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
-    items = await planning.list_batch_items(batch_id)
+    recovery = MongoRecoveryRepository(db, context)
+    _, replacements = await recovery.read(batch_id)
+    for entry in replacements:
+        await recovery.materialize(planning, entry)
+    all_items = await planning.list_batch_items(batch_id)
+    replaced_ids = {entry.rejected_content_id for entry in replacements}
+    items = [item for item in all_items if item.content_id not in replaced_ids]
     plans = await planning.list_batch_plans(batch_id)
     trace = await planning.get_planning_trace(batch_id)
     if trace is None:
         raise HTTPException(status_code=409, detail="Batch planning trace is unavailable")
     return {
         "batch": _serialize(batch.model_dump(mode="json")),
+        "memory_count": len(trace.memory_ids),
+        "replacement_lineage": [entry.model_dump(mode="json") for entry in replacements],
+        "historical_items": [_serialize(item.model_dump(mode="json")) for item in all_items if item.content_id in replaced_ids],
         "content_items": [_serialize(item.model_dump(mode="json")) for item in items],
         "plans": [_serialize(item.model_dump(mode="json")) for item in plans],
         "planning_trace": _serialize(trace.model_dump(mode="json")),

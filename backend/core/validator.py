@@ -62,30 +62,33 @@ class LanguageValidator:
             return False
         return True
 
+    _PROSE_FIELDS = frozenset({
+        "title", "headline", "hook", "body", "cta", "supporting_copy", "footer",
+        "bullets", "label", "value_or_copy", "relationship", "alt_text_draft",
+        "statement", "key_points", "uncertainties", "safety_notes", "forbidden_claims",
+        "recommended_angle", "notes", "message", "topic", "angle", "rationale",
+        "target_effect", "planning_rationale", "description", "prompt", "image_prompt",
+    })
+    _SOURCE_FIELDS = frozenset({"evidence", "sources", "provenance", "evidence_bundle"})
+
     @classmethod
-    def _collect_json_prose(cls, value) -> list[str]:
-        prose: list[str] = []
+    def _collect_json_prose(cls, value, prose_field: bool = False) -> list[str]:
         if isinstance(value, str):
-            if cls._is_human_prose_value(value):
-                cleaned = cls._strip_technical_content(value)
-                if cleaned:
-                    prose.append(cleaned)
-            return prose
+            return [cls._strip_technical_content(value)] if prose_field and cls._is_human_prose_value(value) else []
         if isinstance(value, dict):
-            # Deliberately ignore object keys: structured contracts use English
-            # schema names regardless of the target language.
-            for nested in value.values():
-                prose.extend(cls._collect_json_prose(nested))
-            return prose
+            return [text for key, nested in value.items() if key not in cls._SOURCE_FIELDS
+                    for text in cls._collect_json_prose(nested, key in cls._PROSE_FIELDS)]
         if isinstance(value, list):
-            for nested in value:
-                prose.extend(cls._collect_json_prose(nested))
-        return prose
+            return [text for nested in value for text in cls._collect_json_prose(nested, prose_field)]
+        return []
 
     @classmethod
     def _extract_structured_prose(cls, text: str) -> str | None:
         try:
-            parsed = json.loads(text)
+            value = text.strip()
+            if value.startswith("```") and value.endswith("```"):
+                value = value[value.find("\n") + 1:-3].strip()
+            parsed = json.loads(value)
         except (json.JSONDecodeError, TypeError):
             return None
         values = cls._collect_json_prose(parsed)
@@ -109,7 +112,8 @@ class LanguageValidator:
             return LanguageValidator._strip_technical_content(text)
 
         if artifact_type == ArtifactType.VISUAL:
-            return text.strip()
+            structured = LanguageValidator._extract_structured_prose(text)
+            return structured if structured is not None else LanguageValidator._strip_technical_content(text)
 
         return text
 
@@ -123,6 +127,20 @@ class LanguageValidator:
 
         LANGUAGE_MIN_CONFIDENCE = float(os.environ.get("LANGUAGE_MIN_CONFIDENCE", "0.6"))
         LANGUAGE_MIN_MARGIN = float(os.environ.get("LANGUAGE_MIN_MARGIN", "0.2"))
+
+        # A long wrong-language field cannot hide behind a larger correct body.
+        # Short API/product phrases do not have enough signal for this field gate.
+        structured_prose = LanguageValidator._extract_structured_prose(text)
+        if structured_prose is not None:
+            for field_prose in structured_prose.splitlines():
+                if len(field_prose) < 80 or len(field_prose.split()) < 12:
+                    continue
+                field_result = language_detector.detect(field_prose)
+                if (field_result.language not in {LanguageCode.UNKNOWN, expected_code}
+                        and field_result.confidence >= LANGUAGE_MIN_CONFIDENCE
+                        and field_result.margin >= LANGUAGE_MIN_MARGIN):
+                    return LanguageValidationResult(expected_code, field_result.language,
+                        ValidationStatus.MISMATCH, "A human-facing field violates the target language", field_result.confidence)
 
         detected = detect_result.language
         conf = detect_result.confidence

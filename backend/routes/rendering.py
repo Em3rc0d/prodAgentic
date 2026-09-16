@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
@@ -90,8 +91,20 @@ async def render_revision(
         raise HTTPException(status_code=409, detail="R4 render integrity check failed") from exc
     except UnsupportedRenderInput as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except RenderExecutionFailed as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except RenderExecutionFailed:
+        revision = await production.get_revision(context.tenant_id, revision_id)
+        run = await production.get_run(context.tenant_id, revision.run_id) if revision else None
+        failure = run.failure if run else None
+        detail = failure.model_dump(mode="json") if failure else {
+            "code": "RENDER_EXECUTION_FAILED", "stage": "rendering", "retryable": False,
+            "recovery_action": "HUMAN_ACTION_REQUIRED", "safe_message": "Rendering stopped safely.",
+        }
+        detail.update({"run_id": run.run_id if run else None, "content_id": revision.content_id if revision else None})
+        logging.getLogger(__name__).warning(
+            "event=production_failed content_id=%s run_id=%s stage=%s code=%s retryable=%s recovery_action=%s",
+            detail["content_id"], detail["run_id"], detail["stage"], detail["code"], detail["retryable"], detail["recovery_action"],
+        )
+        raise HTTPException(status_code=502, detail=detail) from None
 
     return {
         "run": result.run.model_dump(mode="json"),

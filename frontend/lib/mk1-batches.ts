@@ -51,7 +51,7 @@ export interface ContentItemPlanV1 {
   format: PlannedFormat;
   hook_pattern: string;
   visual_pattern?: string | null;
-  editorial_state: "PLANNED";
+  editorial_state: "PLANNED" | "PRODUCING" | "FAILED" | "READY_FOR_REVIEW" | "APPROVED" | "REJECTED" | "CANCELLED" | "ARCHIVED" | "REVISION_REQUIRED";
 }
 
 export interface CandidateEvaluationV1 {

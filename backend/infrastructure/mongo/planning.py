@@ -91,7 +91,7 @@ class MongoPlanningRepository:
         trace_inserted = False
         batch_inserted = False
         try:
-            await self.traces.insert_one(trace.model_dump())
+            await self.traces.insert_one(trace.model_dump(mode="json"))
             trace_inserted = True
             for plan in plans:
                 await self.plans.insert_one(plan.model_dump())

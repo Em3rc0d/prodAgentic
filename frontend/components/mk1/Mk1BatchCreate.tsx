@@ -6,14 +6,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import { fetchProfilesV2 } from "@/lib/api";
 import type { ProfileV2 } from "@/lib/api";
-import { createBatchV1 } from "@/lib/mk1-batches";
+import { createBatchV1, fetchBatchV1 } from "@/lib/mk1-batches";
 import type { BatchPlanningResponseV1, PlannedFormat, TargetWindowV1 } from "@/lib/mk1-batches";
 import { fetchRuntimeReadiness } from "@/lib/r2";
-import { produceContentToReview, resumeContentToReview, type ProductionStage } from "@/lib/r2-production";
+import { produceContentToReview, resumeContentToReview, recoverContent, fetchContentRecovery, type RecoveryDecision, type ProductionStage } from "@/lib/r2-production";
 import styles from "./mk1-batch-create.module.css";
 
 type WindowPreset = "tomorrow" | "week";
-type PieceProgress = { stage: ProductionStage | "WAITING" | "FAILED"; revisionId?: string; error?: string };
+type PieceProgress = { stage: ProductionStage | "WAITING" | "FAILED"; revisionId?: string; error?: string; recovery?: RecoveryDecision };
 
 function localMidnight(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
@@ -71,10 +71,37 @@ export function Mk1BatchCreate() {
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Profiles are temporarily unavailable"));
   }, []);
 
+  useEffect(() => {
+    const batchId = new URLSearchParams(window.location.search).get("batch");
+    if (!batchId) return;
+    let active = true;
+    void (async () => {
+      try {
+        const saved = await fetchBatchV1(batchId);
+        const states = await Promise.all(saved.content_items.map(async (item) => {
+          const recovery = await fetchContentRecovery(item.content_id);
+          return [item.content_id, {
+            stage: item.editorial_state === "READY_FOR_REVIEW" || item.editorial_state === "APPROVED" ? "REVIEWABLE" : ["RETRY_PRODUCTION", "REPLAN_CONTENT", "HUMAN_ACTION_REQUIRED"].includes(recovery.action) ? "FAILED" : "WAITING",
+            recovery,
+            error: recovery.action === "NONE" ? undefined : recovery.safe_message,
+          } as PieceProgress] as const;
+        }));
+        if (active) {
+          setResult(saved);
+          setProfileId(saved.batch.profile_id);
+          setProgress(Object.fromEntries(states));
+        }
+      } catch (reason) {
+        if (active) setError(reason instanceof Error ? reason.message : "Saved batch unavailable");
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
   const profile = useMemo(() => profiles.find((item) => item.profile_id === profileId) ?? null, [profiles, profileId]);
   const selectedEvaluations = useMemo(() => result?.planning_trace.evaluations.filter((evaluation) => evaluation.selected) ?? [], [result]);
-  const reviewableCount = useMemo(() => Object.values(progress).filter((item) => item.stage === "REVIEWABLE").length, [progress]);
-  const failedCount = useMemo(() => Object.values(progress).filter((item) => item.stage === "FAILED").length, [progress]);
+  const reviewableCount = useMemo(() => result?.content_items.filter((item) => progress[item.content_id]?.stage === "REVIEWABLE").length ?? 0, [progress, result]);
+  const failedCount = useMemo(() => result?.content_items.filter((item) => progress[item.content_id]?.stage === "FAILED").length ?? 0, [progress, result]);
 
   function updateProgress(contentId: string, value: PieceProgress) {
     setProgress((current) => ({ ...current, [contentId]: { ...current[contentId], ...value } }));
@@ -99,7 +126,8 @@ export function Mk1BatchCreate() {
           updateProgress(item.content_id, { stage: "REVIEWABLE", revisionId: outcome.revision_id, error: undefined });
           completed += 1;
         } catch (reason) {
-          updateProgress(item.content_id, { stage: "FAILED", error: reason instanceof Error ? reason.message : "Production failed" });
+          const recovery = await fetchContentRecovery(item.content_id).catch(() => undefined);
+          updateProgress(item.content_id, { stage: "FAILED", error: reason instanceof Error ? reason.message : "Production failed", recovery });
         }
       }
       if (completed === planned.content_items.length && completed > 0) router.push("/review");
@@ -107,6 +135,42 @@ export function Mk1BatchCreate() {
       setError(reason instanceof Error ? reason.message : "Production is unavailable. Retry this batch.");
     } finally {
       setProducing(false);
+    }
+  }
+
+  async function recoverPiece(contentId: string) {
+    if (!result || producing) return;
+    setProducing(true);
+    let activeId = contentId;
+    try {
+      const decision = await fetchContentRecovery(contentId);
+      const outcome = await recoverContent(contentId, decision,
+        (stage) => updateProgress(activeId, { stage, error: undefined, recovery: undefined }),
+        async (replacementId) => {
+          activeId = replacementId;
+          const refreshed = await fetchBatchV1(result.batch.batch_id);
+          setResult((current) => current ? { ...current, ...refreshed } : refreshed);
+          setProgress((current) => {
+            const next = { ...current };
+            delete next[contentId];
+            return next;
+          });
+        });
+      updateProgress(outcome.content_id, { stage: "REVIEWABLE", revisionId: outcome.revision_id, recovery: undefined });
+    } catch (reason) {
+      const recovery = await fetchContentRecovery(activeId).catch(() => undefined);
+      updateProgress(activeId, { stage: "FAILED", error: reason instanceof Error ? reason.message : "Recovery unavailable", recovery });
+    } finally {
+      setProducing(false);
+    }
+  }
+
+  async function refreshPiece(contentId: string) {
+    try {
+      const recovery = await fetchContentRecovery(contentId);
+      updateProgress(contentId, { stage: "FAILED", recovery, error: recovery.safe_message });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Recovery state unavailable");
     }
   }
 
@@ -129,6 +193,7 @@ export function Mk1BatchCreate() {
         },
       });
       setResult(planned);
+      window.history.replaceState(null, "", `/create?batch=${encodeURIComponent(planned.batch.batch_id)}`);
       await produceBatch(planned);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not create this Batch");
@@ -190,12 +255,22 @@ export function Mk1BatchCreate() {
               <div className={styles.cardMeta}><span>{item.role}</span><span>{item.format.replace("_", " ")}</span></div>
               <h3>{item.canonical_topic.replaceAll(".", " ")}</h3><p>{item.angle}</p>
               {state && <div className={styles.progressRow}><span className={styles.progressDot} aria-hidden="true" /><strong>{stageLabel(state.stage)}</strong>{state.error && <small>{state.error}</small>}</div>}
+              {state?.recovery && <div className={styles.recovery}>
+                <p>{state.recovery.safe_message}</p>
+                {["RETRY_PRODUCTION", "REPLAN_CONTENT", "RESUME_PIPELINE"].includes(state.recovery.action) &&
+                  <button disabled={producing || busy} onClick={() => void recoverPiece(item.content_id)}>
+                    {state.recovery.action === "RETRY_PRODUCTION" ? "Retry production" : state.recovery.action === "REPLAN_CONTENT" ? "Replace this idea" : "Continue saved draft"}
+                  </button>}
+                <details><summary>View reason</summary><p>{state.recovery.code} · {state.recovery.stage}</p></details>
+              </div>}
+              {state?.stage === "FAILED" && !state.recovery && <button disabled={producing} onClick={() => void refreshPiece(item.content_id)}>Reload recovery options</button>}
+              {item.editorial_state === "PLANNED" && state?.stage === "WAITING" && !producing && <button disabled={busy} onClick={() => void produceBatch({ ...result, content_items: [item] }, true)}>Produce this idea</button>}
               <footer><span>{item.hook_pattern}</span><span>{evaluation?.novelty.verdict === "PASS_WITH_WARNING" ? "Fresh · review note" : "Fresh"}</span></footer>
             </article>;
           })}
         </div>
 
-        {(reviewableCount > 0 || failedCount > 0) && <div className={styles.productionSummary}><span>{reviewableCount} reviewable · {failedCount} need attention</span>{failedCount > 0 && <button disabled={producing || busy} onClick={() => void produceBatch(result, true)}>Retry unfinished work</button>}{reviewableCount > 0 && <Link href="/review">Open Review →</Link>}</div>}
+        {(reviewableCount > 0 || failedCount > 0) && <div className={styles.productionSummary}><span>{reviewableCount} reviewable · {failedCount} need attention</span>{reviewableCount > 0 && <Link href="/review">Open Review →</Link>}</div>}
         <details className={styles.evidence}><summary>Planning evidence</summary><div><span>trace {result.planning_trace.trace_id}</span><span>{result.planning_trace.evaluations.length} candidates evaluated</span><span>{result.planning_trace.evaluations.filter((item) => item.novelty.verdict === "BLOCKED").length} hard collisions</span></div></details>
       </section>}
     </main>
