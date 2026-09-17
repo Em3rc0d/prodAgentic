@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 
 from core.execution_budget import production_deadline
 
@@ -32,6 +33,9 @@ from infrastructure.mongo.profiles import MongoProfileRepository
 
 router = APIRouter(tags=["mk1-production"])
 logger = logging.getLogger(__name__)
+
+R4_EVIDENCE_STAGE_SECONDS = 60.0
+R4_EVIDENCE_ATTEMPT_SECONDS = 60.0
 
 
 class ProduceTextRequest(BaseModel):
@@ -93,6 +97,23 @@ def _isolated_router(router_instance: ModelRouter) -> ModelRouter:
     return router_instance.isolated()
 
 
+def _evidence_router(router_instance: ModelRouter) -> ModelRouter:
+    """Give grounded evidence a bounded budget separate from text-agent routing.
+
+    Real R4.1 UAT showed Google Search grounding can legitimately exceed the
+    generic 25-second attempt budget. Evidence gets one bounded 60-second route;
+    Research/Writer/Editor retain the stricter defaults and the outer production
+    deadline still caps the complete request at 150 seconds.
+    """
+    evidence_router = _isolated_router(router_instance)
+    evidence_router.policy = replace(
+        evidence_router.policy,
+        max_stage_seconds=R4_EVIDENCE_STAGE_SECONDS,
+        per_attempt_seconds=R4_EVIDENCE_ATTEMPT_SECONDS,
+    )
+    return evidence_router
+
+
 def _build_service(request: Request, repository: MongoProductionRepository) -> StructuredAgentCellService:
     factory = getattr(request.app.state, "s3_service_factory", None)
     if factory is not None:
@@ -106,13 +127,14 @@ def _build_service(request: Request, repository: MongoProductionRepository) -> S
     router_instance = getattr(container, "router", None) if container is not None else None
     if router_instance is None:
         raise HTTPException(status_code=503, detail="Model router is unavailable")
-    production_router = _isolated_router(router_instance)
+    agent_router = _isolated_router(router_instance)
+    evidence_router = _evidence_router(router_instance)
     return R4StructuredAgentCellService(
         repository=repository,
-        evidence_provider=GoogleGroundingEvidenceProvider(production_router),
-        research_agent=RouterResearchAgent(production_router),
-        writer_agent=RouterWriterAgent(production_router),
-        editor_agent=RouterEditorAgent(production_router),
+        evidence_provider=GoogleGroundingEvidenceProvider(evidence_router),
+        research_agent=RouterResearchAgent(agent_router),
+        writer_agent=RouterWriterAgent(agent_router),
+        editor_agent=RouterEditorAgent(agent_router),
     )
 
 
