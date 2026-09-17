@@ -145,6 +145,8 @@ class ModelExecutionRequest:
     user_prompt: str
     expected_output_language: LanguageCode
     budget: RoutingBudget | None = None
+    response_mime_type: str | None = None
+    response_json_schema: dict[str, Any] | None = None
 
 class ModelRouter:
     def __init__(self, google_adapter: ProviderAdapter, n8n_adapter: ProviderAdapter = None, routing_policy: RoutingPolicy = None):
@@ -240,6 +242,8 @@ class ModelRouter:
                         model=model, prompt=request.user_prompt, system_instruction=instruction,
                         attempt_id=attempt_id, run_id=request.context.run_id,
                         profile_name=request.model_profile.value,
+                        response_mime_type=request.response_mime_type,
+                        response_json_schema=request.response_json_schema,
                     )
                     async with asyncio.timeout(seconds):
                         async for _, chunk in stream:

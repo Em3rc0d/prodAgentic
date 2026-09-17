@@ -10,6 +10,19 @@ class GoogleDirectAdapter(ProviderAdapter):
         self.client = client
         self.async_client = client.aio
 
+    @staticmethod
+    def _build_config(*, system_instruction=None, response_mime_type=None, response_json_schema=None):
+        from google.genai import types
+
+        values = {}
+        if system_instruction:
+            values["system_instruction"] = system_instruction
+        if response_mime_type:
+            values["response_mime_type"] = response_mime_type
+        if response_json_schema is not None:
+            values["response_json_schema"] = response_json_schema
+        return types.GenerateContentConfig(**values) if values else None
+
     def _translate_error(self, e: Exception, model_id: str, attempt_id: str) -> ModelExecutionError:
         code = getattr(e, 'code', 500) if isinstance(e, APIError) else None
         message = str(e).lower()
@@ -68,11 +81,11 @@ class GoogleDirectAdapter(ProviderAdapter):
         attempt_id = kwargs.get("attempt_id", "default")
         profile = kwargs.get("profile_name", "UNKNOWN")
         system_instruction = kwargs.get("system_instruction")
-        
-        config = None
-        if system_instruction:
-            from google.genai import types
-            config = types.GenerateContentConfig(system_instruction=system_instruction)
+        config = self._build_config(
+            system_instruction=system_instruction,
+            response_mime_type=kwargs.get("response_mime_type"),
+            response_json_schema=kwargs.get("response_json_schema"),
+        )
 
         try:
             response = await self.async_client.models.generate_content(
@@ -109,11 +122,11 @@ class GoogleDirectAdapter(ProviderAdapter):
     async def stream(self, model: str, prompt: str, **kwargs) -> AsyncGenerator[tuple, None]:
         attempt_id = kwargs.get("attempt_id", "default")
         system_instruction = kwargs.get("system_instruction")
-        
-        config = None
-        if system_instruction:
-            from google.genai import types
-            config = types.GenerateContentConfig(system_instruction=system_instruction)
+        config = self._build_config(
+            system_instruction=system_instruction,
+            response_mime_type=kwargs.get("response_mime_type"),
+            response_json_schema=kwargs.get("response_json_schema"),
+        )
 
         try:
             response = await self.async_client.models.generate_content_stream(

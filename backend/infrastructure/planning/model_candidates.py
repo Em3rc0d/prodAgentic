@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from agents.router import AttemptCompleted, AttemptStarted, ContentChunk, ModelExecutionRequest, RoutingExhausted
+from agents.router import AttemptCompleted, AttemptFailed, AttemptStarted, ContentChunk, ModelExecutionRequest, RoutingExhausted
 from core.context import GenerationContext, LanguageCode
 from core.model_registry import ModelProfile
 from core.validator import ArtifactType
@@ -16,7 +16,29 @@ from domain.profiles.models import ProfileVersion
 
 
 class CandidateGenerationError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = "PLANNING_CANDIDATE_GENERATION_FAILED"):
+        super().__init__(message)
+        self.code = code
+
+
+_ROUTER_FAILURE_CODES = {
+    "AUTHENTICATION": "PLANNING_PROVIDER_AUTHENTICATION",
+    "QUOTA_EXHAUSTED": "PLANNING_PROVIDER_QUOTA",
+    "RATE_LIMITED": "PLANNING_PROVIDER_RATE_LIMIT",
+    "SERVICE_UNAVAILABLE": "PLANNING_PROVIDER_UNAVAILABLE",
+    "MODEL_TIMEOUT": "PLANNING_MODEL_TIMEOUT",
+    "STAGE_TIMEOUT": "PLANNING_STAGE_TIMEOUT",
+    "MODEL_NOT_FOUND": "PLANNING_MODEL_UNAVAILABLE",
+    "NO_VIABLE_PROVIDER": "PLANNING_NO_VIABLE_PROVIDER",
+    "PROVIDER_PROTOCOL_ERROR": "PLANNING_PROVIDER_PROTOCOL_ERROR",
+    "MODEL_MISMATCH": "PLANNING_MODEL_MISMATCH",
+    "INVALID_REQUEST": "PLANNING_PROVIDER_INVALID_REQUEST",
+    "CANCELLED": "PLANNING_PROVIDER_CANCELLED",
+}
+
+
+def _planning_failure_code(router_code: str | None) -> str:
+    return _ROUTER_FAILURE_CODES.get(router_code or "", "PLANNING_ROUTING_EXHAUSTED")
 
 
 class _StrictModel(BaseModel):
@@ -131,7 +153,7 @@ class RouterCandidateSource:
             "rationale must explain why this concept fits this Profile and audience. Return only the requested JSON object."
         )
         base_prompt = (
-            f"Return exactly one JSON object matching this schema:\n{json.dumps(schema, ensure_ascii=False, sort_keys=True)}\n\n"
+            "Return exactly one JSON object. The provider-enforced JSON schema is authoritative.\n\n"
             f"AUTHORITATIVE INPUT:\n{json.dumps(payload, ensure_ascii=False, sort_keys=True)}\n\n"
             f"Produce exactly {target_pool_size} ideas."
         )
@@ -141,35 +163,74 @@ class RouterCandidateSource:
             prompt = base_prompt
             if feedback:
                 prompt += f"\n\nThe previous output failed validation. Return the complete object again. Validation feedback: {feedback[:1200]}"
-            raw = await self._invoke(context=context, system=system, prompt=prompt)
+            raw = await self._invoke(
+                context=context,
+                system=system,
+                prompt=prompt,
+                response_json_schema=schema,
+            )
             try:
-                pool = _IdeaPool.model_validate(json.loads(self._strip_fence(raw)))
-            except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
+                decoded = json.loads(self._strip_fence(raw))
+            except (json.JSONDecodeError, TypeError) as exc:
                 if repair >= self.max_contract_repairs:
-                    raise CandidateGenerationError("Model candidate output remained invalid after bounded repair") from exc
+                    raise CandidateGenerationError(
+                        "Model candidate output remained invalid JSON after bounded repair",
+                        code="PLANNING_OUTPUT_JSON_INVALID",
+                    ) from exc
+                feedback = "Output was not valid JSON."
+                continue
+
+            try:
+                pool = _IdeaPool.model_validate(decoded)
+            except ValidationError as exc:
+                if repair >= self.max_contract_repairs:
+                    raise CandidateGenerationError(
+                        "Model candidate output violated the governed schema after bounded repair",
+                        code="PLANNING_OUTPUT_SCHEMA_INVALID",
+                    ) from exc
                 feedback = str(exc)
                 continue
 
             if len(pool.ideas) != target_pool_size:
                 if repair >= self.max_contract_repairs:
                     raise CandidateGenerationError(
-                        f"Model candidate pool returned {len(pool.ideas)} ideas; expected {target_pool_size}"
+                        f"Model candidate pool returned {len(pool.ideas)} ideas; expected {target_pool_size}",
+                        code="PLANNING_POOL_SIZE_MISMATCH",
                     )
                 feedback = f"ideas must contain exactly {target_pool_size} items; got {len(pool.ideas)}"
                 continue
-            candidates = self._materialize(profile, target_window, constraints, pool.ideas)
+
+            try:
+                candidates = self._materialize(profile, target_window, constraints, pool.ideas)
+            except CandidateGenerationError:
+                if repair >= self.max_contract_repairs:
+                    raise
+                feedback = "Ideas violated deterministic policy filtering. Return a fully usable distinct pool."
+                continue
+
             if len(candidates) != target_pool_size:
                 if repair >= self.max_contract_repairs:
                     raise CandidateGenerationError(
-                        "Model candidate pool lost ideas during policy filtering; refusing to pad with duplicates"
+                        "Model candidate pool lost ideas during policy filtering; refusing to pad with duplicates",
+                        code="PLANNING_POLICY_FILTER_SHORTFALL",
                     )
                 feedback = "Ideas must be unique and must not use excluded topics. Return a fully usable distinct pool."
                 continue
             return candidates
 
-        raise CandidateGenerationError("Model candidate generation exhausted")
+        raise CandidateGenerationError(
+            "Model candidate generation exhausted",
+            code="PLANNING_CANDIDATE_GENERATION_EXHAUSTED",
+        )
 
-    async def _invoke(self, *, context: GenerationContext, system: str, prompt: str) -> str:
+    async def _invoke(
+        self,
+        *,
+        context: GenerationContext,
+        system: str,
+        prompt: str,
+        response_json_schema: dict | None = None,
+    ) -> str:
         request = ModelExecutionRequest(
             context=context,
             model_profile=ModelProfile.QUALITY_TEXT,
@@ -177,22 +238,34 @@ class RouterCandidateSource:
             system_instruction=system,
             user_prompt=prompt,
             expected_output_language=context.resolved_target_language,
+            response_mime_type="application/json" if response_json_schema is not None else None,
+            response_json_schema=response_json_schema,
         )
         buffers: dict[str, str] = {}
         current: str | None = None
+        last_failure_code: str | None = None
         async for event in self.router.stream_generation(request):
             if isinstance(event, AttemptStarted):
                 current = event.attempt_id
                 buffers[current] = ""
             elif isinstance(event, ContentChunk) and event.attempt_id == current:
                 buffers[current] = buffers.get(current, "") + event.text
+            elif isinstance(event, AttemptFailed):
+                last_failure_code = event.failure_code or last_failure_code
             elif isinstance(event, AttemptCompleted):
                 value = buffers.get(event.attempt_id, "").strip()
                 if value:
                     return value
             elif isinstance(event, RoutingExhausted):
-                raise CandidateGenerationError("Model routing exhausted before a valid candidate pool was produced")
-        raise CandidateGenerationError("Model routing ended without a completed candidate pool")
+                router_code = event.failure_code or last_failure_code
+                raise CandidateGenerationError(
+                    "Model routing exhausted before a valid candidate pool was produced",
+                    code=_planning_failure_code(router_code),
+                )
+        raise CandidateGenerationError(
+            "Model routing ended without a completed candidate pool",
+            code=_planning_failure_code(last_failure_code),
+        )
 
     @staticmethod
     def _strip_fence(value: str) -> str:
@@ -252,5 +325,8 @@ class RouterCandidateSource:
                 )
             )
         if not candidates:
-            raise CandidateGenerationError("Model candidate pool contained no usable ideas after policy filtering")
+            raise CandidateGenerationError(
+                "Model candidate pool contained no usable ideas after policy filtering",
+                code="PLANNING_POLICY_FILTER_SHORTFALL",
+            )
         return candidates

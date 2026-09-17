@@ -1,4 +1,5 @@
 from dataclasses import replace
+import logging
 from datetime import datetime, timedelta
 
 from bson import ObjectId
@@ -24,6 +25,7 @@ from infrastructure.planning.model_candidates import CandidateGenerationError, P
 
 
 router = APIRouter(tags=["mk1-batches"])
+logger = logging.getLogger(__name__)
 
 R4_PLANNING_STAGE_SECONDS = 120.0
 R4_PLANNING_ATTEMPT_SECONDS = 60.0
@@ -111,9 +113,13 @@ async def _candidate_source_for_request(
             target_pool_size,
         )
     except CandidateGenerationError as exc:
+        logger.warning("R4 planning candidate generation failed code=%s", exc.code)
         raise HTTPException(
             status_code=502,
-            detail="Creative planning failed before a valid governed candidate pool was produced",
+            detail={
+                "code": exc.code,
+                "message": "Creative planning failed before a valid governed candidate pool was produced",
+            },
         ) from exc
     return AutoFormatCandidateSource(PrecomputedCandidateSource(candidates))
 
@@ -165,7 +171,14 @@ async def create_batch(
     except PlanningConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except CandidateGenerationError as exc:
-        raise HTTPException(status_code=502, detail="Candidate pool could not be bound to the planner request") from exc
+        logger.warning("R4 planning candidate binding failed code=%s", exc.code)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": exc.code,
+                "message": "Candidate pool could not be bound to the planner request",
+            },
+        ) from exc
     return {
         "batch": _serialize(result.batch.model_dump(mode="json")),
         "content_items": [_serialize(item.model_dump(mode="json")) for item in result.items],
