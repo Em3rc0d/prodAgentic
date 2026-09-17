@@ -727,7 +727,20 @@ class StructuredAgentCellService:
             }
         )
         await self.repository.update_run(failed)
-        attempts = await self.repository.list_agent_attempts(run.tenant_id, run.run_id)
+        # Diagnostics must never be able to turn an already-persisted domain
+        # failure into a second application failure. ProductionRepositoryPort
+        # provides this method, while historical fixtures/adapters may not;
+        # either way the authoritative FAILED run above remains intact.
+        attempts = []
+        try:
+            list_attempts = getattr(self.repository, "list_agent_attempts", None)
+            if list_attempts is not None:
+                attempts = await list_attempts(run.tenant_id, run.run_id)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "event=production_failure_diagnostics_unavailable content_id=%s run_id=%s",
+                run.content_id, run.run_id,
+            )
         terminal = attempts[-1] if attempts else None
         logging.getLogger(__name__).warning(
             "event=production_failed content_id=%s run_id=%s stage=%s code=%s retryable=%s recovery_action=%s model=%s fallback_attempted=%s",
