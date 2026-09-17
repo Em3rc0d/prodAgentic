@@ -82,7 +82,7 @@ async def test_image_adapter_bounds_two_timeout_attempts(monkeypatch):
         async def generate_content(self, *, model, contents, config):
             nonlocal calls
             calls += 1
-            await asyncio.sleep(0.03)
+            await asyncio.sleep(0.15)
             return SimpleNamespace(parts=())
 
     client = SimpleNamespace(aio=SimpleNamespace(models=Models()))
@@ -91,7 +91,7 @@ async def test_image_adapter_bounds_two_timeout_attempts(monkeypatch):
         model="test-image-model",
         timeout_seconds=10.0,
     )
-    adapter.timeout_seconds = 0.01
+    adapter.timeout_seconds = 0.1
     monkeypatch.setattr(gemini_image, "IMAGE_RETRY_DELAY_SECONDS", 0.0)
 
     with pytest.raises(ImageGenerationPortError) as exc_info:
