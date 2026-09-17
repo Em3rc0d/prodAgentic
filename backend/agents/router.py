@@ -193,6 +193,9 @@ class ModelRouter:
         if self.n8n_adapter and not self.policy.allow_direct_provider_fallback_after_n8n_failure:
             adapters = [(name, adapter) for name, adapter in adapters if name == "n8n"]
         models = get_models_for_profile(request.model_profile)[:self.policy.max_models_per_stage]
+        if not adapters or not models:
+            yield RoutingExhausted("No viable provider route is available.", "NO_VIABLE_PROVIDER")
+            return
         routes = [(model.model_id, name, adapter) for model in models for name, adapter in adapters]
         last_code = "ROUTING_EXHAUSTED"
         for index, (model, provider, adapter) in enumerate(routes):
@@ -217,9 +220,16 @@ class ModelRouter:
             transport_retries = 0
             instruction = request.system_instruction
             while budget.attempts < self.policy.max_total_attempts:
-                seconds = min(self.policy.per_attempt_seconds, route_deadline - loop.time(), budget.deadline - loop.time())
+                now = loop.time()
+                stage_remaining = budget.deadline - now
+                route_remaining = route_deadline - now
+                seconds = min(self.policy.per_attempt_seconds, route_remaining, stage_remaining)
                 if seconds <= 0:
                     break
+                # If this timer is the global wall-clock limit, classify it as a
+                # stage timeout. Otherwise it is a route timeout and fallback must
+                # still be allowed to consume its reserved capacity.
+                stage_limited_timeout = stage_remaining <= route_remaining + 1e-6 and stage_remaining <= self.policy.per_attempt_seconds + 1e-6
                 budget.attempts += 1
                 attempt_id = str(uuid.uuid4())
                 text = ""
@@ -252,7 +262,8 @@ class ModelRouter:
                                 and route_deadline - loop.time() > 0.05):
                             budget.language_repairs += 1
                             instruction += (
-                                f"\nRewrite human-facing prose in {request.expected_output_language.value}. "
+                                "\nThe previous response violated the language contract. "
+                                f"Rewrite human-facing prose in {request.expected_output_language.value}. "
                                 "Preserve JSON keys, enums, IDs, source excerpts, code and API names. "
                                 "Return the complete artifact without adding facts."
                             )
@@ -264,8 +275,14 @@ class ModelRouter:
                     return
                 except (TimeoutError, ModelExecutionError) as exc:
                     category = exc.category if isinstance(exc, ModelExecutionError) else ErrorCode.TIMEOUT
-                    last_code = ("STAGE_TIMEOUT" if loop.time() >= budget.deadline else "MODEL_TIMEOUT") if category == ErrorCode.TIMEOUT else category.value
-                    yield AttemptFailed("Model attempt failed: " + last_code, attempt_id, last_code)
+                    if category == ErrorCode.TIMEOUT:
+                        is_stage_timeout = not isinstance(exc, ModelExecutionError) and (stage_limited_timeout or loop.time() >= budget.deadline)
+                        last_code = "STAGE_TIMEOUT" if is_stage_timeout else "MODEL_TIMEOUT"
+                        reason = "Model stage deadline exceeded." if is_stage_timeout else "Model attempt timed out."
+                    else:
+                        last_code = category.value
+                        reason = "Model attempt failed: " + last_code
+                    yield AttemptFailed(reason, attempt_id, last_code)
                     if text:
                         yield AttemptResetRequired("Discard failed attempt.", attempt_id)
                     if last_code == "STAGE_TIMEOUT":
@@ -273,6 +290,8 @@ class ModelRouter:
                         yield RoutingExhausted("Model stage deadline exceeded.", last_code)
                         return
                     if category in (ErrorCode.INVALID_REQUEST, ErrorCode.AUTHENTICATION, ErrorCode.CANCELLED, ErrorCode.UNKNOWN):
+                        if provider == "n8n" and category == ErrorCode.AUTHENTICATION:
+                            self._get_provider_breaker(provider).record_failure(last_code)
                         yield RoutingExhausted("Terminal provider failure.", last_code)
                         return
                     # Route timeout always opens the model breaker and moves on.
@@ -290,9 +309,16 @@ class ModelRouter:
                         continue
                     self._get_model_breaker(provider, model).record_failure(last_code)
                     if provider == "n8n":
-                        self._get_provider_breaker(provider).record_failure(last_code)
+                        # Model-not-found and model-mismatch are route/model scoped;
+                        # provider availability must remain independent. Service,
+                        # quota and rate failures are provider scoped for n8n.
+                        if category in (ErrorCode.SERVICE_UNAVAILABLE, ErrorCode.QUOTA_EXHAUSTED, ErrorCode.RATE_LIMITED):
+                            self._get_provider_breaker(provider).record_failure(last_code)
                         if not self.policy.allow_direct_provider_fallback_after_n8n_failure:
-                            yield RoutingExhausted("n8n route failed; direct bypass is disabled.", last_code)
+                            if category == ErrorCode.QUOTA_EXHAUSTED:
+                                yield RoutingExhausted("n8n provider quota exhausted and bypass is disabled", last_code)
+                            else:
+                                yield RoutingExhausted("n8n route failed; direct bypass is disabled.", last_code)
                             return
                     break
                 except Exception:
