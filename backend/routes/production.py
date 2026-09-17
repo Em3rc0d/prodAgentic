@@ -27,6 +27,11 @@ from infrastructure.mongo.editorial_memory import MongoEditorialMemoryProjector
 from domain.tenants.models import TenantContext
 from infrastructure.evidence.google_grounding import GoogleGroundingEvidenceProvider
 from infrastructure.agents.structured_text import RouterEditorAgent, RouterResearchAgent, RouterWriterAgent
+from infrastructure.agents.authority_binding import (
+    AuthorityBoundEditorAgent,
+    AuthorityBoundResearchAgent,
+    AuthorityBoundWriterAgent,
+)
 from infrastructure.mongo.planning import MongoPlanningRepository
 from infrastructure.mongo.production import MongoProductionRepository
 from infrastructure.mongo.profiles import MongoProfileRepository
@@ -34,8 +39,9 @@ from infrastructure.mongo.profiles import MongoProfileRepository
 router = APIRouter(tags=["mk1-production"])
 logger = logging.getLogger(__name__)
 
-R4_EVIDENCE_STAGE_SECONDS = 60.0
-R4_EVIDENCE_ATTEMPT_SECONDS = 60.0
+R4_EVIDENCE_STAGE_SECONDS = 120.0
+R4_EVIDENCE_ATTEMPT_SECONDS = 120.0
+R4_PRODUCTION_DEADLINE_SECONDS = 330.0
 
 
 class ProduceTextRequest(BaseModel):
@@ -100,10 +106,11 @@ def _isolated_router(router_instance: ModelRouter) -> ModelRouter:
 def _evidence_router(router_instance: ModelRouter) -> ModelRouter:
     """Give grounded evidence a bounded budget separate from text-agent routing.
 
-    Real R4.1 UAT showed Google Search grounding can legitimately exceed the
-    generic 25-second attempt budget. Evidence gets one bounded 60-second route;
-    Research/Writer/Editor retain the stricter defaults and the outer production
-    deadline still caps the complete request at 150 seconds.
+    Real R4.1 UAT showed Google Search grounding can exceed both the generic
+    25-second attempt budget and the first isolated 60-second budget. Evidence
+    therefore gets one bounded 120-second route. Research/Writer/Editor retain
+    the stricter defaults, while the full production request remains bounded
+    below the frontend's 360-second request wall.
     """
     evidence_router = _isolated_router(router_instance)
     evidence_router.policy = replace(
@@ -132,9 +139,9 @@ def _build_service(request: Request, repository: MongoProductionRepository) -> S
     return R4StructuredAgentCellService(
         repository=repository,
         evidence_provider=GoogleGroundingEvidenceProvider(evidence_router),
-        research_agent=RouterResearchAgent(agent_router),
-        writer_agent=RouterWriterAgent(agent_router),
-        editor_agent=RouterEditorAgent(agent_router),
+        research_agent=AuthorityBoundResearchAgent(RouterResearchAgent(agent_router)),
+        writer_agent=AuthorityBoundWriterAgent(RouterWriterAgent(agent_router)),
+        editor_agent=AuthorityBoundEditorAgent(RouterEditorAgent(agent_router)),
     )
 
 
@@ -242,7 +249,9 @@ async def produce_text(content_id: str, body: ProduceTextRequest, request: Reque
         await lifecycle.begin(item.content_id, retry=body.retry_of_run_id is not None)
     except ContentProductionConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    deadline_token = production_deadline.set(asyncio.get_running_loop().time() + 150.0)
+    deadline_token = production_deadline.set(
+        asyncio.get_running_loop().time() + R4_PRODUCTION_DEADLINE_SECONDS
+    )
     try:
         result = await service.produce_text(tenant_id=context.tenant_id, content_id=item.content_id, plan=persisted_plan.plan, plan_digest=persisted_plan.digest, profile=profile, parent_revision_id=body.parent_revision_id, retry_of_run_id=body.retry_of_run_id)
         await lifecycle.bind_text_revision(item.content_id, result.revision.revision_id)
