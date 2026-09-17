@@ -27,8 +27,10 @@ EVIDENCE_MAX_OUTPUT_TOKENS = 768
 
 # A single provider request must not consume the whole evidence stage. Real UAT
 # showed the SDK can spend almost the full 120s wall internally retrying a 503,
-# leaving no capacity for an application-controlled retry. Split the stage into
-# two bounded attempts so a transient high-demand spike can recover deterministically.
+# leaving no capacity for an application-controlled retry. Split the production
+# stage into bounded attempts; small test/policy budgets are still allowed to
+# spend their available attempt budget rather than failing just to reserve a
+# backoff that cannot fit.
 EVIDENCE_MAX_ATTEMPTS_PER_MODEL = 2
 EVIDENCE_SINGLE_ATTEMPT_SECONDS = 55.0
 EVIDENCE_RETRY_DELAY_SECONDS = 5.0
@@ -79,7 +81,16 @@ class GoogleGroundingEvidenceProvider:
                 remaining = deadline - now
                 has_same_model_retry = attempt_index + 1 < EVIDENCE_MAX_ATTEMPTS_PER_MODEL
                 has_model_fallback = model_index + 1 < len(models)
-                reserve = EVIDENCE_RETRY_DELAY_SECONDS if (has_same_model_retry or has_model_fallback) else 0.0
+                can_use_retry_path = has_same_model_retry or has_model_fallback
+
+                # Reserve the retry delay only when the current stage is large
+                # enough to afford it. This preserves production retry capacity
+                # without invalidating intentionally small bounded policies.
+                reserve = (
+                    EVIDENCE_RETRY_DELAY_SECONDS
+                    if can_use_retry_path and remaining > EVIDENCE_RETRY_DELAY_SECONDS + 0.05
+                    else 0.0
+                )
                 seconds = min(
                     self.router.policy.per_attempt_seconds,
                     EVIDENCE_SINGLE_ATTEMPT_SECONDS,
@@ -135,13 +146,14 @@ class GoogleGroundingEvidenceProvider:
                 )
                 logger.warning(
                     "event=evidence_attempt_failed run_id=%s model=%s attempt=%s code=%s elapsed_ms=%s "
-                    "budget_seconds=%.3f retry_same_model=%s fallback_remaining=%s",
+                    "budget_seconds=%.3f remaining_ms=%s retry_same_model=%s fallback_remaining=%s",
                     run_id,
                     model.model_id,
                     attempt_index + 1,
                     code,
                     elapsed_ms,
                     seconds,
+                    int(max(0.0, remaining_after) * 1000),
                     retry_same_model,
                     has_model_fallback,
                 )
