@@ -110,11 +110,17 @@ export async function resumeContentToReview(contentId: string, onStage?: (stage:
   const payload = await jsonOrThrow(await secureFetch(`${API}/api/content-items/${encodeURIComponent(contentId)}`, { cache: "no-store" }), "Content state unavailable");
   const item = payload?.content_item;
   if (item?.editorial_state === "PLANNED") return produceContentToReview(contentId, onStage);
+  if (item?.editorial_state === "PRODUCING" && !item?.current_revision_id) {
+    throw new Error("Production is still running without a bound revision; wait and retry.");
+  }
   if (!item?.current_revision_id || !["PRODUCING", "READY_FOR_REVIEW", "APPROVED"].includes(item.editorial_state)) {
     throw new Error(`Production cannot resume from ${item?.editorial_state || "unknown"}. Reload the saved recovery action before continuing.`);
   }
-  if (payload.recovery?.action !== "RESUME_PIPELINE" && item.editorial_state !== "APPROVED") {
-    throw new Error(payload.recovery?.safe_message || "The saved draft cannot continue yet.");
+  // Recovery metadata was introduced in R4.1. If an older compatible API omits
+  // it, the frozen revision remains the authority and the historical durable
+  // resume path is safe. When metadata is present, obey it strictly.
+  if (payload.recovery && payload.recovery.action !== "RESUME_PIPELINE" && item.editorial_state !== "APPROVED") {
+    throw new Error(payload.recovery.safe_message || "The saved draft cannot continue yet.");
   }
   const snapshot = await fetchProductionRevision(item.current_revision_id);
   if (snapshot.revision.content_id !== contentId || snapshot.revision.status === "SUPERSEDED") {
