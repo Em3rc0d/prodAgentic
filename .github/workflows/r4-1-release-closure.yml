@@ -119,10 +119,10 @@ jobs:
           test -n "$redis_id"
           docker restart "$redis_id"
           for attempt in $(seq 1 30); do
-            if redis-cli -h 127.0.0.1 ping | grep -q PONG; then break; fi
+            if docker exec "$redis_id" redis-cli ping 2>/dev/null | grep -q '^PONG$'; then break; fi
             sleep 1
           done
-          test "$(redis-cli -h 127.0.0.1 ping)" = "PONG"
+          test "$(docker exec "$redis_id" redis-cli ping)" = "PONG"
           python - <<'PY'
           import asyncio
           from infrastructure.redis.streams import RedisStreamsSettings, RedisStreamsTransport
