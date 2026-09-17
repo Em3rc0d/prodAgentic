@@ -3,7 +3,7 @@ import json
 import pytest
 
 from agents.adapters.types import ErrorCode
-from agents.router import AttemptCompleted, AttemptFailed, AttemptStarted, ContentChunk, RoutingExhausted
+from agents.router import AttemptCompleted, AttemptFailed, AttemptStarted, ContentChunk, RoutingExhausted, RoutingPolicy
 from core.context import GenerationContext, LanguageCode
 from core.model_registry import ModelProfile
 from core.validator import ArtifactType
@@ -16,6 +16,7 @@ class FixtureRouter:
         self.outputs = list(outputs)
         self.requests = []
         self.calls = 0
+        self.policy = RoutingPolicy()
 
     async def stream_generation(self, request):
         self.requests.append(request)
@@ -63,6 +64,9 @@ def research_json():
 @pytest.mark.parametrize("code", [item.value for item in ErrorCode] + ["LANGUAGE_MISMATCH"])
 async def test_failed_attempt_retains_typed_taxonomy_without_provider_payload(code):
     class FailedRouter:
+        def __init__(self):
+            self.policy = RoutingPolicy()
+
         async def stream_generation(self, request):
             yield AttemptStarted("model", "attempt-1", "google")
             yield AttemptFailed("opaque-provider-detail", "attempt-1", code)
