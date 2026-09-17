@@ -51,7 +51,7 @@ class GoogleGroundingEvidenceProvider:
         )
         loop = asyncio.get_running_loop()
         deadline = stage_deadline(self.router.policy.max_stage_seconds)
-        models = get_models_for_profile(ModelProfile.QUALITY_TEXT)[:self.router.policy.max_models_per_stage]
+        models = get_models_for_profile(ModelProfile.EVIDENCE_SEARCH)[:self.router.policy.max_models_per_stage]
         code = "EVIDENCE_PROVIDER_UNAVAILABLE"
         for index, model in enumerate(models):
             seconds = min(self.router.policy.per_attempt_seconds, allocate_route_seconds(
