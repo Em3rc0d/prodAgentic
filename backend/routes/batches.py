@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 from bson import ObjectId
@@ -23,6 +24,10 @@ from infrastructure.planning.model_candidates import CandidateGenerationError, P
 
 
 router = APIRouter(tags=["mk1-batches"])
+
+R4_PLANNING_STAGE_SECONDS = 120.0
+R4_PLANNING_ATTEMPT_SECONDS = 60.0
+R4_PLANNING_FALLBACK_RESERVE_SECONDS = 15.0
 
 
 class CreateBatchRequest(BaseModel):
@@ -55,6 +60,25 @@ def _repositories(request: Request, context: TenantContext):
     return registry, db, profiles, planning, projector
 
 
+def _planning_router(router_instance):
+    """Give creative planning its own bounded provider budget without mutating shared authority.
+
+    Real R4 UAT showed that a 12-candidate governed pool can legitimately exceed
+    the default 25-second per-route budget even while the Lite fallback is actively
+    streaming valid output. Planning is user-triggered and the browser request is
+    bounded at 180 seconds, so keep this stage below that outer wall while
+    preserving the stricter default router policy for production agents.
+    """
+    planning_router = router_instance.isolated()
+    planning_router.policy = replace(
+        planning_router.policy,
+        max_stage_seconds=R4_PLANNING_STAGE_SECONDS,
+        per_attempt_seconds=R4_PLANNING_ATTEMPT_SECONDS,
+        minimum_fallback_seconds=R4_PLANNING_FALLBACK_RESERVE_SECONDS,
+    )
+    return planning_router
+
+
 async def _candidate_source_for_request(
     *,
     request: Request,
@@ -80,7 +104,7 @@ async def _candidate_source_for_request(
 
     target_pool_size = min(BatchPlannerService.candidate_cap, max(8, body.requested_size * 3))
     try:
-        candidates = await RouterCandidateSource(router_instance.isolated()).generate(
+        candidates = await RouterCandidateSource(_planning_router(router_instance)).generate(
             version,
             body.target_window,
             body.constraints,
