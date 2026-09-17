@@ -1,0 +1,37 @@
+name: R4.1 one-time diagnostics patch
+
+on:
+  push:
+    branches: [r4.1-reliability-evidence-authority]
+    paths:
+      - .github/workflows/r4-1-surgical-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: r4.1-reliability-evidence-authority
+      - name: Make failure diagnostics non-authoritative
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('backend/application/production/service.py')
+          text = path.read_text()
+          old = '''        attempts = await self.repository.list_agent_attempts(run.tenant_id, run.run_id)\n        terminal = attempts[-1] if attempts else None\n'''
+          new = '''        # Diagnostics must never be able to turn an already-persisted domain\n        # failure into a second application failure. ProductionRepositoryPort\n        # provides this method, while historical fixtures/adapters may not;\n        # either way the authoritative FAILED run above remains intact.\n        attempts = []\n        try:\n            list_attempts = getattr(self.repository, "list_agent_attempts", None)\n            if list_attempts is not None:\n                attempts = await list_attempts(run.tenant_id, run.run_id)\n        except Exception:\n            logging.getLogger(__name__).exception(\n                "event=production_failure_diagnostics_unavailable content_id=%s run_id=%s",\n                run.content_id, run.run_id,\n            )\n        terminal = attempts[-1] if attempts else None\n'''
+          if old not in text:
+              raise SystemExit('expected service.py diagnostic block not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/application/production/service.py
+          git commit -m "fix(r4.1): make failure diagnostics fail-safe"
+          git push origin HEAD:r4.1-reliability-evidence-authority
