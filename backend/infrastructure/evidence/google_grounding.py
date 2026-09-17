@@ -11,7 +11,6 @@ from uuid import uuid4
 from google.genai import types
 
 from agents.adapters.types import ModelExecutionError, ErrorCode
-from agents.router import allocate_route_seconds
 from core.execution_budget import stage_deadline
 from core.model_registry import get_models_for_profile, ModelProfile
 from domain.planning.models import canonical_sha256 as plan_sha256
@@ -22,11 +21,22 @@ logger = logging.getLogger(__name__)
 
 # Grounding authority is the provider's grounding metadata, not long-form model
 # prose. Real production UAT showed that allowing a 4096-token grounded answer
-# can consume the complete 120-second evidence wall even though a short direct
-# grounded probe succeeds. Keep the generated answer intentionally small while
-# preserving enough room for several independently cited findings.
+# can consume the complete evidence wall even though a short grounded probe succeeds.
 EVIDENCE_MAX_FINDINGS = 6
 EVIDENCE_MAX_OUTPUT_TOKENS = 768
+
+# A single provider request must not consume the whole evidence stage. Real UAT
+# showed the SDK can spend almost the full 120s wall internally retrying a 503,
+# leaving no capacity for an application-controlled retry. Split the stage into
+# two bounded attempts so a transient high-demand spike can recover deterministically.
+EVIDENCE_MAX_ATTEMPTS_PER_MODEL = 2
+EVIDENCE_SINGLE_ATTEMPT_SECONDS = 55.0
+EVIDENCE_RETRY_DELAY_SECONDS = 5.0
+_RETRYABLE_EVIDENCE_CODES = frozenset({
+    "MODEL_TIMEOUT",
+    ErrorCode.SERVICE_UNAVAILABLE.value,
+    ErrorCode.RATE_LIMITED.value,
+})
 
 
 class EvidenceAcquisitionError(RuntimeError):
@@ -62,52 +72,89 @@ class GoogleGroundingEvidenceProvider:
         deadline = stage_deadline(self.router.policy.max_stage_seconds)
         models = get_models_for_profile(ModelProfile.EVIDENCE_SEARCH)[:self.router.policy.max_models_per_stage]
         code = "EVIDENCE_PROVIDER_UNAVAILABLE"
-        for index, model in enumerate(models):
-            seconds = min(self.router.policy.per_attempt_seconds, allocate_route_seconds(
-                deadline - loop.time(), len(models) - index, self.router.policy,
-            ))
-            if seconds <= 0:
-                raise EvidenceAcquisitionError("STAGE_TIMEOUT")
-            started = loop.time()
-            try:
-                async with asyncio.timeout(seconds):
-                    response = await adapter.async_client.models.generate_content(
-                        model=model.model_id, contents=prompt,
-                        config=types.GenerateContentConfig(
-                            tools=[types.Tool(google_search=types.GoogleSearch())],
-                            max_output_tokens=EVIDENCE_MAX_OUTPUT_TOKENS,
-                        ),
+
+        for model_index, model in enumerate(models):
+            for attempt_index in range(EVIDENCE_MAX_ATTEMPTS_PER_MODEL):
+                now = loop.time()
+                remaining = deadline - now
+                has_same_model_retry = attempt_index + 1 < EVIDENCE_MAX_ATTEMPTS_PER_MODEL
+                has_model_fallback = model_index + 1 < len(models)
+                reserve = EVIDENCE_RETRY_DELAY_SECONDS if (has_same_model_retry or has_model_fallback) else 0.0
+                seconds = min(
+                    self.router.policy.per_attempt_seconds,
+                    EVIDENCE_SINGLE_ATTEMPT_SECONDS,
+                    max(0.0, remaining - reserve),
+                )
+                if seconds <= 0:
+                    raise EvidenceAcquisitionError("STAGE_TIMEOUT")
+
+                started = loop.time()
+                try:
+                    async with asyncio.timeout(seconds):
+                        response = await adapter.async_client.models.generate_content(
+                            model=model.model_id,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                tools=[types.Tool(google_search=types.GoogleSearch())],
+                                max_output_tokens=EVIDENCE_MAX_OUTPUT_TOKENS,
+                            ),
+                        )
+                    sources = self._normalize(response, model.model_id)
+                    self.router._record_success("google", model.model_id)
+                    elapsed_ms = int((loop.time() - started) * 1000)
+                    logger.info(
+                        "event=evidence_acquired run_id=%s model=%s attempt=%s elapsed_ms=%s sources=%s",
+                        run_id, model.model_id, attempt_index + 1, elapsed_ms, len(sources),
                     )
-                sources = self._normalize(response, model.model_id)
-                self.router._record_success("google", model.model_id)
+                    clock = utc_now()
+                    return EvidenceBundleV1(
+                        bundle_id=str(uuid4()), tenant_id=tenant_id,
+                        plan_id=plan.plan_id, plan_digest=plan_sha256(plan), sources=sources,
+                        acquisition_status=AcquisitionStatus.ACQUIRED if sources else AcquisitionStatus.INSUFFICIENT,
+                        query_digest=canonical_sha256(query), created_at=clock,
+                        expires_at=clock + timedelta(hours=24),
+                    )
+                except TimeoutError:
+                    code = "STAGE_TIMEOUT" if loop.time() >= deadline else "MODEL_TIMEOUT"
+                except Exception as exc:
+                    if isinstance(exc, (ValueError, TypeError, AttributeError)):
+                        raise EvidenceAcquisitionError("EVIDENCE_CONTRACT_VIOLATION") from None
+                    translated = exc if isinstance(exc, ModelExecutionError) else adapter._translate_error(
+                        exc, model.model_id, run_id
+                    )
+                    code = translated.category.value
+                    if translated.category in (ErrorCode.AUTHENTICATION, ErrorCode.INVALID_REQUEST, ErrorCode.UNKNOWN):
+                        raise EvidenceAcquisitionError(code) from None
+
                 elapsed_ms = int((loop.time() - started) * 1000)
-                logger.info(
-                    "event=evidence_acquired run_id=%s model=%s elapsed_ms=%s sources=%s",
-                    run_id, model.model_id, elapsed_ms, len(sources),
+                remaining_after = deadline - loop.time()
+                retry_same_model = (
+                    code in _RETRYABLE_EVIDENCE_CODES
+                    and has_same_model_retry
+                    and remaining_after > EVIDENCE_RETRY_DELAY_SECONDS + 0.05
                 )
-                clock = utc_now()
-                return EvidenceBundleV1(
-                    bundle_id=str(uuid4()), tenant_id=tenant_id,
-                    plan_id=plan.plan_id, plan_digest=plan_sha256(plan), sources=sources,
-                    acquisition_status=AcquisitionStatus.ACQUIRED if sources else AcquisitionStatus.INSUFFICIENT,
-                    query_digest=canonical_sha256(query), created_at=clock,
-                    expires_at=clock + timedelta(hours=24),
+                logger.warning(
+                    "event=evidence_attempt_failed run_id=%s model=%s attempt=%s code=%s elapsed_ms=%s "
+                    "budget_seconds=%.3f retry_same_model=%s fallback_remaining=%s",
+                    run_id,
+                    model.model_id,
+                    attempt_index + 1,
+                    code,
+                    elapsed_ms,
+                    seconds,
+                    retry_same_model,
+                    has_model_fallback,
                 )
-            except TimeoutError:
-                code = "STAGE_TIMEOUT" if loop.time() >= deadline else "MODEL_TIMEOUT"
-            except Exception as exc:
-                if isinstance(exc, (ValueError, TypeError, AttributeError)):
-                    raise EvidenceAcquisitionError("EVIDENCE_CONTRACT_VIOLATION") from None
-                translated = exc if isinstance(exc, ModelExecutionError) else adapter._translate_error(exc, model.model_id, run_id)
-                code = translated.category.value
-                if translated.category in (ErrorCode.AUTHENTICATION, ErrorCode.INVALID_REQUEST, ErrorCode.UNKNOWN):
-                    raise EvidenceAcquisitionError(code) from None
-            self.router._get_model_breaker("google", model.model_id).record_failure(code)
-            elapsed_ms = int((loop.time() - started) * 1000)
-            logger.warning(
-                "event=evidence_attempt_failed run_id=%s model=%s code=%s elapsed_ms=%s budget_seconds=%.3f fallback_remaining=%s",
-                run_id, model.model_id, code, elapsed_ms, seconds, index + 1 < len(models),
-            )
+
+                if retry_same_model:
+                    await asyncio.sleep(EVIDENCE_RETRY_DELAY_SECONDS)
+                    continue
+
+                self.router._get_model_breaker("google", model.model_id).record_failure(code)
+                break
+
+        if loop.time() >= deadline:
+            code = "STAGE_TIMEOUT"
         raise EvidenceAcquisitionError(code)
 
     @staticmethod
