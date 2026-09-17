@@ -238,12 +238,23 @@ class ModelRouter:
                 stream = None
                 yield AttemptStarted(model, attempt_id, provider)
                 try:
+                    stream_kwargs = {
+                        "system_instruction": instruction,
+                        "attempt_id": attempt_id,
+                        "run_id": request.context.run_id,
+                        "profile_name": request.model_profile.value,
+                    }
+                    # Preserve compatibility with adapters that implement the
+                    # historical strict stream signature. Structured-output
+                    # authority is opt-in and only travels when requested.
+                    if request.response_mime_type is not None:
+                        stream_kwargs["response_mime_type"] = request.response_mime_type
+                    if request.response_json_schema is not None:
+                        stream_kwargs["response_json_schema"] = request.response_json_schema
                     stream = adapter.stream(
-                        model=model, prompt=request.user_prompt, system_instruction=instruction,
-                        attempt_id=attempt_id, run_id=request.context.run_id,
-                        profile_name=request.model_profile.value,
-                        response_mime_type=request.response_mime_type,
-                        response_json_schema=request.response_json_schema,
+                        model=model,
+                        prompt=request.user_prompt,
+                        **stream_kwargs,
                     )
                     async with asyncio.timeout(seconds):
                         async for _, chunk in stream:
