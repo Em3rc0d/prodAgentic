@@ -43,6 +43,43 @@ R4_EVIDENCE_STAGE_SECONDS = 120.0
 R4_EVIDENCE_ATTEMPT_SECONDS = 120.0
 R4_PRODUCTION_DEADLINE_SECONDS = 330.0
 
+_PRIVATE_RUNTIME_KEYS = frozenset({
+    "provider",
+    "model",
+    "model_id",
+    "provenance",
+    "prompt_version",
+    "contract_version",
+    "latency_ms",
+    "input_digest",
+    "output_digest",
+    "input_tokens",
+    "output_tokens",
+    "cost_usd",
+    "agent_run_refs",
+    "contract_versions",
+})
+
+_PUBLIC_RUN_FIELDS = (
+    "schema_version",
+    "run_id",
+    "content_id",
+    "profile_id",
+    "profile_version",
+    "plan_id",
+    "state",
+    "retry_of_run_id",
+    "evidence_bundle_ref",
+    "research_pack_ref",
+    "content_spec_ref",
+    "editorial_review_ref",
+    "visual_spec_ref",
+    "qa_report_refs",
+    "failure",
+    "started_at",
+    "completed_at",
+)
+
 
 class ProduceTextRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -58,6 +95,60 @@ class RecoverContentRequest(BaseModel):
 
 def _serialize(model):
     return model.model_dump(mode="json") if hasattr(model, "model_dump") else model
+
+
+def _public_run(run):
+    """Project internal GenerationRun authority into a customer-safe status DTO.
+
+    Attempt lineage, contract versions and integrity digests remain operator-side.
+    In particular, the number of provider/model attempts must not be inferable from
+    customer-visible run metadata.
+    """
+    payload = _serialize(run)
+    if not isinstance(payload, dict):
+        return payload
+    return {key: payload[key] for key in _PUBLIC_RUN_FIELDS if key in payload}
+
+
+def _public_attempts(attempts):
+    """Expose one terminal status per logical agent, never routing/fallback lineage."""
+    by_agent = {}
+    for attempt in attempts:
+        payload = _serialize(attempt)
+        if not isinstance(payload, dict):
+            continue
+        agent = payload.get("agent")
+        if not agent:
+            continue
+        by_agent[agent] = {
+            "agent": agent,
+            "status": payload.get("status"),
+            "safe_failure_code": payload.get("safe_failure_code"),
+            "created_at": payload.get("created_at"),
+        }
+    return list(by_agent.values())
+
+
+def _redact_runtime_metadata(value):
+    """Remove provider/model routing metadata from customer-visible artifacts.
+
+    Persisted artifacts remain unchanged and retain full internal provenance for
+    integrity checks and operator audit. This projection is deliberately recursive
+    so future nested evidence fields cannot accidentally reopen the disclosure path.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _redact_runtime_metadata(item)
+            for key, item in value.items()
+            if key not in _PRIVATE_RUNTIME_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_runtime_metadata(item) for item in value]
+    return value
+
+
+def _public_artifact(record):
+    return _redact_runtime_metadata(record)
 
 
 def _safe_domain_stop_code(exc: Exception) -> str:
@@ -278,7 +369,7 @@ async def produce_text(content_id: str, body: ProduceTextRequest, request: Reque
         raise HTTPException(status_code=status, detail=detail) from None
     finally:
         production_deadline.reset(deadline_token)
-    return {"run": _serialize(result.run), "revision": _serialize(result.revision), "research": _serialize(result.research), "content": _serialize(result.content), "editorial_review": _serialize(result.review), "creative_mode": "deterministic_demo" if demo_mode_enabled() else "model_router_r4", "next_stage": "S4_VISUAL_PLANNING" if result.content.format != "text" else "S6_QA"}
+    return {"run": _public_run(result.run), "revision": _serialize(result.revision), "research": _serialize(result.research), "content": _serialize(result.content), "editorial_review": _serialize(result.review), "creative_mode": "demo" if demo_mode_enabled() else "production", "next_stage": "S4_VISUAL_PLANNING" if result.content.format != "text" else "S6_QA"}
 
 
 @router.get("/generation-runs/{run_id}")
@@ -291,8 +382,8 @@ async def get_generation_run(run_id: str, request: Request, context: TenantConte
     artifacts = {}
     for key, ref in (("evidence", run.evidence_bundle_ref), ("research", run.research_pack_ref), ("content", run.content_spec_ref), ("editorial_review", run.editorial_review_ref)):
         if ref:
-            artifacts[key] = await production.get_artifact(context.tenant_id, ref)
-    return {"run": _serialize(run), "attempts": [_serialize(item) for item in attempts], "artifacts": artifacts}
+            artifacts[key] = _public_artifact(await production.get_artifact(context.tenant_id, ref))
+    return {"run": _public_run(run), "attempts": _public_attempts(attempts), "artifacts": artifacts}
 
 
 @router.get("/content-revisions/{revision_id}")
@@ -304,7 +395,7 @@ async def get_content_revision(revision_id: str, request: Request, context: Tena
     content = await production.get_artifact(context.tenant_id, revision.content_spec_ref)
     if content is None:
         raise HTTPException(status_code=409, detail="ContentSpec artifact is unavailable")
-    return {"revision": _serialize(revision), "content": content}
+    return {"revision": _serialize(revision), "content": _public_artifact(content)}
 
 
 @router.post("/content-items/{content_id}/recover")
