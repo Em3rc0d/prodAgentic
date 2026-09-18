@@ -70,6 +70,7 @@ function retryDecision(contentId = "content-0") {
 describe("MK1 R2 Create", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    window.history.replaceState(null, "", "/create");
     mockedApi.fetchProfilesV2.mockResolvedValue({ profiles: [profile], count: 1 });
     mockedBatches.createBatchV1.mockResolvedValue(response());
     mockedBatches.fetchBatchV1.mockResolvedValue(response());
