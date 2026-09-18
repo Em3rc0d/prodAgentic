@@ -130,8 +130,8 @@ async def test_planning_requests_provider_enforced_structured_json():
     assert request.response_json_schema["type"] == "object"
     assert "ideas" in request.response_json_schema["properties"]
     ideas_schema = request.response_json_schema["properties"]["ideas"]
-    assert ideas_schema["minItems"] == 1
-    assert ideas_schema["maxItems"] == 1
+    assert "minItems" not in ideas_schema
+    assert "maxItems" not in ideas_schema
 
 
 def test_planning_provider_schema_uses_only_gemini_supported_keywords():
@@ -143,9 +143,9 @@ def test_planning_provider_schema_uses_only_gemini_supported_keywords():
 
     from infrastructure.planning.model_candidates import _IdeaPool, _gemini_response_schema
 
-    schema = _gemini_response_schema(_IdeaPool.model_json_schema(), target_pool_size=2)
+    schema = _gemini_response_schema(_IdeaPool.model_json_schema())
 
-    forbidden = {"minLength", "maxLength", "default", "pattern"}
+    forbidden = {"minLength", "maxLength", "default", "pattern", "minItems", "maxItems"}
     observed_schema_keywords = set()
 
     def walk(node, *, property_map=False):
@@ -168,8 +168,22 @@ def test_planning_provider_schema_uses_only_gemini_supported_keywords():
 
     assert not (forbidden & observed_schema_keywords)
     assert observed_schema_keywords <= _GEMINI_JSON_SCHEMA_KEYWORDS
-    assert schema["properties"]["ideas"]["minItems"] == 2
-    assert schema["properties"]["ideas"]["maxItems"] == 2
+
+
+@pytest.mark.asyncio
+async def test_real_four_piece_pool_keeps_cardinality_application_owned():
+    ideas = [idea(f"Topic {index}") for index in range(12)]
+    router = SequenceRouter([json.dumps({"ideas": ideas})])
+    source = RouterCandidateSource(router)
+
+    result = await source.generate(profile(), window(), BatchRequestConstraints(), 12)
+
+    assert len(result) == 12
+    request = router.requests[0]
+    ideas_schema = request.response_json_schema["properties"]["ideas"]
+    assert "minItems" not in ideas_schema
+    assert "maxItems" not in ideas_schema
+    assert "Produce exactly 12 ideas." in request.user_prompt
 
 
 @pytest.mark.asyncio

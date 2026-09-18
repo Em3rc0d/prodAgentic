@@ -73,8 +73,6 @@ _GEMINI_JSON_SCHEMA_KEYWORDS = frozenset({
     "enum",
     "items",
     "prefixItems",
-    "minItems",
-    "maxItems",
     "minimum",
     "maximum",
     "anyOf",
@@ -86,7 +84,7 @@ _GEMINI_JSON_SCHEMA_KEYWORDS = frozenset({
 })
 
 
-def _gemini_response_schema(schema: dict, *, target_pool_size: int) -> dict:
+def _gemini_response_schema(schema: dict) -> dict:
     """Project Pydantic JSON Schema onto Gemini's supported JSON subset.
 
     Local Pydantic validation remains authoritative for constraints that the
@@ -116,10 +114,11 @@ def _gemini_response_schema(schema: dict, *, target_pool_size: int) -> dict:
     if not isinstance(ideas_schema, dict):
         raise ValueError("IdeaPool schema is missing the ideas array")
 
-    # Planning asks for one exact governed pool size; Gemini supports array
-    # cardinality directly, so make that authority explicit at provider level.
-    ideas_schema["minItems"] = target_pool_size
-    ideas_schema["maxItems"] = target_pool_size
+    # Real-provider UAT rejected the full 12-candidate Planning request while
+    # the same schema shape succeeded for a one-item diagnostic probe. Keep
+    # array cardinality as application authority: the prompt requests the exact
+    # pool size and the bounded local validator below enforces it. Provider
+    # structured output owns shape/types only.
     return projected
 
 
@@ -190,10 +189,7 @@ class RouterCandidateSource:
             content_profile_snapshot=None,
         )
 
-        schema = _gemini_response_schema(
-            _IdeaPool.model_json_schema(),
-            target_pool_size=target_pool_size,
-        )
+        schema = _gemini_response_schema(_IdeaPool.model_json_schema())
         payload = {
             "profile": {
                 "identity": profile.identity.model_dump(mode="json"),
