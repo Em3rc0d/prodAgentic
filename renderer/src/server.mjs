@@ -5,8 +5,8 @@ const PORT = Number.parseInt(process.env.PORT || "4100", 10);
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
 const MAX_IMAGE_DATA_URI_BYTES = 11 * 1024 * 1024;
 const RENDERER_NAME = "ChromiumRendererAdapter";
-const RENDERER_VERSION = "playwright-1.62.1-chromium-v2-r4";
-const INSPECTOR_VERSION = "dom-geometry-v2-r4";
+const RENDERER_VERSION = "playwright-1.62.1-chromium-v4-r4-fit";
+const INSPECTOR_VERSION = "dom-geometry-v4-r4-fit";
 const ALLOWED_TOP_LEVEL = new Set([
   "schema_version", "contract_version", "render_id", "revision_id", "visual_spec_id",
   "visual_spec_digest", "content_spec_digest", "design_profile_digest", "visual_pattern",
@@ -115,7 +115,11 @@ function htmlForPage(request, page) {
 *{box-sizing:border-box}html,body{margin:0;width:${request.canvas_width}px;height:${request.canvas_height}px;overflow:hidden;background:${colors.background};color:${colors.text};font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
 body{position:relative}.canvas{position:absolute;inset:0;background:${colors.background};padding:${safe.top}px ${safe.right}px ${safe.bottom}px ${safe.left}px;overflow:hidden}.frame{position:relative;width:100%;height:100%;background:${colors.surface};border:2px solid ${colors.border};border-radius:${radius}px;padding:${density === "dense" ? 48 : density === "sparse" ? 68 : 58}px;display:flex;flex-direction:column;gap:${gap}px;overflow:hidden;box-shadow:0 22px 80px rgba(0,0,0,.08)}.frame:before{content:"";position:absolute;left:0;top:0;width:14px;height:100%;background:${colors.accent}}
 .kicker{font-size:23px;line-height:1;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:${colors.accent};padding-left:4px}.content{display:flex;flex:1;min-height:0;flex-direction:column;gap:${gap}px;justify-content:center}.block{position:relative;z-index:2}.text{white-space:pre-wrap;overflow-wrap:anywhere}.headline{font-weight:850;font-size:${density === "dense" ? 62 : density === "sparse" ? 78 : 70}px;line-height:1.02;letter-spacing:-.045em;max-width:900px}.body{font-size:${density === "dense" ? 35 : 39}px;line-height:1.22;font-weight:560;max-width:900px}.label{font-size:24px;line-height:1.12;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:${colors.accent}}.footer,.microcopy{margin-top:auto;font-size:24px;line-height:1.25;color:${colors.muted};font-weight:650}.divider{height:2px;background:${colors.border};width:100%}.metric{display:grid;gap:8px;padding:24px;border:2px solid ${colors.border};border-radius:${Math.max(8, radius - 8)}px}.metric span{font-size:22px;color:${colors.muted};text-transform:uppercase;letter-spacing:.08em}.metric strong{font-size:66px;line-height:1;color:${colors.accent}}.diagram{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.diagram-node{font-size:27px;line-height:1.2;font-weight:700;border:2px solid ${colors.border};border-radius:${Math.max(8, radius - 8)}px;padding:22px;background:${colors.background}}.diagram-node span{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:50%;background:${colors.accent};color:white;font-size:18px;margin-right:12px}.icon{font-size:52px;color:${colors.accent}}.image{margin:0;width:100%;height:${density === "dense" ? 300 : 340}px;min-height:${density === "dense" ? 300 : 340}px;overflow:hidden;border-radius:${Math.max(10, radius - 6)}px;border:2px solid ${colors.border};background:${colors.background}}.image img{display:block;width:100%;height:100%;object-fit:cover;object-position:center}.meta{display:flex;justify-content:space-between;align-items:center;font-size:22px;line-height:1;color:${colors.muted};font-weight:700;letter-spacing:.04em}.meta .role{text-transform:uppercase;color:${colors.accent}}
-.frame.card_grid .content,.frame.evidence_grid .content{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:center}.frame.card_grid .headline,.frame.evidence_grid .headline{grid-column:1/-1}.frame.card_grid .image,.frame.evidence_grid .image{grid-column:1/-1}.frame.card_grid .body,.frame.evidence_grid .body{padding:24px;border:2px solid ${colors.border};border-radius:${Math.max(8, radius - 8)}px;background:${colors.background};font-size:${density === "dense" ? 30 : 34}px}.frame.split_focus .content,.frame.split_evidence .content{display:grid;grid-template-columns:1.18fr .82fr;align-items:center}.frame.split_focus .headline,.frame.split_evidence .headline,.frame.split_focus .image,.frame.split_evidence .image{grid-column:1/-1}.frame.split_focus .body:nth-of-type(even),.frame.split_evidence .body:nth-of-type(even){padding-left:26px;border-left:5px solid ${colors.accent}}.frame.editorial_poster .headline{font-size:${density === "dense" ? 70 : 88}px;max-width:860px}.frame.editorial_poster .image{height:${density === "dense" ? 300 : 330}px;min-height:${density === "dense" ? 300 : 330}px}.frame.hero_stack .content{justify-content:center}.frame.metric_stack .content{justify-content:flex-start}.frame.metric_stack .metric{margin-top:8px}</style></head><body><main class="canvas"><section class="frame ${layout}" data-page-id="${escapeHtml(page.page_id)}"><div class="kicker">${escapeHtml(request.format.replaceAll("_", " "))}</div><div class="content">${contentBlocks}</div><div class="meta"><span class="role">${escapeHtml(page.role)}</span><span>${escapeHtml(pageNumber)}</span></div></section></main></body></html>`;
+.frame.card_grid .content,.frame.evidence_grid .content{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:center}.frame.card_grid .headline,.frame.evidence_grid .headline{grid-column:1/-1}.frame.card_grid .image,.frame.evidence_grid .image{grid-column:1/-1}.frame.card_grid .body,.frame.evidence_grid .body{padding:24px;border:2px solid ${colors.border};border-radius:${Math.max(8, radius - 8)}px;background:${colors.background};font-size:${density === "dense" ? 30 : 34}px}.frame.split_focus .content,.frame.split_evidence .content{display:grid;grid-template-columns:1.18fr .82fr;align-items:center}.frame.split_focus .headline,.frame.split_evidence .headline,.frame.split_focus .image,.frame.split_evidence .image{grid-column:1/-1}.frame.split_focus .body:nth-of-type(even),.frame.split_evidence .body:nth-of-type(even){padding-left:26px;border-left:5px solid ${colors.accent}}.frame.editorial_poster .headline{font-size:${density === "dense" ? 70 : 88}px;max-width:860px}.frame.editorial_poster .image{height:${density === "dense" ? 300 : 330}px;min-height:${density === "dense" ? 300 : 330}px}.frame.hero_stack .content{justify-content:center}.frame.metric_stack .content{justify-content:flex-start}.frame.metric_stack .metric{margin-top:8px}
+.frame[data-fit="compact"]{padding:44px;gap:18px}.frame[data-fit="compact"] .content{gap:18px}.frame[data-fit="compact"] .headline{font-size:56px;line-height:1.04}.frame[data-fit="compact"] .body{font-size:31px;line-height:1.18}.frame[data-fit="compact"] .label{font-size:22px}.frame[data-fit="compact"] .footer,.frame[data-fit="compact"] .microcopy{font-size:21px}.frame[data-fit="compact"] .image{height:260px;min-height:260px}.frame[data-fit="compact"] .diagram{gap:14px}.frame[data-fit="compact"] .diagram-node{font-size:23px;padding:16px}.frame[data-fit="compact"] .metric{padding:18px}.frame[data-fit="compact"] .metric strong{font-size:54px}
+.frame[data-fit="tight"]{padding:34px;gap:12px}.frame[data-fit="tight"] .content{gap:12px}.frame[data-fit="tight"] .kicker,.frame[data-fit="tight"] .meta{font-size:19px}.frame[data-fit="tight"] .headline{font-size:46px;line-height:1.05}.frame[data-fit="tight"] .body{font-size:26px;line-height:1.16}.frame[data-fit="tight"] .label{font-size:20px}.frame[data-fit="tight"] .footer,.frame[data-fit="tight"] .microcopy{font-size:19px}.frame[data-fit="tight"] .image{height:220px;min-height:220px}.frame[data-fit="tight"] .diagram{gap:10px}.frame[data-fit="tight"] .diagram-node{font-size:20px;padding:12px}.frame[data-fit="tight"] .metric{padding:14px}.frame[data-fit="tight"] .metric span{font-size:19px}.frame[data-fit="tight"] .metric strong{font-size:46px}.frame[data-fit="tight"].card_grid .body,.frame[data-fit="tight"].evidence_grid .body{padding:12px}.frame[data-fit="tight"].card_grid .content,.frame[data-fit="tight"].evidence_grid .content{gap:10px}.frame[data-fit="tight"].split_focus .body:nth-of-type(even),.frame[data-fit="tight"].split_evidence .body:nth-of-type(even){padding-left:14px;border-left-width:3px}
+.frame[data-fit="minimum"]{padding:24px;gap:8px}.frame[data-fit="minimum"] .content{gap:8px}.frame[data-fit="minimum"] .kicker,.frame[data-fit="minimum"] .meta{font-size:18px}.frame[data-fit="minimum"] .headline{font-size:34px;line-height:1.04}.frame[data-fit="minimum"] .body{font-size:20px;line-height:1.12}.frame[data-fit="minimum"] .label{font-size:18px;line-height:1.08}.frame[data-fit="minimum"] .footer,.frame[data-fit="minimum"] .microcopy{font-size:18px;line-height:1.12}.frame[data-fit="minimum"] .image{height:140px;min-height:140px}.frame[data-fit="minimum"] .diagram{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.frame[data-fit="minimum"] .diagram-node{font-size:18px;line-height:1.1;padding:8px}.frame[data-fit="minimum"] .diagram-node span{width:26px;height:26px;font-size:15px;margin-right:7px}.frame[data-fit="minimum"] .metric{gap:4px;padding:10px}.frame[data-fit="minimum"] .metric span{font-size:18px}.frame[data-fit="minimum"] .metric strong{font-size:36px}.frame[data-fit="minimum"].card_grid .body,.frame[data-fit="minimum"].evidence_grid .body{padding:8px;font-size:20px}.frame[data-fit="minimum"].card_grid .content,.frame[data-fit="minimum"].evidence_grid .content{gap:8px}.frame[data-fit="minimum"].split_focus .body:nth-of-type(even),.frame[data-fit="minimum"].split_evidence .body:nth-of-type(even){padding-left:10px;border-left-width:3px}.frame[data-fit="minimum"].editorial_poster .headline{font-size:34px}.frame[data-fit="minimum"].editorial_poster .image{height:140px;min-height:140px}
+</style></head><body><main class="canvas"><section class="frame ${layout}" data-page-id="${escapeHtml(page.page_id)}"><div class="kicker">${escapeHtml(request.format.replaceAll("_", " "))}</div><div class="content">${contentBlocks}</div><div class="meta"><span class="role">${escapeHtml(page.role)}</span><span>${escapeHtml(pageNumber)}</span></div></section></main></body></html>`;
 }
 
 async function waitForAssets(page) {
@@ -132,6 +136,36 @@ async function waitForAssets(page) {
   });
 }
 
+async function hasGeometryOverflow(page) {
+  return page.evaluate(() => {
+    const frame = document.querySelector(".frame");
+    const content = document.querySelector(".content");
+    const blocks = Array.from(document.querySelectorAll(".content > .block"));
+    if (!frame || !content) return true;
+    const tolerance = 1;
+    const frameRect = frame.getBoundingClientRect();
+    if (frame.scrollWidth > frame.clientWidth + tolerance || frame.scrollHeight > frame.clientHeight + tolerance) return true;
+    if (content.scrollWidth > content.clientWidth + tolerance || content.scrollHeight > content.clientHeight + tolerance) return true;
+    return blocks.some((block) => {
+      const rect = block.getBoundingClientRect();
+      return rect.left < frameRect.left - tolerance || rect.right > frameRect.right + tolerance || rect.top < frameRect.top - tolerance || rect.bottom > frameRect.bottom + tolerance;
+    });
+  });
+}
+
+async function applyDeterministicFit(page) {
+  if (!(await hasGeometryOverflow(page))) return "base";
+  for (const tier of ["compact", "tight", "minimum"]) {
+    await page.evaluate((value) => {
+      const frame = document.querySelector(".frame");
+      if (frame) frame.setAttribute("data-fit", value);
+    }, tier);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    if (!(await hasGeometryOverflow(page))) return tier;
+  }
+  return "minimum";
+}
+
 async function withPreparedPage(browser, request, pageSpec, callback) {
   const context = await browser.newContext({viewport:{width:request.canvas_width,height:request.canvas_height},deviceScaleFactor:1,colorScheme:"light",reducedMotion:"reduce"});
   try {
@@ -143,6 +177,7 @@ async function withPreparedPage(browser, request, pageSpec, callback) {
     const page = await context.newPage();
     await page.setContent(htmlForPage(request, pageSpec), {waitUntil:"load",timeout:10_000});
     await waitForAssets(page);
+    await applyDeterministicFit(page);
     return await callback(page);
   } finally { await context.close(); }
 }

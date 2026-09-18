@@ -1,3 +1,5 @@
+from dataclasses import replace
+import logging
 from datetime import datetime, timedelta
 
 from bson import ObjectId
@@ -16,12 +18,18 @@ from domain.planning.models import BatchRequestConstraints, TargetWindow, utc_no
 from domain.tenants.models import TenantContext
 from infrastructure.mongo.editorial_memory import MongoEditorialMemoryProjector
 from infrastructure.mongo.learning import MongoPerformanceEvidenceRepository, MongoPerformanceSummaryRepository
+from infrastructure.mongo.recovery import MongoRecoveryRepository
 from infrastructure.mongo.planning import MongoPlanningRepository
 from infrastructure.mongo.profiles import MongoProfileRepository
 from infrastructure.planning.model_candidates import CandidateGenerationError, PrecomputedCandidateSource, RouterCandidateSource
 
 
 router = APIRouter(tags=["mk1-batches"])
+logger = logging.getLogger(__name__)
+
+R4_PLANNING_STAGE_SECONDS = 120.0
+R4_PLANNING_ATTEMPT_SECONDS = 60.0
+R4_PLANNING_FALLBACK_RESERVE_SECONDS = 15.0
 
 
 class CreateBatchRequest(BaseModel):
@@ -54,6 +62,25 @@ def _repositories(request: Request, context: TenantContext):
     return registry, db, profiles, planning, projector
 
 
+def _planning_router(router_instance):
+    """Give creative planning its own bounded provider budget without mutating shared authority.
+
+    Real R4 UAT showed that a 12-candidate governed pool can legitimately exceed
+    the default 25-second per-route budget even while the Lite fallback is actively
+    streaming valid output. Planning is user-triggered and the browser request is
+    bounded at 180 seconds, so keep this stage below that outer wall while
+    preserving the stricter default router policy for production agents.
+    """
+    planning_router = router_instance.isolated()
+    planning_router.policy = replace(
+        planning_router.policy,
+        max_stage_seconds=R4_PLANNING_STAGE_SECONDS,
+        per_attempt_seconds=R4_PLANNING_ATTEMPT_SECONDS,
+        minimum_fallback_seconds=R4_PLANNING_FALLBACK_RESERVE_SECONDS,
+    )
+    return planning_router
+
+
 async def _candidate_source_for_request(
     *,
     request: Request,
@@ -79,16 +106,20 @@ async def _candidate_source_for_request(
 
     target_pool_size = min(BatchPlannerService.candidate_cap, max(8, body.requested_size * 3))
     try:
-        candidates = await RouterCandidateSource(router_instance).generate(
+        candidates = await RouterCandidateSource(_planning_router(router_instance)).generate(
             version,
             body.target_window,
             body.constraints,
             target_pool_size,
         )
     except CandidateGenerationError as exc:
+        logger.warning("R4 planning candidate generation failed code=%s", exc.code)
         raise HTTPException(
             status_code=502,
-            detail="Creative planning failed before a valid governed candidate pool was produced",
+            detail={
+                "code": exc.code,
+                "message": "Creative planning failed before a valid governed candidate pool was produced",
+            },
         ) from exc
     return AutoFormatCandidateSource(PrecomputedCandidateSource(candidates))
 
@@ -140,7 +171,14 @@ async def create_batch(
     except PlanningConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except CandidateGenerationError as exc:
-        raise HTTPException(status_code=502, detail="Candidate pool could not be bound to the planner request") from exc
+        logger.warning("R4 planning candidate binding failed code=%s", exc.code)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": exc.code,
+                "message": "Candidate pool could not be bound to the planner request",
+            },
+        ) from exc
     return {
         "batch": _serialize(result.batch.model_dump(mode="json")),
         "content_items": [_serialize(item.model_dump(mode="json")) for item in result.items],
@@ -159,17 +197,26 @@ async def get_batch(
     request: Request,
     context: TenantContext = Depends(require_tenant_context),
 ):
-    _, _, _, planning, _ = _repositories(request, context)
+    _, db, _, planning, _ = _repositories(request, context)
     batch = await planning.get_batch(batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
-    items = await planning.list_batch_items(batch_id)
+    recovery = MongoRecoveryRepository(db, context)
+    _, replacements = await recovery.read(batch_id)
+    for entry in replacements:
+        await recovery.materialize(planning, entry)
+    all_items = await planning.list_batch_items(batch_id)
+    replaced_ids = {entry.rejected_content_id for entry in replacements}
+    items = [item for item in all_items if item.content_id not in replaced_ids]
     plans = await planning.list_batch_plans(batch_id)
     trace = await planning.get_planning_trace(batch_id)
     if trace is None:
         raise HTTPException(status_code=409, detail="Batch planning trace is unavailable")
     return {
         "batch": _serialize(batch.model_dump(mode="json")),
+        "memory_count": len(trace.memory_ids),
+        "replacement_lineage": [entry.model_dump(mode="json") for entry in replacements],
+        "historical_items": [_serialize(item.model_dump(mode="json")) for item in all_items if item.content_id in replaced_ids],
         "content_items": [_serialize(item.model_dump(mode="json")) for item in items],
         "plans": [_serialize(item.model_dump(mode="json")) for item in plans],
         "planning_trace": _serialize(trace.model_dump(mode="json")),

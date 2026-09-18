@@ -1,0 +1,408 @@
+name: R4.1 release closure gates
+
+on:
+  pull_request:
+    branches: [developer]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r4-1-release-closure-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  r4-1-real-redis-regression:
+    name: R4.1 real Redis delegated regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      APP_DEFAULT_LANGUAGE: es
+      LANGUAGE_MIN_CONFIDENCE: "0.6"
+      LANGUAGE_MIN_MARGIN: "0.2"
+      IMAGE_RENDER_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEPLOYMENT_KEY: r4-1-release-closure
+      PRODAGENTIC_ASSET_ROOT: /tmp/prodagentic-r4-1-assets
+      MK1_ENABLED: "true"
+      MK1_PROFILE_V2: "true"
+      MK1_BATCH_PLANNING: "true"
+      MK1_STRUCTURED_AGENT_CELL: "true"
+      MK1_VISUALSPEC: "true"
+      MK1_RENDER_WORKER: "true"
+      MK1_REVIEW_APPROVAL: "true"
+      MK1_MANUAL_EXPORT: "true"
+      MK1_REDIS_TRANSPORT: "true"
+      MK1_PUBLISH_WORKER: "true"
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017
+      REDIS_URL: redis://127.0.0.1:6379/0
+      S9_REDIS_INTEGRATION: "true"
+      S10_REDIS_INTEGRATION: "true"
+      LINKEDIN_CLIENT_ID: r4-1-cert-client
+      LINKEDIN_CLIENT_SECRET: r4-1-cert-placeholder
+      LINKEDIN_REDIRECT_URI: http://localhost:8000/api/integrations/linkedin/callback
+      PRODAGENTIC_LINKEDIN_TOKEN_KEY: r4-1-cert-token-key-1234567890-abcdefghijklmnopqrstuvwxyz
+      LINKEDIN_API_VERSION: "202608"
+      FRONTEND_URL: http://localhost:3000
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record exact candidate identity
+        shell: bash
+        run: |
+          EXPECTED="${{ github.event.pull_request.head.sha || github.sha }}"
+          ACTUAL="$(git rev-parse HEAD)"
+          test "$ACTUAL" = "$EXPECTED"
+          mkdir -p r4-1-closure-evidence/redis
+          {
+            echo "candidate_sha=$ACTUAL"
+            echo "workflow_run_id=${{ github.run_id }}"
+            echo "workflow_run_attempt=${{ github.run_attempt }}"
+          } > r4-1-closure-evidence/redis/metadata.txt
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install -r requirements-dev.txt
+      - name: Run delegated S9 and S10 tests against real Redis
+        working-directory: backend
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q \
+            tests/test_s9_jobs.py \
+            tests/test_s10_publishing.py \
+            --junitxml=../r4-1-closure-evidence/redis/redis-junit.xml \
+            2>&1 | tee ../r4-1-closure-evidence/redis/redis-regression.log
+      - name: Prove Redis reconnect after service restart
+        working-directory: backend
+        shell: bash
+        run: |
+          python - <<'PY'
+          import asyncio
+          from infrastructure.redis.streams import RedisStreamsSettings, RedisStreamsTransport
+
+          async def main():
+              transport = RedisStreamsTransport(RedisStreamsSettings.from_env())
+              assert await transport.ping()
+          asyncio.run(main())
+          PY
+          redis_id="$(docker ps --filter ancestor=redis:7-alpine --format '{{.ID}}' | head -n1)"
+          test -n "$redis_id"
+          docker restart "$redis_id"
+          for attempt in $(seq 1 30); do
+            if docker exec "$redis_id" redis-cli ping 2>/dev/null | grep -q '^PONG$'; then break; fi
+            sleep 1
+          done
+          test "$(docker exec "$redis_id" redis-cli ping)" = "PONG"
+          python - <<'PY'
+          import asyncio
+          from infrastructure.redis.streams import RedisStreamsSettings, RedisStreamsTransport
+
+          async def main():
+              transport = RedisStreamsTransport(RedisStreamsSettings.from_env())
+              assert await transport.ping()
+              print("R4.1 Redis reconnect PASS")
+          asyncio.run(main())
+          PY
+      - name: Upload Redis closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-1-real-redis-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: r4-1-closure-evidence/redis
+          if-no-files-found: error
+          retention-days: 30
+
+  r4-1-frontend-evidence:
+    name: R4.1 frontend durable regression evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record exact candidate identity
+        shell: bash
+        run: |
+          EXPECTED="${{ github.event.pull_request.head.sha || github.sha }}"
+          ACTUAL="$(git rev-parse HEAD)"
+          test "$ACTUAL" = "$EXPECTED"
+          mkdir -p r4-1-closure-evidence/frontend
+          {
+            echo "candidate_sha=$ACTUAL"
+            echo "workflow_run_id=${{ github.run_id }}"
+            echo "workflow_run_attempt=${{ github.run_attempt }}"
+          } > r4-1-closure-evidence/frontend/metadata.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install exact frontend dependencies
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -o pipefail
+          npm ci 2>&1 | tee ../r4-1-closure-evidence/frontend/npm-ci.log
+      - name: Lint frontend
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee ../r4-1-closure-evidence/frontend/lint.log
+      - name: Run frontend unit regression
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test -- --ci 2>&1 | tee ../r4-1-closure-evidence/frontend/unit.log
+      - name: Build production frontend
+        working-directory: frontend
+        shell: bash
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+          NEXT_PUBLIC_MK1_MANUAL_EXPORT: "true"
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee ../r4-1-closure-evidence/frontend/build.log
+      - name: Verify renderer JavaScript parses
+        shell: bash
+        run: |
+          set -o pipefail
+          node --check renderer/src/server.mjs 2>&1 | tee r4-1-closure-evidence/frontend/renderer-check.log
+      - name: Capture parsed compose contract
+        run: docker compose config > r4-1-closure-evidence/frontend/docker-compose.yml
+      - name: Upload frontend closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-1-frontend-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: r4-1-closure-evidence/frontend
+          if-no-files-found: error
+          retention-days: 30
+
+  r4-1-docker-local-candidate:
+    name: R4.1 exact-SHA Docker local candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record exact candidate identity
+        shell: bash
+        run: |
+          EXPECTED="${{ github.event.pull_request.head.sha || github.sha }}"
+          ACTUAL="$(git rev-parse HEAD)"
+          test "$ACTUAL" = "$EXPECTED"
+          mkdir -p r4-1-closure-evidence/docker
+          {
+            echo "candidate_sha=$ACTUAL"
+            echo "workflow_run_id=${{ github.run_id }}"
+            echo "workflow_run_attempt=${{ github.run_attempt }}"
+          } > r4-1-closure-evidence/docker/metadata.txt
+      - name: Show Docker versions
+        run: |
+          docker version
+          docker compose version
+      - name: Validate Compose model
+        run: docker compose config --quiet
+      - name: Validate WSL launcher syntax
+        run: bash -n scripts/docker-wsl-up.sh
+      - name: Validate WSL NAT Compose model
+        env:
+          PRODAGENTIC_WEB_BIND_HOST: 172.30.10.20
+          NEXT_PUBLIC_API_URL: http://172.30.10.20:8000
+          PRODAGENTIC_ALLOW_PRIVATE_HTTP_API: "true"
+          CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://172.30.10.20:3000
+          FRONTEND_URL: http://172.30.10.20:3000
+        run: docker compose config --quiet
+      - name: Reject private HTTP API without explicit local opt-in
+        env:
+          NEXT_PUBLIC_API_URL: http://172.30.10.20:8000
+          PRODAGENTIC_ALLOW_PRIVATE_HTTP_API: "false"
+        run: |
+          if docker compose build frontend > /tmp/private-http-rejected.log 2>&1; then
+            cat /tmp/private-http-rejected.log
+            echo "Frontend build unexpectedly accepted RFC1918 HTTP without explicit opt-in"
+            exit 1
+          fi
+          cat /tmp/private-http-rejected.log
+          grep -q "RFC1918 HTTP is allowed only when PRODAGENTIC_ALLOW_PRIVATE_HTTP_API=true" /tmp/private-http-rejected.log
+      - name: Build explicit WSL private HTTP frontend candidate
+        env:
+          NEXT_PUBLIC_API_URL: http://172.30.10.20:8000
+          PRODAGENTIC_ALLOW_PRIVATE_HTTP_API: "true"
+        run: docker compose build frontend
+      - name: Build local stack
+        run: docker compose build
+      - name: Start local stack and wait for health
+        run: docker compose up -d --wait --wait-timeout 240
+      - name: Show service state
+        run: docker compose ps
+      - name: Verify Mongo
+        run: |
+          docker compose exec -T mongo mongosh --quiet --eval \
+            'if (db.runCommand({ ping: 1 }).ok !== 1) { quit(2) }'
+      - name: Verify backend liveness
+        run: curl --fail --silent --show-error http://127.0.0.1:8000/health/live
+      - name: Verify frontend HTTP
+        run: curl --fail --silent --show-error http://127.0.0.1:3000/ >/dev/null
+      - name: Verify dense compositor fit against real Chromium QA
+        shell: bash
+        run: |
+          set -o pipefail
+          docker compose exec -T backend python - <<'PY' | tee r4-1-closure-evidence/docker/dense-fit-qa.log
+          import asyncio
+          import json
+          import httpx
+
+          digest = "a" * 64
+          long_copy = (
+              "Arquitectura de sistemas combina componentes, responsabilidades, "
+              "interfaces y restricciones que deben explicarse sin perder jerarquía "
+              "visual ni ocultar contenido editorial crítico."
+          )
+
+          blocks = [
+              {
+                  "block_id": "headline",
+                  "kind": "text",
+                  "role": "headline",
+                  "text": "Ruta de aprendizaje en tecnologías de la información",
+                  "editorial_critical": True,
+              }
+          ]
+          for index in range(8):
+              blocks.append({
+                  "block_id": f"body-{index}",
+                  "kind": "text",
+                  "role": "body",
+                  "text": f"{index + 1}. {long_copy}",
+                  "editorial_critical": True,
+              })
+
+          payload = {
+              "schema_version": 1,
+              "contract_version": "RendererRequestV1@1",
+              "render_id": f"render-{digest}",
+              "revision_id": "revision-r4-1-dense-fit",
+              "visual_spec_id": "visual-r4-1-dense-fit",
+              "visual_spec_digest": digest,
+              "content_spec_digest": digest,
+              "design_profile_digest": digest,
+              "visual_pattern": "infographic.dense_fit",
+              "format": "infographic",
+              "canvas_width": 1080,
+              "canvas_height": 1350,
+              "safe_zone": {"top": 64, "right": 64, "bottom": 64, "left": 64},
+              "theme": {
+                  "background": "surface.canvas",
+                  "surface": "surface.paper",
+                  "text": "text.ink",
+                  "muted_text": "text.muted",
+                  "accent": "accent.signal",
+                  "border": "border.hairline",
+                  "density": "balanced",
+                  "spacing_scale": "standard",
+                  "radius_scale": "standard",
+                  "icon_language": "outline",
+              },
+              "pages": [{
+                  "page_id": "page-0",
+                  "page_index": 0,
+                  "role": "explain",
+                  "layout_family": "card_grid",
+                  "blocks": blocks,
+                  "alt_text": "Dense compositor fit regression",
+              }],
+              "render_input_digest": digest,
+          }
+
+          async def main():
+              async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+                  response = await client.post(
+                      "http://renderer:4100/qa",
+                      json=payload,
+                      headers={"content-type": "application/json"},
+                  )
+              response.raise_for_status()
+              result = response.json()
+              print(json.dumps(result, indent=2))
+              assert result["inspector_version"] == "dom-geometry-v4-r4-fit", result
+              row = result["observations"][0]
+              assert row["clipping"] is False, row
+              assert row["overlap"] is False, row
+              assert row["unreadable_hierarchy"] is False, row
+              assert row["wrong_visible_text"] is False, row
+              assert row["key_copy_omitted"] is False, row
+              print("R4.1 dense compositor fit PASS")
+
+          asyncio.run(main())
+          PY
+      - name: Verify default local auth boundary
+        shell: bash
+        run: |
+          login_json="$(curl --fail --silent --show-error \
+            -X POST http://127.0.0.1:8000/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"local-docker-password-change-me"}')"
+          LOGIN_JSON="$login_json" python - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["LOGIN_JSON"])
+          assert payload.get("authenticated") is True, payload
+          assert payload.get("csrf_token"), payload
+          print("R4.1 local auth smoke PASSED")
+          PY
+      - name: Capture Compose logs
+        if: always()
+        run: docker compose logs --no-color > r4-1-closure-evidence/docker/docker-compose-local.log || true
+      - name: Preserve private HTTP rejection evidence
+        if: always()
+        run: cp /tmp/private-http-rejected.log r4-1-closure-evidence/docker/private-http-rejected.log 2>/dev/null || true
+      - name: Upload Docker closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-1-docker-local-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: r4-1-closure-evidence/docker
+          if-no-files-found: error
+          retention-days: 30
+      - name: Destroy CI stack
+        if: always()
+        run: docker compose down -v --remove-orphans

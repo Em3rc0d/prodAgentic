@@ -51,7 +51,7 @@ export interface ContentItemPlanV1 {
   format: PlannedFormat;
   hook_pattern: string;
   visual_pattern?: string | null;
-  editorial_state: "PLANNED";
+  editorial_state: "PLANNED" | "PRODUCING" | "FAILED" | "READY_FOR_REVIEW" | "APPROVED" | "REJECTED" | "CANCELLED" | "ARCHIVED" | "REVISION_REQUIRED";
 }
 
 export interface CandidateEvaluationV1 {
@@ -112,7 +112,17 @@ export async function createBatchV1(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...input, constraints: input.constraints ?? {} }),
   });
-  if (!res.ok) throw new Error(`Batch planning failed: ${res.status}`);
+  if (!res.ok) {
+    let diagnostic = String(res.status);
+    try {
+      const payload = await res.json();
+      const code = payload?.detail?.code;
+      if (typeof code === "string" && code.trim()) diagnostic = code;
+    } catch {
+      // Keep the HTTP status when the response body is unavailable or malformed.
+    }
+    throw new Error(`Batch planning failed: ${diagnostic}`);
+  }
   return res.json();
 }
 

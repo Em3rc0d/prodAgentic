@@ -18,7 +18,7 @@ class ChromiumRendererAdapter:
     """HTTP adapter for the isolated Playwright/Chromium renderer runtime."""
 
     name = "ChromiumRendererAdapter"
-    version = "playwright-1.62.1-chromium-v2-r4"
+    version = "playwright-1.62.1-chromium-v4-r4-fit"
 
     def __init__(self, base_url: str | None = None, *, timeout_seconds: float | None = None):
         configured = (base_url or os.getenv("PRODAGENTIC_RENDERER_URL", "http://127.0.0.1:4100")).strip()

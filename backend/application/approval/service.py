@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from domain.production.evidence import load_run_evidence
+from domain.production.models import ResearchPackV1
+
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime
@@ -112,6 +115,14 @@ class ApprovalService:
             raise ApprovalAuthorityError("ResearchPack digest is unavailable")
         if content_record.get("digest") != revision.content_spec_digest:
             raise ApprovalAuthorityError("ContentSpec persisted digest mismatch")
+        if run.evidence_bundle_ref or "EvidenceBundleV1@1" in run.contract_versions:
+            try:
+                research = ResearchPackV1.model_validate(research_record.get("payload"))
+                if production_sha256(research) != research_digest or research.plan_id != run.plan_id:
+                    raise ValueError("Research digest mismatch")
+                await load_run_evidence(self.production, tenant_id, run, research)
+            except ValueError as exc:
+                raise ApprovalAuthorityError("Research/evidence authority mismatch") from exc
         content = ContentSpecV1.model_validate(content_record.get("payload"))
         if production_sha256(content) != revision.content_spec_digest:
             raise ApprovalAuthorityError("ContentSpec canonical digest mismatch")
@@ -386,6 +397,8 @@ class ApprovalService:
             state=GenerationRunState.VISUAL_PLANNING,
             contract_versions=tuple(dict.fromkeys((*source_run.contract_versions, "HumanEditV1@1"))),
             research_pack_ref=source_run.research_pack_ref,
+            evidence_bundle_ref=source_run.evidence_bundle_ref,
+            evidence_bundle_digest=source_run.evidence_bundle_digest,
             content_spec_ref=edited_content.content_spec_id,
             visual_spec_ref=cloned_visual.visual_spec_id if cloned_visual else None,
             started_at=clock,

@@ -102,6 +102,10 @@ class Repository:
         assert self.runs[run_id].tenant_id == tenant_id
         self.attempts.append(attempt)
 
+    async def list_agent_attempts(self, tenant_id, run_id):
+        assert self.runs[run_id].tenant_id == tenant_id
+        return list(self.attempts)
+
     async def save_artifact(self, **kwargs):
         raise AssertionError("failure-lineage fixtures must not save an authoritative artifact")
 

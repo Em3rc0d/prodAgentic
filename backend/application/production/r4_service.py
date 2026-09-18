@@ -14,6 +14,11 @@ class R4StructuredAgentCellService(StructuredAgentCellService):
     Editor model incorrectly tries to approve them.
     """
 
+    def __init__(self, *, evidence_provider, **kwargs):
+        if evidence_provider is None:
+            raise ValueError("R4.1 production requires an EvidenceAcquisitionPort")
+        super().__init__(evidence_provider=evidence_provider, **kwargs)
+
     @classmethod
     def _verify_review(cls, plan, profile, research, content, review) -> None:
         super()._verify_review(plan, profile, research, content, review)

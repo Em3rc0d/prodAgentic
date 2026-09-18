@@ -62,6 +62,20 @@ class R4RenderService(RenderService):
         except VisualSpecValidationError as exc:
             raise RenderAuthorityError("VisualSpec failed integrity revalidation") from exc
 
+        # Claim durable rendering authority before any generated-source provider
+        # call. Real UAT proved that resolving images while still in
+        # VISUAL_PLANNING could fail before the S5 claim, leaving a zombie run
+        # with no durable failure. Once claimed, transient image failures remain
+        # retryable in RENDERING and terminal failures become FAILED.
+        if run.state == GenerationRunState.VISUAL_PLANNING:
+            claimed = await self.rendering_repository.claim_run_rendering(
+                run_id=run.run_id,
+                visual_spec_ref=visual_spec.visual_spec_id,
+            )
+            if claimed is None:
+                raise RenderConflict("GenerationRun render claim changed concurrently")
+            run = claimed
+
         resolver = GeneratedAssetResolver(
             repository=self.rendering_repository,
             asset_store=self.asset_store,
@@ -76,8 +90,6 @@ class R4RenderService(RenderService):
                 design_profile=design_profile,
             )
         except GeneratedAssetResolutionError as exc:
-            # If S5 has already claimed the run, preserve retryability. A failure
-            # before claim leaves VISUAL_PLANNING untouched and safe to retry.
             if run.state == GenerationRunState.RENDERING:
                 await self._record_generated_failure(run=run, visual_spec=visual_spec, error=exc)
             raise RenderExecutionFailed("R4 generated visual resolution failed closed") from exc
@@ -93,15 +105,6 @@ class R4RenderService(RenderService):
         )
 
         existing_result = await self.rendering_repository.get_render_result(request.render_id)
-
-        if run.state == GenerationRunState.VISUAL_PLANNING:
-            claimed = await self.rendering_repository.claim_run_rendering(
-                run_id=run.run_id,
-                visual_spec_ref=visual_spec.visual_spec_id,
-            )
-            if claimed is None:
-                raise RenderConflict("GenerationRun render claim changed concurrently")
-            run = claimed
 
         if existing_result is not None:
             await self._verify_result(

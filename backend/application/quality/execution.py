@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from domain.production.evidence import load_run_evidence
+
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -84,6 +86,8 @@ class QualityExecutionService:
             raise QualityExecutionError("GenerationRun/ContentRevision authority mismatch")
 
         if revision.status == RevisionStatus.REVIEWABLE:
+            if run.evidence_bundle_ref or "EvidenceBundleV1@1" in run.contract_versions:
+                await self._load_research(tenant_id=tenant_id, run=run)
             report = await self.quality_repository.get_latest_report_by_revision(tenant_id, revision_id)
             if report is None or report.qa_report_id != revision.qa_report_id:
                 raise QualityExecutionError("REVIEWABLE revision is missing exact QA evidence")
@@ -258,6 +262,12 @@ class QualityExecutionService:
         if artifact is None or artifact.get("artifact_type") != "ResearchPackV1":
             raise QualityExecutionError("ResearchPackV1 artifact is unavailable")
         try:
-            return ResearchPackV1.model_validate(artifact.get("payload"))
+            research = ResearchPackV1.model_validate(artifact.get("payload"))
+            if run.evidence_bundle_ref or "EvidenceBundleV1@1" in run.contract_versions:
+                from domain.production.models import canonical_sha256
+                if artifact.get("digest") != canonical_sha256(research) or research.plan_id != run.plan_id:
+                    raise ValueError("Research digest or predecessor mismatch")
+                await load_run_evidence(self.production_repository, tenant_id, run, research)
+            return research
         except Exception as exc:
             raise QualityExecutionError("persisted ResearchPackV1 payload is invalid") from exc

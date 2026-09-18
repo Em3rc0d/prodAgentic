@@ -1,6 +1,6 @@
 {
   "schema_version": "prodAgentic-cert-graph/v1",
-  "release": "MK1-R4",
+  "release": "MK1-R4.1",
   "state": "DESIGNED_NOT_CERTIFIED",
   "digest_algorithm": "sha256",
   "graphs": [
@@ -11,10 +11,12 @@
         {"id":"profile-version","type":"ProfileVersion","status":"implemented_uncertified","predecessors":["human-profile-decision"],"successors":["creative-brief"],"digest":null,"evidence":[]},
         {"id":"creative-brief","type":"CreativeBrief","status":"implemented_uncertified","predecessors":["profile-version"],"successors":["candidate-pool"],"digest":null,"evidence":[]},
         {"id":"candidate-pool","type":"CandidatePool","status":"implemented_uncertified","predecessors":["creative-brief","editorial-memory"],"successors":["content-plan"],"digest":null,"evidence":[]},
-        {"id":"content-plan","type":"ContentPlanV1","status":"implemented_uncertified","predecessors":["candidate-pool"],"successors":["research-pack"],"digest":null,"evidence":[]},
-        {"id":"research-pack","type":"ResearchPackV1","status":"implemented_uncertified","predecessors":["content-plan"],"successors":["content-spec"],"digest":null,"evidence":[]},
+        {"id":"content-plan","type":"ContentPlanV1","status":"implemented_uncertified","predecessors":["candidate-pool","replacement-plan"],"successors":["evidence-bundle"],"digest":null,"evidence":[]},
+        {"id":"evidence-bundle","type":"EvidenceBundleV1","status":"implemented_uncertified","predecessors":["content-plan"],"successors":["research-pack"],"digest":null,"evidence":["mk1/build/r4/R4_1_HANDOFF.md"]},
+        {"id":"replacement-plan","type":"ReplacementPlanV1","status":"implemented_uncertified","predecessors":["research-pack","editorial-gate"],"successors":["content-plan"],"digest":null,"evidence":["mk1/build/r4/R4_1_HANDOFF.md"]},
+        {"id":"research-pack","type":"ResearchPackV1","status":"implemented_uncertified","predecessors":["evidence-bundle"],"successors":["content-spec","replacement-plan"],"digest":null,"evidence":[]},
         {"id":"content-spec","type":"ContentSpecV1","status":"implemented_uncertified","predecessors":["research-pack"],"successors":["editorial-gate"],"digest":null,"evidence":[]},
-        {"id":"editorial-gate","type":"EditorialPublishabilityGate","status":"implemented_uncertified","predecessors":["content-spec"],"successors":["visual-spec"],"digest":null,"evidence":[]},
+        {"id":"editorial-gate","type":"EditorialPublishabilityGate","status":"implemented_uncertified","predecessors":["content-spec"],"successors":["visual-spec","replacement-plan"],"digest":null,"evidence":[]},
         {"id":"visual-spec","type":"VisualSpecV1","status":"implemented_uncertified","predecessors":["editorial-gate"],"successors":["source-assets"],"digest":null,"evidence":[]},
         {"id":"source-assets","type":"OwnedSourceAssets","status":"implemented_uncertified","predecessors":["visual-spec"],"successors":["render-assets"],"digest":null,"evidence":[]},
         {"id":"render-assets","type":"RenderedAssets","status":"implemented_uncertified","predecessors":["source-assets"],"successors":["visual-qa"],"digest":null,"evidence":[]},
