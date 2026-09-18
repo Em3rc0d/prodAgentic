@@ -72,6 +72,7 @@ describe("MK1 R2 Create", () => {
     jest.clearAllMocks();
     mockedApi.fetchProfilesV2.mockResolvedValue({ profiles: [profile], count: 1 });
     mockedBatches.createBatchV1.mockResolvedValue(response());
+    mockedBatches.fetchBatchV1.mockResolvedValue(response());
     mockedR2.fetchRuntimeReadiness.mockResolvedValue({ state: "DEGRADED", label: "Runtime attention", detail: "Provider key is intentionally absent in unit tests." });
     mockedProduction.fetchContentRecovery.mockImplementation(async (contentId) => retryDecision(contentId));
   });
@@ -130,6 +131,73 @@ describe("MK1 R2 Create", () => {
     fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
     await waitFor(() => expect(mockedProduction.produceContentToReview).toHaveBeenCalledTimes(2));
     expect(mockedProduction.produceContentToReview.mock.calls.map((call) => call[0])).toEqual(["content-0", "content-1"]);
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/review"));
+  });
+
+  it("automatically replans a semantic research NO_GO from the governed remaining pool", async () => {
+    const planned = response(1);
+    const refreshed = response(1);
+    refreshed.content_items[0].content_id = "content-replacement";
+    refreshed.plans[0].content_id = "content-replacement";
+
+    mockedBatches.createBatchV1.mockResolvedValueOnce(planned);
+    mockedBatches.fetchBatchV1.mockResolvedValueOnce(refreshed);
+    mockedR2.fetchRuntimeReadiness.mockResolvedValueOnce({ state: "READY", label: "Runtime ready", detail: "READY" });
+    mockedProduction.produceContentToReview.mockRejectedValueOnce(new Error("Reliable evidence was insufficient."));
+    mockedProduction.fetchContentRecovery.mockResolvedValueOnce({
+      content_id: "content-0",
+      run_id: "run-content-0",
+      action: "REPLAN_CONTENT",
+      code: "RESEARCH_NO_GO",
+      stage: "research",
+      retryable: false,
+      safe_message: "Reliable evidence was insufficient.",
+    });
+    mockedProduction.recoverContent.mockImplementationOnce(async (_contentId, _decision, _onStage, onReplacement) => {
+      await onReplacement?.("content-replacement");
+      return {
+        content_id: "content-replacement",
+        revision_id: "revision-replacement",
+        format: "single_image",
+        reviewable: true,
+      };
+    });
+
+    render(<Mk1BatchCreate />);
+    await screen.findByRole("heading", { name: "Create for Logan" });
+    fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
+
+    await waitFor(() => expect(mockedProduction.recoverContent).toHaveBeenCalledTimes(1));
+    expect(mockedBatches.fetchBatchV1).toHaveBeenCalledWith("batch-1");
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/review"));
+  });
+
+  it("automatically resumes a retryable persisted visual failure", async () => {
+    const planned = response(1);
+    mockedBatches.createBatchV1.mockResolvedValueOnce(planned);
+    mockedR2.fetchRuntimeReadiness.mockResolvedValueOnce({ state: "READY", label: "Runtime ready", detail: "READY" });
+    mockedProduction.produceContentToReview.mockRejectedValueOnce(new Error("R4 could not resolve a complete verified owned source-image set."));
+    mockedProduction.fetchContentRecovery.mockResolvedValueOnce({
+      content_id: "content-0",
+      run_id: "run-content-0",
+      action: "RESUME_PIPELINE",
+      code: "PERSISTED_REVISION",
+      stage: "production",
+      retryable: true,
+      safe_message: "R4 could not resolve a complete verified owned source-image set.",
+    });
+    mockedProduction.recoverContent.mockResolvedValueOnce({
+      content_id: "content-0",
+      revision_id: "revision-0",
+      format: "single_image",
+      reviewable: true,
+    });
+
+    render(<Mk1BatchCreate />);
+    await screen.findByRole("heading", { name: "Create for Logan" });
+    fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
+
+    await waitFor(() => expect(mockedProduction.recoverContent).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/review"));
   });
 

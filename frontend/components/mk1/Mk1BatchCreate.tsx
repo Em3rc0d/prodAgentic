@@ -9,7 +9,7 @@ import type { ProfileV2 } from "@/lib/api";
 import { createBatchV1, fetchBatchV1 } from "@/lib/mk1-batches";
 import type { BatchPlanningResponseV1, PlannedFormat, TargetWindowV1 } from "@/lib/mk1-batches";
 import { fetchRuntimeReadiness } from "@/lib/r2";
-import { produceContentToReview, resumeContentToReview, recoverContent, fetchContentRecovery, type RecoveryDecision, type ProductionStage } from "@/lib/r2-production";
+import { produceContentToReview, recoverContent, fetchContentRecovery, type RecoveryDecision, type ProductionStage } from "@/lib/r2-production";
 import styles from "./mk1-batch-create.module.css";
 
 type WindowPreset = "tomorrow" | "week";
@@ -43,6 +43,14 @@ function stageLabel(stage: PieceProgress["stage"]) {
 const FORMATS: Array<["auto" | PlannedFormat, string]> = [
   ["auto", "Auto"], ["text", "Text"], ["single_image", "Single image"], ["carousel", "Carousel"], ["infographic", "Infographic"],
 ];
+
+const MAX_AUTOMATIC_RECOVERY_HOPS = 3;
+
+function canRecoverAutomatically(decision?: RecoveryDecision): boolean {
+  if (!decision) return false;
+  if (decision.action === "REPLAN_CONTENT") return true;
+  return decision.action === "RESUME_PIPELINE" && decision.retryable;
+}
 
 export function Mk1BatchCreate() {
   const router = useRouter();
@@ -107,6 +115,77 @@ export function Mk1BatchCreate() {
     setProgress((current) => ({ ...current, [contentId]: { ...current[contentId], ...value } }));
   }
 
+  async function produceSlot(contentId: string, batchId: string, resume = false): Promise<boolean> {
+    let activeId = contentId;
+    let useRecovery = resume;
+
+    for (let hop = 0; hop <= MAX_AUTOMATIC_RECOVERY_HOPS; hop += 1) {
+      try {
+        if (!useRecovery) {
+          const outcome = await produceContentToReview(
+            activeId,
+            (stage) => updateProgress(activeId, { stage, error: undefined, recovery: undefined }),
+          );
+          updateProgress(outcome.content_id, {
+            stage: "REVIEWABLE",
+            revisionId: outcome.revision_id,
+            error: undefined,
+            recovery: undefined,
+          });
+          return true;
+        }
+
+        const decision = await fetchContentRecovery(activeId);
+        if (!canRecoverAutomatically(decision)) {
+          updateProgress(activeId, {
+            stage: "FAILED",
+            recovery: decision,
+            error: decision.safe_message,
+          });
+          return false;
+        }
+
+        const previousId = activeId;
+        const outcome = await recoverContent(
+          activeId,
+          decision,
+          (stage) => updateProgress(activeId, { stage, error: undefined, recovery: undefined }),
+          async (replacementId) => {
+            activeId = replacementId;
+            const refreshed = await fetchBatchV1(batchId);
+            setResult(refreshed);
+            setProgress((current) => {
+              const next = { ...current };
+              delete next[previousId];
+              next[replacementId] = { stage: "WAITING" };
+              return next;
+            });
+          },
+        );
+        activeId = outcome.content_id;
+        updateProgress(activeId, {
+          stage: "REVIEWABLE",
+          revisionId: outcome.revision_id,
+          error: undefined,
+          recovery: undefined,
+        });
+        return true;
+      } catch (reason) {
+        const recovery = await fetchContentRecovery(activeId).catch(() => undefined);
+        updateProgress(activeId, {
+          stage: "FAILED",
+          error: reason instanceof Error ? reason.message : "Production failed",
+          recovery,
+        });
+        if (hop >= MAX_AUTOMATIC_RECOVERY_HOPS || !canRecoverAutomatically(recovery)) {
+          return false;
+        }
+        useRecovery = true;
+      }
+    }
+    return false;
+  }
+
   async function produceBatch(planned: BatchPlanningResponseV1, resume = false) {
     setProducing(true);
     setError(null);
@@ -120,14 +199,8 @@ export function Mk1BatchCreate() {
       if (!resume) setProgress(Object.fromEntries(planned.content_items.map((item) => [item.content_id, { stage: "WAITING" as const }])));
       let completed = 0;
       for (const item of planned.content_items) {
-        try {
-          const produce = resume ? resumeContentToReview : produceContentToReview;
-          const outcome = await produce(item.content_id, (stage) => updateProgress(item.content_id, { stage, error: undefined }));
-          updateProgress(item.content_id, { stage: "REVIEWABLE", revisionId: outcome.revision_id, error: undefined });
+        if (await produceSlot(item.content_id, planned.batch.batch_id, resume)) {
           completed += 1;
-        } catch (reason) {
-          const recovery = await fetchContentRecovery(item.content_id).catch(() => undefined);
-          updateProgress(item.content_id, { stage: "FAILED", error: reason instanceof Error ? reason.message : "Production failed", recovery });
         }
       }
       if (completed === planned.content_items.length && completed > 0) router.push("/review");

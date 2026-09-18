@@ -15,7 +15,7 @@ class VisualInspectorError(RuntimeError):
 class ChromiumVisualQAAdapter:
     """Structural visual-QA adapter over the same isolated Chromium renderer."""
 
-    version = "dom-geometry-v2-r4"
+    version = "dom-geometry-v3-r4-fit"
 
     def __init__(self, base_url: str | None = None, *, timeout_seconds: float | None = None):
         configured = (base_url or os.getenv("PRODAGENTIC_RENDERER_URL", "http://127.0.0.1:4100")).strip()
