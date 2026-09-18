@@ -9,7 +9,7 @@ import type { ProfileV2 } from "@/lib/api";
 import { createBatchV1, fetchBatchV1 } from "@/lib/mk1-batches";
 import type { BatchPlanningResponseV1, PlannedFormat, TargetWindowV1 } from "@/lib/mk1-batches";
 import { fetchRuntimeReadiness } from "@/lib/r2";
-import { produceContentToReview, recoverContent, fetchContentRecovery, type RecoveryDecision, type ProductionStage } from "@/lib/r2-production";
+import { produceContentToReview, resumeContentToReview, recoverContent, fetchContentRecovery, type RecoveryDecision, type ProductionStage } from "@/lib/r2-production";
 import styles from "./mk1-batch-create.module.css";
 
 type WindowPreset = "tomorrow" | "week";
@@ -117,16 +117,34 @@ export function Mk1BatchCreate() {
 
   async function produceSlot(contentId: string, batchId: string, resume = false): Promise<boolean> {
     let activeId = contentId;
-    let useRecovery = resume;
+    let firstAttempt = true;
+    let pendingDecision: RecoveryDecision | undefined;
 
     for (let hop = 0; hop <= MAX_AUTOMATIC_RECOVERY_HOPS; hop += 1) {
       try {
-        if (!useRecovery) {
-          const outcome = await produceContentToReview(
+        if (pendingDecision) {
+          const decision = pendingDecision;
+          pendingDecision = undefined;
+
+          const previousId = activeId;
+          const outcome = await recoverContent(
             activeId,
+            decision,
             (stage) => updateProgress(activeId, { stage, error: undefined, recovery: undefined }),
+            async (replacementId) => {
+              activeId = replacementId;
+              const refreshed = await fetchBatchV1(batchId);
+              setResult(refreshed);
+              setProgress((current) => {
+                const next = { ...current };
+                delete next[previousId];
+                next[replacementId] = { stage: "WAITING" };
+                return next;
+              });
+            },
           );
-          updateProgress(outcome.content_id, {
+          activeId = outcome.content_id;
+          updateProgress(activeId, {
             stage: "REVIEWABLE",
             revisionId: outcome.revision_id,
             error: undefined,
@@ -135,35 +153,13 @@ export function Mk1BatchCreate() {
           return true;
         }
 
-        const decision = await fetchContentRecovery(activeId);
-        if (!canRecoverAutomatically(decision)) {
-          updateProgress(activeId, {
-            stage: "FAILED",
-            recovery: decision,
-            error: decision.safe_message,
-          });
-          return false;
-        }
-
-        const previousId = activeId;
-        const outcome = await recoverContent(
+        const produce = firstAttempt && resume ? resumeContentToReview : produceContentToReview;
+        firstAttempt = false;
+        const outcome = await produce(
           activeId,
-          decision,
           (stage) => updateProgress(activeId, { stage, error: undefined, recovery: undefined }),
-          async (replacementId) => {
-            activeId = replacementId;
-            const refreshed = await fetchBatchV1(batchId);
-            setResult(refreshed);
-            setProgress((current) => {
-              const next = { ...current };
-              delete next[previousId];
-              next[replacementId] = { stage: "WAITING" };
-              return next;
-            });
-          },
         );
-        activeId = outcome.content_id;
-        updateProgress(activeId, {
+        updateProgress(outcome.content_id, {
           stage: "REVIEWABLE",
           revisionId: outcome.revision_id,
           error: undefined,
@@ -171,6 +167,7 @@ export function Mk1BatchCreate() {
         });
         return true;
       } catch (reason) {
+        firstAttempt = false;
         const recovery = await fetchContentRecovery(activeId).catch(() => undefined);
         updateProgress(activeId, {
           stage: "FAILED",
@@ -180,7 +177,7 @@ export function Mk1BatchCreate() {
         if (hop >= MAX_AUTOMATIC_RECOVERY_HOPS || !canRecoverAutomatically(recovery)) {
           return false;
         }
-        useRecovery = true;
+        pendingDecision = recovery;
       }
     }
     return false;

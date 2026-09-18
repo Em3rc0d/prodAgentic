@@ -130,11 +130,8 @@ beforeEach(() => {
   mockedProduction.produceContentToReview.mockRejectedValue(new Error("fixture production failure"));
 });
 
-it.each([
-  ["RETRY_PRODUCTION" as const, "Retry production"],
-  ["RESUME_PIPELINE" as const, "Continue saved draft"],
-])("executes authoritative %s recovery and reaches reviewable", async (action, label) => {
-  const recovery = decision(action);
+it("keeps RETRY_PRODUCTION as an explicit per-piece action", async () => {
+  const recovery = decision("RETRY_PRODUCTION");
   mockedProduction.fetchContentRecovery.mockResolvedValue(recovery);
   mockedProduction.recoverContent.mockResolvedValue({
     content_id: "content-0",
@@ -147,10 +144,31 @@ it.each([
   await screen.findByRole("heading", { name: "Create for Logan" });
   fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
 
-  const button = await screen.findByRole("button", { name: label });
+  const button = await screen.findByRole("button", { name: "Retry production" });
+  expect(mockedProduction.recoverContent).not.toHaveBeenCalled();
   fireEvent.click(button);
 
   await waitFor(() => expect(mockedProduction.recoverContent).toHaveBeenCalled());
+  expect(mockedProduction.recoverContent.mock.calls[0][0]).toBe("content-0");
+  expect(mockedProduction.recoverContent.mock.calls[0][1]).toEqual(recovery);
+  expect(await screen.findByText("Ready for review")).toBeVisible();
+});
+
+it("automatically resumes a retryable persisted pipeline failure", async () => {
+  const recovery = decision("RESUME_PIPELINE");
+  mockedProduction.fetchContentRecovery.mockResolvedValue(recovery);
+  mockedProduction.recoverContent.mockResolvedValue({
+    content_id: "content-0",
+    revision_id: "revision-recovered",
+    format: "single_image",
+    reviewable: true,
+  });
+
+  render(<Mk1BatchCreate />);
+  await screen.findByRole("heading", { name: "Create for Logan" });
+  fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
+
+  await waitFor(() => expect(mockedProduction.recoverContent).toHaveBeenCalledTimes(1));
   expect(mockedProduction.recoverContent.mock.calls[0][0]).toBe("content-0");
   expect(mockedProduction.recoverContent.mock.calls[0][1]).toEqual(recovery);
   expect(await screen.findByText("Ready for review")).toBeVisible();
@@ -175,8 +193,7 @@ it("replans through the governed replacement identity before marking the replace
   await screen.findByRole("heading", { name: "Create for Logan" });
   fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
 
-  fireEvent.click(await screen.findByRole("button", { name: "Replace this idea" }));
-
+  await waitFor(() => expect(mockedProduction.recoverContent).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(mockedBatches.fetchBatchV1).toHaveBeenCalledWith("batch-1"));
   expect(mockedProduction.recoverContent.mock.calls[0][0]).toBe("content-0");
   expect(mockedProduction.recoverContent.mock.calls[0][1]).toEqual(recovery);
