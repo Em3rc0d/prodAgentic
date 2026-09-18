@@ -21,7 +21,11 @@ from domain.profiles.models import (
     VisualSystem,
     canonical_digest,
 )
-from infrastructure.planning.model_candidates import CandidateGenerationError, RouterCandidateSource
+from infrastructure.planning.model_candidates import (
+    CandidateGenerationError,
+    RouterCandidateSource,
+    _GEMINI_JSON_SCHEMA_KEYWORDS,
+)
 
 
 NOW = datetime(2026, 9, 17, 23, 35, tzinfo=timezone.utc)
@@ -125,6 +129,47 @@ async def test_planning_requests_provider_enforced_structured_json():
     assert request.response_mime_type == "application/json"
     assert request.response_json_schema["type"] == "object"
     assert "ideas" in request.response_json_schema["properties"]
+    ideas_schema = request.response_json_schema["properties"]["ideas"]
+    assert ideas_schema["minItems"] == 1
+    assert ideas_schema["maxItems"] == 1
+
+
+def test_planning_provider_schema_uses_only_gemini_supported_keywords():
+    router = SequenceRouter([json.dumps({"ideas": [idea(), idea("Second topic")]})])
+    source = RouterCandidateSource(router)
+
+    raw_schema = source.__class__.__module__  # prove import path stays stable for diagnostics
+    assert raw_schema == "infrastructure.planning.model_candidates"
+
+    from infrastructure.planning.model_candidates import _IdeaPool, _gemini_response_schema
+
+    schema = _gemini_response_schema(_IdeaPool.model_json_schema(), target_pool_size=2)
+
+    forbidden = {"minLength", "maxLength", "default", "pattern"}
+    observed_schema_keywords = set()
+
+    def walk(node, *, property_map=False):
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+            return
+        if not isinstance(node, dict):
+            return
+        for key, value in node.items():
+            if not property_map:
+                observed_schema_keywords.add(key)
+            if key in {"properties", "$defs"}:
+                for child in value.values():
+                    walk(child)
+            else:
+                walk(value)
+
+    walk(schema)
+
+    assert not (forbidden & observed_schema_keywords)
+    assert observed_schema_keywords <= _GEMINI_JSON_SCHEMA_KEYWORDS
+    assert schema["properties"]["ideas"]["minItems"] == 2
+    assert schema["properties"]["ideas"]["maxItems"] == 2
 
 
 @pytest.mark.asyncio

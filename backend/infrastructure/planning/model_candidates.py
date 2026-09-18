@@ -61,6 +61,68 @@ class _IdeaPool(_StrictModel):
     ideas: tuple[_IdeaDraft, ...] = Field(min_length=1, max_length=24)
 
 
+_GEMINI_JSON_SCHEMA_KEYWORDS = frozenset({
+    "$id",
+    "$defs",
+    "$ref",
+    "$anchor",
+    "type",
+    "format",
+    "title",
+    "description",
+    "enum",
+    "items",
+    "prefixItems",
+    "minItems",
+    "maxItems",
+    "minimum",
+    "maximum",
+    "anyOf",
+    "oneOf",
+    "properties",
+    "additionalProperties",
+    "required",
+    "propertyOrdering",
+})
+
+
+def _gemini_response_schema(schema: dict, *, target_pool_size: int) -> dict:
+    """Project Pydantic JSON Schema onto Gemini's supported JSON subset.
+
+    Local Pydantic validation remains authoritative for constraints that the
+    provider schema cannot express (for example string min/max length). This
+    projection prevents provider-side INVALID_REQUEST while preserving strict
+    post-generation validation.
+    """
+
+    def project(node):
+        if isinstance(node, list):
+            return [project(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+
+        result = {}
+        for key, value in node.items():
+            if key not in _GEMINI_JSON_SCHEMA_KEYWORDS:
+                continue
+            if key in {"properties", "$defs"}:
+                result[key] = {name: project(child) for name, child in value.items()}
+            else:
+                result[key] = project(value)
+        return result
+
+    projected = project(schema)
+    ideas_schema = projected.get("properties", {}).get("ideas")
+    if not isinstance(ideas_schema, dict):
+        raise ValueError("IdeaPool schema is missing the ideas array")
+
+    # Planning asks for one exact governed pool size; Gemini supports array
+    # cardinality directly, so make that authority explicit at provider level.
+    ideas_schema["minItems"] = target_pool_size
+    ideas_schema["maxItems"] = target_pool_size
+    return projected
+
+
 class PrecomputedCandidateSource:
     """Synchronous planner adapter for a model pool generated before planning.
 
@@ -128,7 +190,10 @@ class RouterCandidateSource:
             content_profile_snapshot=None,
         )
 
-        schema = _IdeaPool.model_json_schema()
+        schema = _gemini_response_schema(
+            _IdeaPool.model_json_schema(),
+            target_pool_size=target_pool_size,
+        )
         payload = {
             "profile": {
                 "identity": profile.identity.model_dump(mode="json"),
