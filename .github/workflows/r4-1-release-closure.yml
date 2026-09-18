@@ -281,6 +281,98 @@ jobs:
         run: curl --fail --silent --show-error http://127.0.0.1:8000/health/live
       - name: Verify frontend HTTP
         run: curl --fail --silent --show-error http://127.0.0.1:3000/ >/dev/null
+      - name: Verify dense compositor fit against real Chromium QA
+        shell: bash
+        run: |
+          set -o pipefail
+          docker compose exec -T backend python - <<'PY' | tee r4-1-closure-evidence/docker/dense-fit-qa.log
+          import asyncio
+          import json
+          import httpx
+
+          digest = "a" * 64
+          long_copy = (
+              "Arquitectura de sistemas combina componentes, responsabilidades, "
+              "interfaces y restricciones que deben explicarse sin perder jerarquía "
+              "visual ni ocultar contenido editorial crítico."
+          )
+
+          blocks = [
+              {
+                  "block_id": "headline",
+                  "kind": "text",
+                  "role": "headline",
+                  "text": "Ruta de aprendizaje en tecnologías de la información",
+                  "editorial_critical": True,
+              }
+          ]
+          for index in range(8):
+              blocks.append({
+                  "block_id": f"body-{index}",
+                  "kind": "text",
+                  "role": "body",
+                  "text": f"{index + 1}. {long_copy}",
+                  "editorial_critical": True,
+              })
+
+          payload = {
+              "schema_version": 1,
+              "contract_version": "RendererRequestV1@1",
+              "render_id": f"render-{digest}",
+              "revision_id": "revision-r4-1-dense-fit",
+              "visual_spec_id": "visual-r4-1-dense-fit",
+              "visual_spec_digest": digest,
+              "content_spec_digest": digest,
+              "design_profile_digest": digest,
+              "visual_pattern": "infographic.dense_fit",
+              "format": "infographic",
+              "canvas_width": 1080,
+              "canvas_height": 1350,
+              "safe_zone": {"top": 64, "right": 64, "bottom": 64, "left": 64},
+              "theme": {
+                  "background": "surface.canvas",
+                  "surface": "surface.paper",
+                  "text": "text.ink",
+                  "muted_text": "text.muted",
+                  "accent": "accent.signal",
+                  "border": "border.hairline",
+                  "density": "balanced",
+                  "spacing_scale": "standard",
+                  "radius_scale": "standard",
+                  "icon_language": "outline",
+              },
+              "pages": [{
+                  "page_id": "page-0",
+                  "page_index": 0,
+                  "role": "explain",
+                  "layout_family": "card_grid",
+                  "blocks": blocks,
+                  "alt_text": "Dense compositor fit regression",
+              }],
+              "render_input_digest": digest,
+          }
+
+          async def main():
+              async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+                  response = await client.post(
+                      "http://renderer:4100/qa",
+                      json=payload,
+                      headers={"content-type": "application/json"},
+                  )
+              response.raise_for_status()
+              result = response.json()
+              print(json.dumps(result, indent=2))
+              assert result["inspector_version"] == "dom-geometry-v4-r4-fit", result
+              row = result["observations"][0]
+              assert row["clipping"] is False, row
+              assert row["overlap"] is False, row
+              assert row["unreadable_hierarchy"] is False, row
+              assert row["wrong_visible_text"] is False, row
+              assert row["key_copy_omitted"] is False, row
+              print("R4.1 dense compositor fit PASS")
+
+          asyncio.run(main())
+          PY
       - name: Verify default local auth boundary
         shell: bash
         run: |
