@@ -55,11 +55,12 @@ def _request() -> ModelExecutionRequest:
     )
 
 
-def test_quality_profile_uses_independent_lite_transport_fallback():
+def test_quality_profile_configures_three_ordered_model_routes():
     models = REGISTRY[ModelProfile.QUALITY_TEXT]
     assert [model.model_id for model in models] == [
         "gemini-3.6-flash",
         "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
     ]
 
 
@@ -164,7 +165,7 @@ async def test_google_quota_is_route_scoped_and_attempts_are_bounded(monkeypatch
 
     router = ModelRouter(QuotaAdapter())
     events = [event async for event in router.stream_generation(_request())]
-    assert calls == [model.model_id for model in models]
+    assert calls == [model.model_id for model in models[:2]]
     assert router._get_model_breaker("google", models[0].model_id).state == CircuitState.OPEN
     assert router._get_provider_breaker("google").state == CircuitState.CLOSED
     failures = [event for event in events if isinstance(event, AttemptFailed)]

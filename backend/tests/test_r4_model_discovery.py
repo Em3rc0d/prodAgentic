@@ -15,7 +15,11 @@ def test_advisory_discovery_never_erases_configured_routes(monkeypatch, catalog)
     monkeypatch.setattr(model_registry, "_cache", cache)
     models = model_registry.get_models_for_profile(model_registry.ModelProfile.QUALITY_TEXT)
     ids = [model.model_id for model in models]
-    assert set(ids) == {"gemini-3.6-flash", "gemini-3.5-flash-lite"}
+    assert set(ids) == {
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
+    }
     if catalog:
         assert ids[0] == "gemini-3.5-flash-lite"
 
@@ -30,7 +34,11 @@ def test_stale_or_failed_discovery_restores_configured_priority(monkeypatch, fai
     monkeypatch.setattr(model_registry, "_cache", cache)
     assert [model.model_id for model in model_registry.get_models_for_profile(
         model_registry.ModelProfile.QUALITY_TEXT
-    )] == ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    )] == [
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
+    ]
 
 
 @pytest.mark.asyncio
