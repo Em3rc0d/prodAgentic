@@ -51,9 +51,9 @@ def test_planning_router_expands_only_the_isolated_planning_budget():
     assert planning is not shared
     assert planning.google_adapter is google
     assert planning.policy is not shared.policy
-    assert planning.policy.max_stage_seconds == R4_PLANNING_STAGE_SECONDS == 120.0
-    assert planning.policy.per_attempt_seconds == R4_PLANNING_ATTEMPT_SECONDS == 60.0
-    assert planning.policy.minimum_fallback_seconds == R4_PLANNING_FALLBACK_RESERVE_SECONDS == 15.0
+    assert planning.policy.max_stage_seconds == R4_PLANNING_STAGE_SECONDS == 165.0
+    assert planning.policy.per_attempt_seconds == R4_PLANNING_ATTEMPT_SECONDS == 90.0
+    assert planning.policy.minimum_fallback_seconds == R4_PLANNING_FALLBACK_RESERVE_SECONDS == 30.0
     assert planning.policy.max_total_attempts == policy.max_total_attempts
     assert planning.policy.allow_direct_provider_fallback_after_n8n_failure is True
 
