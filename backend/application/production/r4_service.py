@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from application.content_quality.policy import strict_publishability_issues
+from application.content_quality.policy import factual_precision_issues, strict_publishability_issues
 from application.production.service import ProductionContractViolation, StructuredAgentCellService
 from domain.production.models import EditorialVerdict
 
@@ -24,7 +24,10 @@ class R4StructuredAgentCellService(StructuredAgentCellService):
         super()._verify_review(plan, profile, research, content, review)
         if review.verdict != EditorialVerdict.APPROVE_TEXT:
             return
-        issues = strict_publishability_issues(content=content, plan=plan, profile=profile)
+        issues = (
+            strict_publishability_issues(content=content, plan=plan, profile=profile)
+            + factual_precision_issues(content=content, research=research)
+        )
         if issues:
             codes = ", ".join(issue.code for issue in issues)
             raise ProductionContractViolation(

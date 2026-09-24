@@ -376,7 +376,7 @@ class RouterResearchAgent:
 
 
 class RouterWriterAgent:
-    prompt_version = "s3-writer-v2"
+    prompt_version = "s3-writer-v3"
 
     def __init__(self, router: ModelRouter, *, max_contract_repairs: int = 1):
         self.executor = StructuredRouterExecutor[ContentSpecV1](
@@ -399,6 +399,7 @@ class RouterWriterAgent:
         system = (
             "You are the MK1 WriterAgent operating under the R3 publishability bar. Produce one finished ContentSpecV1 for the audience, not an explanation of the production process. "
             "Use only claims present in the exact ResearchPack and list every used claim ID in claims_used. "
+            "Preserve the ResearchPack's degree of certainty: never turn qualified, conditional or medium-confidence support into guarantees, total elimination, interruption-free behavior or equivalent absolute wording. "
             "Do not invent facts, metrics, customers, outcomes, sources or personal experience. "
             "Treat creative_brief as deterministic editorial guidance derived from the frozen Profile and Plan. "
             "Respect the Profile language, voice, audience, goals, planned role and exact format. "
@@ -421,7 +422,7 @@ class RouterWriterAgent:
 
 
 class RouterEditorAgent:
-    prompt_version = "s3-editor-v2"
+    prompt_version = "s3-editor-v3"
 
     def __init__(self, router: ModelRouter, *, max_contract_repairs: int = 1):
         self.executor = StructuredRouterExecutor[EditorialReviewV1](
@@ -455,6 +456,7 @@ class RouterEditorAgent:
             "Use the creative_brief quality_bar as mandatory editorial criteria. "
             "REVISE content that leaks internal terms, taxonomy IDs, snake_case labels, demo/test narration, workflow states or QA/schema language. "
             "REVISE generic hooks, redundant slides, weak value progression, empty engagement bait and visual copy that is too dense for its format. "
+            "REVISE any factual wording that increases certainty beyond the ResearchPack, including unsupported guarantees, claims of complete elimination, interruption-free behavior, or claims that environments/results are necessarily identical. Preserve qualifiers and uncertainties instead of making them sound definitive. "
             "You may APPROVE_TEXT, REVISE with a complete new ContentSpecV1, or REJECT. "
             "Never introduce a claim ID or factual assertion absent from the ResearchPack. "
             "A revised ContentSpec must use a new content_spec_id and preserve plan authority, target language, claims boundary and exact planned format. "

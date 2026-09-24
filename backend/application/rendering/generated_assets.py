@@ -16,9 +16,16 @@ from domain.visual.models import AssetRequirementKind, DesignProfileV1, VisualSp
 
 
 class GeneratedAssetResolutionError(RuntimeError):
-    def __init__(self, message: str, *, retryable: bool = False):
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = False,
+        fallback_allowed: bool = False,
+    ):
         super().__init__(message)
         self.retryable = retryable
+        self.fallback_allowed = fallback_allowed
 
 
 @dataclass(frozen=True)
@@ -133,6 +140,7 @@ class GeneratedAssetResolver:
                 raise GeneratedAssetResolutionError(
                     "generated visual requirement has no configured image provider",
                     retryable=True,
+                    fallback_allowed=True,
                 )
 
             prompt = _prompt_for(
@@ -185,9 +193,13 @@ class GeneratedAssetResolver:
                 raise GeneratedAssetResolutionError(
                     "image provider could not satisfy generated visual requirement",
                     retryable=exc.retryable,
+                    fallback_allowed=True,
                 ) from exc
             if generated.content_type not in requirement.accepted_content_types:
-                raise GeneratedAssetResolutionError("image provider returned a content type outside VisualSpec authority")
+                raise GeneratedAssetResolutionError(
+                    "image provider returned a content type outside VisualSpec authority",
+                    fallback_allowed=True,
+                )
 
             stored = await self.asset_store.put(
                 generated.data,

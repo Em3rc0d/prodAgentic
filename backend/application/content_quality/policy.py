@@ -6,10 +6,13 @@ from domain.planning.models import ContentPlanV1, normalize_text
 from domain.profiles.models import ProfileVersion
 from domain.production.models import (
     CarouselSpecV1,
+    ClaimConfidence,
+    ClaimPublishability,
     ContentSpecV1,
     EditorialIssueSeverity,
     EditorialIssueV1,
     InfographicSpecV1,
+    ResearchPackV1,
     SingleImageSpecV1,
 )
 
@@ -71,6 +74,44 @@ _STRICT_PROMOTION_CODES = {
 }
 
 _SNAKE_CASE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
+
+# High-certainty wording is allowed only when the exact governed ResearchPack
+# carries equivalently strong support. These are deliberately narrow modality
+# markers, not a generic ban on persuasive language.
+_ABSOLUTE_FACT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "guarantee",
+        re.compile(
+            r"\b(?:garantiza|garantizan|garantizando|garantizado|garantizada|"
+            r"guarantees?|guaranteed|ensures?|ensured|garante|garantem|assegura|asseguram)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "no_interruption",
+        re.compile(
+            r"\b(?:sin interrupciones?|sin downtime|without interruptions?|zero downtime|"
+            r"sem interrupc(?:ao|oes))\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "elimination",
+        re.compile(
+            r"\b(?:elimina|eliminan|eliminando|eliminates?|eliminating|elimina(?:r)?|"
+            r"remove completamente|removes? completely)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "absolute_identity",
+        re.compile(
+            r"\b(?:identicos? y consistentes?|identical and consistent|"
+            r"identicos? e consistentes?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
 
 
 def _issue(code: str, severity: EditorialIssueSeverity, message: str, target_ref: str | None = None) -> EditorialIssueV1:
@@ -315,6 +356,71 @@ def evaluate_publishability(
         seen.add(item.code)
         deduped.append(item)
     return tuple(deduped)
+
+
+def _absolute_fact_markers(value: str) -> set[str]:
+    normalized = normalize_text(value)
+    return {
+        code
+        for code, pattern in _ABSOLUTE_FACT_PATTERNS
+        if pattern.search(normalized)
+    }
+
+
+def factual_precision_issues(
+    *,
+    content: ContentSpecV1,
+    research: ResearchPackV1,
+) -> tuple[EditorialIssueV1, ...]:
+    """Block certainty inflation beyond the exact ResearchPack authority.
+
+    The writer/editor may paraphrase governed claims, but may not silently turn
+    qualified or uncertain evidence into guarantees, interruption-free behavior,
+    total elimination, or identity claims. A strong modality survives only when
+    a used HIGH-confidence ALLOWED claim carries the same modality and the
+    ResearchPack has no unresolved uncertainty.
+    """
+
+    visible_markers = _absolute_fact_markers(_visible_text(content))
+    if not visible_markers:
+        return ()
+
+    claims = {item.claim_id: item for item in research.claims}
+    used = [claims[item] for item in content.claims_used if item in claims]
+
+    if not used:
+        return (
+            _issue(
+                "factual.absolute_without_claim_authority",
+                EditorialIssueSeverity.BLOCKING,
+                "Audience-facing copy uses absolute factual language without a bound ResearchPack claim.",
+                content.content_spec_id,
+            ),
+        )
+
+    supported_markers: set[str] = set()
+    for claim in used:
+        if (
+            claim.publishability == ClaimPublishability.ALLOWED
+            and claim.confidence == ClaimConfidence.HIGH
+        ):
+            supported_markers.update(_absolute_fact_markers(claim.statement))
+
+    unsupported = visible_markers - supported_markers
+    if research.uncertainties:
+        unsupported = set(visible_markers)
+
+    if not unsupported:
+        return ()
+
+    return (
+        _issue(
+            "factual.modality_escalation",
+            EditorialIssueSeverity.BLOCKING,
+            "Audience-facing copy strengthens factual certainty beyond the governed ResearchPack.",
+            content.content_spec_id,
+        ),
+    )
 
 
 def blocking_publishability_issues(
