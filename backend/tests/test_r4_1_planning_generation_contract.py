@@ -5,7 +5,15 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from agents.router import AttemptCompleted, AttemptFailed, AttemptStarted, ContentChunk, RoutingExhausted
+from agents.router import (
+    AttemptCompleted,
+    AttemptFailed,
+    AttemptStarted,
+    ContentChunk,
+    RoutingExhausted,
+    RoutingPolicy,
+    allocate_route_seconds,
+)
 from core.context import GenerationContext, LanguageCode
 from domain.planning.models import BatchRequestConstraints, TargetWindow
 from domain.profiles.models import (
@@ -25,6 +33,12 @@ from infrastructure.planning.model_candidates import (
     CandidateGenerationError,
     RouterCandidateSource,
     _GEMINI_JSON_SCHEMA_KEYWORDS,
+)
+from routes.batches import (
+    R4_PLANNING_ATTEMPT_SECONDS,
+    R4_PLANNING_FALLBACK_RESERVE_SECONDS,
+    R4_PLANNING_STAGE_SECONDS,
+    _planning_router,
 )
 
 
@@ -115,6 +129,44 @@ class FailureRouter:
         yield AttemptStarted("test-model", "attempt-1", "google")
         yield AttemptFailed("Model attempt failed: RATE_LIMITED", "attempt-1", "RATE_LIMITED")
         yield RoutingExhausted("Routing exhausted", "RATE_LIMITED")
+
+
+
+
+class _PlanningRouterShell:
+    def __init__(self, policy: RoutingPolicy | None = None):
+        self.policy = policy or RoutingPolicy()
+
+    def isolated(self):
+        return _PlanningRouterShell(self.policy)
+
+
+def test_planning_budget_reserves_real_fallback_below_browser_wall():
+    planning_router = _planning_router(_PlanningRouterShell())
+    policy = planning_router.policy
+
+    assert R4_PLANNING_STAGE_SECONDS == 165.0
+    assert R4_PLANNING_ATTEMPT_SECONDS == 90.0
+    assert R4_PLANNING_FALLBACK_RESERVE_SECONDS == 30.0
+    assert policy.max_stage_seconds == 165.0
+    assert policy.per_attempt_seconds == 90.0
+    assert policy.minimum_fallback_seconds == 30.0
+
+    primary_seconds = allocate_route_seconds(
+        policy.max_stage_seconds,
+        2,
+        policy,
+    )
+    fallback_seconds = allocate_route_seconds(
+        policy.max_stage_seconds - primary_seconds,
+        1,
+        policy,
+    )
+
+    assert primary_seconds == 90.0
+    assert fallback_seconds == 75.0
+    assert primary_seconds + fallback_seconds == 165.0
+    assert policy.max_stage_seconds < 180.0
 
 
 @pytest.mark.asyncio

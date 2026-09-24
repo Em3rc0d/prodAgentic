@@ -27,9 +27,9 @@ from infrastructure.planning.model_candidates import CandidateGenerationError, P
 router = APIRouter(tags=["mk1-batches"])
 logger = logging.getLogger(__name__)
 
-R4_PLANNING_STAGE_SECONDS = 120.0
-R4_PLANNING_ATTEMPT_SECONDS = 60.0
-R4_PLANNING_FALLBACK_RESERVE_SECONDS = 15.0
+R4_PLANNING_STAGE_SECONDS = 165.0
+R4_PLANNING_ATTEMPT_SECONDS = 90.0
+R4_PLANNING_FALLBACK_RESERVE_SECONDS = 30.0
 
 
 class CreateBatchRequest(BaseModel):
@@ -65,11 +65,14 @@ def _repositories(request: Request, context: TenantContext):
 def _planning_router(router_instance):
     """Give creative planning its own bounded provider budget without mutating shared authority.
 
-    Real R4 UAT showed that a 12-candidate governed pool can legitimately exceed
-    the default 25-second per-route budget even while the Lite fallback is actively
-    streaming valid output. Planning is user-triggered and the browser request is
-    bounded at 180 seconds, so keep this stage below that outer wall while
-    preserving the stricter default router policy for production agents.
+    Real R4.1 UAT showed two separate latency regimes for the same governed
+    12-candidate request: successful Gemini output can exceed 60 seconds, while
+    a 60s + 60s split can consume the full 120-second stage and surface a false
+    terminal PLANNING_STAGE_TIMEOUT. Planning is user-triggered and the browser
+    request is bounded at 180 seconds, so give the primary route up to 90 seconds
+    while reserving at least 30 seconds for fallback. The resulting two-route
+    allocation is approximately 90s + 75s and still remains below the outer wall.
+    Shared production-agent routing keeps its stricter default policy.
     """
     planning_router = router_instance.isolated()
     planning_router.policy = replace(
