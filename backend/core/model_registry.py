@@ -50,6 +50,14 @@ REGISTRY: Dict[ModelProfile, List[ModelDefinition]] = {
             model_id=require_api_model_id("Gemini 3.5 Flash Lite"),
             supported_params=["system_instruction"],
         ),
+        # Third planning-only fallback. Shared routers keep their default
+        # max_models_per_stage=2, so this route is only reached by the isolated
+        # R4.1 Planning router. It diversifies model capacity without pretending
+        # to be an independent provider.
+        ModelDefinition(
+            model_id=require_api_model_id("Gemini 3.5 Flash"),
+            supported_params=["system_instruction"],
+        ),
     ],
     # Evidence routing is a capability route, not a quality tier. R4.1 UAT
     # verified Google Search grounding on Gemini 2.5 Flash while the current

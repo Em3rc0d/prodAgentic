@@ -2,6 +2,7 @@ from agents.router import CircuitState, ModelRouter, RoutingPolicy
 from routes.batches import (
     R4_PLANNING_ATTEMPT_SECONDS,
     R4_PLANNING_FALLBACK_RESERVE_SECONDS,
+    R4_PLANNING_MODEL_ROUTES,
     R4_PLANNING_STAGE_SECONDS,
     _planning_router,
 )
@@ -54,9 +55,11 @@ def test_planning_router_expands_only_the_isolated_planning_budget():
     assert planning.policy.max_stage_seconds == R4_PLANNING_STAGE_SECONDS == 165.0
     assert planning.policy.per_attempt_seconds == R4_PLANNING_ATTEMPT_SECONDS == 90.0
     assert planning.policy.minimum_fallback_seconds == R4_PLANNING_FALLBACK_RESERVE_SECONDS == 30.0
+    assert planning.policy.max_models_per_stage == R4_PLANNING_MODEL_ROUTES == 3
     assert planning.policy.max_total_attempts == policy.max_total_attempts
     assert planning.policy.allow_direct_provider_fallback_after_n8n_failure is True
 
     assert shared.policy.max_stage_seconds == 75.0
     assert shared.policy.per_attempt_seconds == 25.0
     assert shared.policy.minimum_fallback_seconds == 10.0
+    assert shared.policy.max_models_per_stage == 2

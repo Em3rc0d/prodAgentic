@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 R4_PLANNING_STAGE_SECONDS = 165.0
 R4_PLANNING_ATTEMPT_SECONDS = 90.0
 R4_PLANNING_FALLBACK_RESERVE_SECONDS = 30.0
+R4_PLANNING_MODEL_ROUTES = 3
 
 
 class CreateBatchRequest(BaseModel):
@@ -65,14 +66,13 @@ def _repositories(request: Request, context: TenantContext):
 def _planning_router(router_instance):
     """Give creative planning its own bounded provider budget without mutating shared authority.
 
-    Real R4.1 UAT showed two separate latency regimes for the same governed
-    12-candidate request: successful Gemini output can exceed 60 seconds, while
-    a 60s + 60s split can consume the full 120-second stage and surface a false
-    terminal PLANNING_STAGE_TIMEOUT. Planning is user-triggered and the browser
-    request is bounded at 180 seconds, so give the primary route up to 90 seconds
-    while reserving at least 30 seconds for fallback. The resulting two-route
-    allocation is approximately 90s + 75s and still remains below the outer wall.
-    Shared production-agent routing keeps its stricter default policy.
+    Real R4.1 UAT exposed both latency-bound and provider-capacity failures for
+    the same governed 12-candidate request. Planning is user-triggered and the
+    browser request is bounded at 180 seconds, so keep one 165-second stage while
+    allowing three known structured-output-capable QUALITY_TEXT model routes.
+    With the current allocator the route budget is approximately 90s + 45s + 30s.
+    This diversifies model-level capacity without claiming provider independence.
+    Shared production-agent routing keeps its stricter two-model default policy.
     """
     planning_router = router_instance.isolated()
     planning_router.policy = replace(
@@ -80,6 +80,7 @@ def _planning_router(router_instance):
         max_stage_seconds=R4_PLANNING_STAGE_SECONDS,
         per_attempt_seconds=R4_PLANNING_ATTEMPT_SECONDS,
         minimum_fallback_seconds=R4_PLANNING_FALLBACK_RESERVE_SECONDS,
+        max_models_per_stage=R4_PLANNING_MODEL_ROUTES,
     )
     return planning_router
 
