@@ -16,11 +16,11 @@ class ContentProductionLifecycle:
     def __init__(self, repository: PlanningRepositoryPort):
         self.repository = repository
 
-    async def begin(self, content_id: str, *, now: datetime | None = None) -> None:
+    async def begin(self, content_id: str, *, retry: bool = False, now: datetime | None = None) -> None:
         clock = now or utc_now()
         changed = await self.repository.transition_content_item(
             content_id,
-            expected_state=ContentEditorialState.PLANNED,
+            expected_state=ContentEditorialState.FAILED if retry else ContentEditorialState.PLANNED,
             new_state=ContentEditorialState.PRODUCING,
             now=clock,
         )

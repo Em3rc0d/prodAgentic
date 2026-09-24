@@ -57,9 +57,41 @@ jobs:
       - name: Compile all backend Python
         working-directory: backend
         run: python -m compileall .
-      - name: Run complete backend regression
+      - name: Run complete backend regression with durable evidence
         working-directory: backend
-        run: python -m pytest -q
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          python -m pytest -q --junitxml=backend-full-junit.xml 2>&1 | tee backend-full.log
+          status=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$status" > backend-full-exit-code.txt
+          {
+            echo "candidate_sha=${{ github.event.pull_request.head.sha || github.sha }}"
+            echo "workflow_run_id=${{ github.run_id }}"
+            echo "workflow_run_attempt=${{ github.run_attempt }}"
+            echo "pytest_exit_code=$status"
+          } > backend-full-metadata.txt
+      - name: Upload backend full evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-backend-full-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            backend/backend-full-junit.xml
+            backend/backend-full.log
+            backend/backend-full-exit-code.txt
+            backend/backend-full-metadata.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Enforce backend regression result
+        if: always()
+        working-directory: backend
+        run: |
+          test -f backend-full-exit-code.txt
+          status="$(cat backend-full-exit-code.txt)"
+          test "$status" = "0"
 
   frontend-full-regression:
     runs-on: ubuntu-latest

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generic, Protocol, TypeVar
 
+from domain.production.evidence import EvidenceBundleV1
 from domain.planning.models import ContentPlanV1
 from domain.profiles.models import ProfileVersion
 from domain.production.models import (
@@ -32,6 +33,7 @@ class ResearchAgentPort(Protocol):
         run_id: str,
         plan: ContentPlanV1,
         profile: ProfileVersion,
+        evidence_bundle: EvidenceBundleV1 | None = None,
     ) -> AgentInvocationResult[ResearchPackV1]: ...
 
 
@@ -65,6 +67,8 @@ class ProductionRepositoryPort(Protocol):
     async def create_run(self, run: GenerationRunV1) -> None: ...
 
     async def get_run(self, tenant_id: str, run_id: str) -> GenerationRunV1 | None: ...
+
+    async def latest_run(self, tenant_id: str, content_id: str) -> GenerationRunV1 | None: ...
 
     async def update_run(self, run: GenerationRunV1) -> None: ...
 
