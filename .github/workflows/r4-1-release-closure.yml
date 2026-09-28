@@ -92,6 +92,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --require-hashes -r requirements.lock
           python -m pip install -r requirements-dev.txt
+      - name: Audit locked backend production dependencies
+        working-directory: backend
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m venv /tmp/prodagentic-pip-audit
+          /tmp/prodagentic-pip-audit/bin/python -m pip install --upgrade pip
+          /tmp/prodagentic-pip-audit/bin/python -m pip install pip-audit==2.10.1
+          /tmp/prodagentic-pip-audit/bin/pip-audit --require-hashes -r requirements.lock \
+            2>&1 | tee ../r4-1-closure-evidence/redis/pip-audit.log
       - name: Run delegated S9 and S10 tests against real Redis
         working-directory: backend
         shell: bash
@@ -175,6 +185,13 @@ jobs:
         run: |
           set -o pipefail
           npm ci 2>&1 | tee ../r4-1-closure-evidence/frontend/npm-ci.log
+      - name: Audit frontend dependency graph
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -o pipefail
+          npm audit --audit-level=high \
+            2>&1 | tee ../r4-1-closure-evidence/frontend/npm-audit.log
       - name: Lint frontend
         working-directory: frontend
         shell: bash

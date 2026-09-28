@@ -9,15 +9,20 @@ main
   └─ stable / certified product authority
 
 developer
-  └─ active MK1-R4 design, implementation, hardening and test authority
+  └─ integration authority for the next product line
+
+temporary audit/candidate branch
+  └─ allowed only for an explicit certification PR; never product authority by itself
 ```
 
-Historical branches are archival evidence only. Ordinary work no longer creates `feat/*`, `fix/*`, slice or candidate branches. A release candidate is an exact SHA on `developer`.
+Ordinary work uses `main` + `developer`. A temporary audit branch may exist when it is explicitly bound to a certification PR and protected branches are intentionally left untouched. In every case, a release candidate is an **exact immutable SHA**, never a branch name.
 
 ## Current state
 
 - `main@790f1e86312e13f4b14f1320db5d83f94ed8a97e` — MK1-R3 stable/certified authority.
-- `developer` — MK1-R4 Creative Production, **NOT CERTIFIED** until exact-head pre-certification, real-profile UAT and exact-main post-certification pass.
+- `developer@61bf7f93b37b00f3315c3f710d8005fed977e672` — frozen R4 integration baseline while the independent R4.1 audit is open.
+- PR #69 (`r4.1-reliability-evidence-authority` → `developer`) — active R4.1 pre-UAT certification line. Its exact head SHA is the only candidate identity.
+- R4 remains **NOT CERTIFIED** until exact-head automated gates (including dependency audits), fresh real-provider Profile-v2 ×4 UAT, human 4/4 editorial approval, authorized merge, and exact-main post-certification all pass.
 
 Canonical development entry: [`mk1/build/WORK_START_HERE.md`](mk1/build/WORK_START_HERE.md).
 

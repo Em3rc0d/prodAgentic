@@ -1,77 +1,84 @@
 # R4 Candidate Protocol
 
-Status: **NO CANDIDATE FROZEN**
+Status: **PRE-UAT CANDIDATE ACTIVE / NOT CERTIFIED**
 
-## Branch model
+## Authority model
 
-R4 uses only:
+R4 product authority remains:
 
-- `developer` — active design/build/test authority.
-- `main` — stable certified authority.
+- `main` — stable certified product authority;
+- `developer` — integration authority.
 
-No candidate branch is required. A candidate is an **exact immutable SHA** from `developer` recorded here with its evidence.
+The independent R4.1 audit uses PR #69 from temporary branch `r4.1-reliability-evidence-authority` so `main` and `developer` can remain untouched during adversarial certification. This is an explicit audit exception, not a third product-authority branch.
+
+A candidate is always an **exact immutable SHA**. For the active R4.1 audit, the exact candidate identity is the current PR #69 head recorded by GitHub and by every exact-SHA workflow receipt. This file deliberately does not embed its own commit SHA because a Git commit cannot truthfully contain its final self-hash.
 
 ## Freeze conditions
 
-A candidate SHA may be recorded only when:
+A candidate may enter fresh UAT only when:
 
 1. R4 architecture, plan, build record, error ledger and acceptance criteria agree on scope.
 2. No known BLOCKER is hidden or mislabeled.
-3. Unit/integration/regression suites pass locally or in a reproducible CI environment.
+3. Unit/integration/regression suites pass against the exact candidate.
 4. The certification graph verifier passes structurally.
-5. Real-provider UAT prerequisites are available or explicitly recorded as an external gate.
-6. The working tree represented by `developer` is the exact code intended for certification.
+5. Locked backend dependencies pass `pip-audit`.
+6. The complete frontend dependency graph passes `npm audit --audit-level=high`.
+7. exact-SHA Docker/renderer/Redis/frontend closure gates pass.
+8. real-provider UAT prerequisites are available.
+9. `main` and `developer` remain unchanged until promotion is explicitly authorized.
 
-## Candidate record template
+## Required pre-cert evidence
 
 ```text
-Candidate ID: R4-C<n>
-SHA: <40-hex>
-Parent stable authority: main@<sha>
-Frozen at: <UTC timestamp>
-State: FROZEN | REJECTED | PRE-CERTIFIED | MERGED | POST-CERTIFIED
-
-Required checks:
-- backend unit/integration
-- frontend unit/build
-- browser journey desktop/mobile
-- renderer/asset ownership
-- QA recovery/restart
-- novelty/memory
-- strict editorial publishability
-- generated-image fake-provider regression
-- bounded real-provider UAT
-- full historical regression
-- certification graph structural verifier
-- exact-SHA workflow/check receipt
+backend full regression
+frontend lint/unit/build
+browser journey
+renderer + asset ownership
+QA recovery/restart
+novelty/memory
+strict editorial publishability
+generated-image recovery
+real Redis delegated regression
+pip-audit
+npm audit
+certification graph
+exact-SHA workflow metadata
+fresh production/non-demo real-provider UAT
+human editorial 4/4
 ```
 
 ## Exact-SHA law
 
 Any tracked mutation after freeze creates a different candidate. Failed candidate SHAs remain immutable historical evidence and are never re-described as certified after fixes land elsewhere.
 
-## Promotion protocol
+## Final R4.1 promotion protocol
 
 ```text
-developer@CANDIDATE_SHA
+PR #69 exact head SHA
         ↓
-exact-head PRE-CERT
+automated PRE-CERT + supply-chain audits
         ↓
-product UAT receipt
+Profile v1 → explicit Profile v2 acceptance
         ↓
-merge developer → main
+fresh production/non-demo Profile-v2 ×4
         ↓
-MAIN_MERGE_SHA
+4/4 Reviewable
         ↓
-exact-main POST-CERT
+human editorial PASS ×4
+        ↓
+repository protection/required-check gate
+        ↓
+explicit merge authorization
+        ↓
+merge to main
+        ↓
+exact MAIN_MERGE_SHA POST-CERT
         ↓
 release receipt
-        ↓
-developer resumes from certified main lineage
 ```
 
 The merge itself is not certification. Post-merge verification must bind evidence to the exact `main` SHA.
 
-## Current R4 candidate ledger
+## Current ledger rule
 
-No candidate is frozen. The current development head is allowed to change while design/hardening continues.
+The active candidate is whatever exact SHA GitHub reports as PR #69 head **after all tracked changes have settled and all required pre-UAT workflows pass**. The PR body carries failed-candidate lineage and exact run IDs. No older green SHA may substitute for the current head.

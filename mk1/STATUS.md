@@ -1,21 +1,25 @@
 # prodAgentic MK1 Status
 
-**As of:** 2026-09-13  
+**As of:** 2026-09-28  
 **Stable authority:** `main@790f1e86312e13f4b14f1320db5d83f94ed8a97e` — MK1-R3 certified  
-**Development authority:** `developer` — MK1-R4 Creative Production  
-**R4 state:** DESIGN + IMPLEMENTATION HARDENING / NOT CERTIFIED
+**Integration baseline:** `developer@61bf7f93b37b00f3315c3f710d8005fed977e672` — intentionally untouched during independent R4.1 audit  
+**Active certification line:** PR #69 / exact head SHA on `r4.1-reliability-evidence-authority`  
+**R4 state:** PRE-UAT HARDENING / NOT CERTIFIED
 
-## Canonical branch model
+## Canonical authority model
 
 ```text
 main
   └─ stable/certified authority only
 
 developer
-  └─ active brainstorming → design → architecture → plan → build → test
+  └─ integration authority
+
+PR #69 exact head SHA
+  └─ temporary R4.1 certification candidate only
 ```
 
-No other branch is current product authority. Historical refs remain audit/archive material only.
+A branch name is never a release identity. The exact PR head SHA plus its workflow receipts is the pre-UAT candidate. The temporary R4.1 branch exists only to preserve `main` and `developer` while the independent audit is completed; after R4 closure, ordinary work returns to the two-branch model.
 
 ## Current stable product boundary
 
@@ -44,87 +48,46 @@ Canonical R4 authority:
 - `mk1/mining-site/R4_RESEARCH_LEDGER.md`
 - `scripts/verify_r4_cert_graph.py`
 
-## R4 validation model
+## R4 implemented and automated
 
-R4 uses a reciprocal validation graph rather than isolated pipeline stages:
+The current R4.1 line includes:
 
-```text
-ProfileVersion
-  ↕
-CreativeBrief
-  ↕
-CandidatePool / EditorialMemory
-  ↕
-ContentPlan
-  ↕
-ResearchPack
-  ↕
-ContentSpec
-  ↕
-EditorialGate
-  ↕
-VisualSpec
-  ↕
-Owned Source Assets
-  ↕
-Rendered Assets
-  ↕
-Visual QA
-  ↕
-Human Review
-  ↕
-ApprovalBundle
-  ↕
-Export / Publication
-  ↕
-Analytics / Learning
-  ↕
-EditorialMemory / next planning cycle
-```
+- model-backed 12-candidate planning with application-owned cardinality;
+- memory/novelty/diversity selection;
+- governed auto-format policy for visual-first Profile/channel authority;
+- Profile upgrade path that creates immutable v2 while preserving v1;
+- evidence-grounded Research, Writer and Editor contracts;
+- factual-modality blockers;
+- product-owned generated/source asset bytes and digest lineage;
+- deterministic visual fallback when an optional generated-image enhancement is unavailable;
+- Chromium rendering + geometry QA + restart reconstruction;
+- bounded production recovery and replacement authority;
+- immutable approval package and verified manual export;
+- exact-SHA historical, Redis, browser, renderer and Docker regression gates.
 
-The machine-readable graph must contain reciprocal predecessor/successor edges and no orphan start/end nodes. Candidate mode additionally requires digest/evidence population.
+These are implemented capabilities, not a certification claim.
 
-## R4 implemented but uncertified
+## Remaining R4 closure gates
 
-- model-backed creative candidate generation for production mode;
-- deterministic novelty/memory/diversity planning authority;
-- Profile-derived CreativeBrief;
-- strict R4 editorial publishability gate;
-- demo/production separation;
-- generated-image requirement and provider adapter path;
-- product-owned generated source assets with SHA lineage;
-- Chromium composition with resolved local/data-backed imagery;
-- QA reconstruction from persisted source lineage;
-- Review visual-board improvements.
+R4 remains open until the exact current PR head proves all of the following:
 
-## R4 blocking work
+1. canonical 9-workflow exact-SHA matrix green;
+2. locked Python dependencies pass `pip-audit`;
+3. frontend dependency graph passes `npm audit --audit-level=high`;
+4. local production/non-demo runtime is rebuilt from that exact SHA;
+5. historical EM3RC0D Profile v1 is explicitly upgraded/accepted as Profile v2 without mutating v1;
+6. one fresh Profile-v2, real-provider EM3RC0D ×4 reaches **4/4 Reviewable**;
+7. human review gives PASS to all four exact final packages;
+8. repository branch protection / required-check rules are enabled before promotion;
+9. merge is explicitly authorized;
+10. exact merged `main` SHA passes post-certification and receives a release receipt.
 
-R4 remains open until all blockers in `mk1/build/r4/ERROR_LEDGER.md` and `mk1/test/R4_ACCEPTANCE.md` close. Major remaining proof includes full regression, legacy-profile handling, complete Review package visibility, real-provider UAT, four-piece publishability UAT, exact-head pre-cert and exact-main post-cert.
-
-## Candidate law
-
-A candidate is an exact `developer` SHA, not another branch.
-
-```text
-developer@candidate SHA
-      ↓
-exact-head PRE-CERT
-      ↓
-real-profile/product UAT
-      ↓
-merge to main
-      ↓
-exact-main POST-CERT
-      ↓
-release receipt
-```
-
-Any tracked mutation after freeze supersedes the candidate. A failed SHA is immutable evidence and is never relabeled certified.
+Any tracked change or product defect creates a new candidate SHA. A failed SHA remains failed historical evidence.
 
 ## Historical MK1 evidence
 
-Earlier S0–S12/R2/R3 slice records remain valid historical evidence for the exact boundaries they certified. They do not supersede the current branch model or automatically certify R4.
+Earlier S0–S12/R2/R3 slice records remain valid historical evidence for the exact boundaries they certified. They do not automatically certify R4.
 
 ## Build authorization
 
-The phrase **“Take the hummer”** still means that the active design/architecture/plan graph is sufficiently closed to enter implementation. It never bypasses exact-SHA gates, product-quality UAT or post-merge certification.
+The phrase **“Take the hummer”** means the active design/architecture/plan graph is sufficiently closed to enter implementation. It never bypasses exact-SHA gates, product-quality UAT, human approval or post-merge certification.
