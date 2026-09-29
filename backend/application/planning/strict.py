@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from application.planning.novelty import NoveltyEngine
 from application.planning.service import BatchPlannerService, PlannedBatchResult, PlanningConflict
-from domain.planning.models import ContentItem, normalize_text
+from domain.planning.models import ContentItem, NoveltyVerdict, normalize_text
 
 
 class BatchCompletenessConflict(PlanningConflict):
@@ -12,6 +13,10 @@ class BatchCompletenessConflict(PlanningConflict):
 
 class BatchDistinctnessConflict(PlanningConflict):
     """R4 fail-closed signal when selected posts are not materially distinct."""
+
+
+class BatchRecoveryReserveConflict(PlanningConflict):
+    """R4 fail-closed signal when a complete batch has no governed recovery reserve."""
 
 
 _GENERIC_EDITORIAL_TOKENS = {
@@ -80,6 +85,91 @@ def batch_distinctness_issues(items: tuple[ContentItem, ...] | list[ContentItem]
                     )
                 )
     return tuple(issues)
+
+
+def _reserve_item(result: PlannedBatchResult, evaluation) -> ContentItem:
+    candidate = evaluation.candidate
+    return ContentItem(
+        content_id=candidate.candidate_id,
+        tenant_id=result.batch.tenant_id,
+        batch_id=result.batch.batch_id,
+        profile_id=result.batch.profile_id,
+        profile_version=result.batch.profile_version,
+        canonical_topic=evaluation.novelty.canonical_topic,
+        subtopics=candidate.subtopics,
+        angle=candidate.angle,
+        role=candidate.role,
+        target_effect=candidate.target_effect,
+        format=candidate.tentative_format,
+        hook_pattern=candidate.hook_pattern,
+        created_at=result.batch.created_at,
+        updated_at=result.batch.created_at,
+    )
+
+
+def recovery_reserve_candidate_ids(
+    result: PlannedBatchResult,
+    requested_size: int,
+    novelty_engine: NoveltyEngine | None = None,
+) -> tuple[str, ...]:
+    """Replay the frozen trace and prove a deterministic sequential reserve.
+
+    Recovery may only choose from the original planning trace. This gate follows
+    that same trace order and accepts only candidates that remain novel against
+    the selected batch plus earlier reserves and materially distinct from every
+    original/reserved ContentItem. No new provider call can expand authority
+    after the batch is committed.
+    """
+
+    required = BatchPlannerService.recovery_reserve_size_for(requested_size)
+    if required == 0:
+        return ()
+
+    engine = novelty_engine or NoveltyEngine()
+    selected_candidates = [
+        evaluation.candidate
+        for evaluation in result.trace.evaluations
+        if evaluation.selected
+    ]
+    used_ids = {candidate.candidate_id for candidate in selected_candidates}
+    reserved_candidates = []
+    reserved_items: list[ContentItem] = []
+    acceptable = {NoveltyVerdict.PASS, NoveltyVerdict.PASS_WITH_WARNING}
+
+    for _ in range(required):
+        chosen = None
+        for evaluation in result.trace.evaluations:
+            candidate = evaluation.candidate
+            if evaluation.selected or candidate.candidate_id in used_ids:
+                continue
+            if evaluation.novelty.verdict not in acceptable:
+                continue
+
+            replay = engine.evaluate(
+                candidate,
+                [],
+                [*selected_candidates, *reserved_candidates],
+                result.batch.created_at,
+            )
+            if replay.verdict not in acceptable:
+                continue
+
+            reserve_item = _reserve_item(result, evaluation)
+            if batch_distinctness_issues([*result.items, *reserved_items, reserve_item]):
+                continue
+
+            chosen = (candidate, reserve_item)
+            break
+
+        if chosen is None:
+            break
+
+        candidate, reserve_item = chosen
+        used_ids.add(candidate.candidate_id)
+        reserved_candidates.append(candidate)
+        reserved_items.append(reserve_item)
+
+    return tuple(candidate.candidate_id for candidate in reserved_candidates)
 
 
 class _StagedPlanningRepository:
@@ -154,6 +244,19 @@ class R4StrictBatchPlannerService:
             raise BatchDistinctnessConflict(
                 "R4 batch rejected because selected concepts were not materially distinct "
                 f"(similarity={strongest.similarity:.3f}); no batch was persisted."
+            )
+
+        required_reserve = BatchPlannerService.recovery_reserve_size_for(requested_size)
+        reserve_ids = recovery_reserve_candidate_ids(
+            result,
+            requested_size,
+            self._planner.novelty_engine,
+        )
+        if len(reserve_ids) < required_reserve:
+            raise BatchRecoveryReserveConflict(
+                "R4 batch rejected because its frozen candidate trace cannot provide "
+                f"the required governed recovery reserve ({len(reserve_ids)}/{required_reserve}); "
+                "no batch was persisted."
             )
 
         await self._staged.commit()

@@ -23,6 +23,7 @@ This ledger records product and certification defects that must not disappear me
 | R4-E15 | Current development commits are not necessarily cryptographically signed. | MEDIUM | RESOLVED POLICY | R4 does not claim signed-commit provenance; release identity is exact SHA + GitHub workflow receipts + protected PR merge. Signed commits/attestations remain a future hardening option |
 | R4-E16 | Full external media provenance (e.g. C2PA) is not implemented. | LOW / FUTURE | DEFERRED | do not claim C2PA; retain internal source-asset provenance and evaluate later |
 | R4-E17 | Final certification protocol incorrectly universalized legacy Profile repair into a mandatory Profile v1→v2 transition, even when the selected real Profile was clean and not upgrade-eligible. | BLOCKER | RESOLVED / PROTOCOL | read-only Em3rc0d authority diagnostic proved clean `USER_ACCEPTED` v1 with no matching legacy source; candidate/status protocol now requires conditional legacy repair or `NO_UPGRADE_REQUIRED`, then freezes the exact current ProfileVersion/digest |
+| R4-E18 | A complete four-piece batch could exhaust its frozen candidate trace after a semantic `RESEARCH_NO_GO`, leaving fewer than 4/4 Reviewable even though planning initially committed 4/4. | BLOCKER | IMPLEMENTED / FINAL UAT | bounded larger candidate pool + pre-commit sequential recovery-reserve gate + regression; fresh exact-SHA real-provider ×4 must still reach 4/4 Reviewable and human PASS ×4 |
 
 ## R4-E17 disposition
 
@@ -40,6 +41,27 @@ disposition=NO_UPGRADE_REQUIRED
 ```
 
 No Profile mutation is authorized by this disposition.
+
+## R4-E18 disposition
+
+The exact candidate `eb950c5454ac711bdc283bede880ac160051eb86` exposed a real
+product-path shortfall during fresh production/non-demo UAT: Planning committed
+4/4, three pieces became Reviewable, and one semantic `RESEARCH_NO_GO` could not
+be replaced because no fresh candidate remained in the frozen governed trace.
+
+The repair keeps the authority boundary intact:
+
+- Planning oversamples within the existing hard cap of 24 candidates; it does not
+  permit post-commit provider regeneration.
+- Before persistence, the strict R4 planner replays the frozen trace in recovery
+  order and requires a bounded reserve (up to four candidates) that remains novel
+  and materially distinct from the selected batch and earlier reserve choices.
+- If that reserve cannot be proven, the batch fails closed before persistence.
+- Recovery continues to select only from the original trace, preserving Profile,
+  planning, novelty and replacement lineage authority.
+
+This entry is not closed by unit tests alone. The new exact SHA must still pass the
+full PRE-CERT matrix and a fresh real-provider four-piece UAT with 4/4 Reviewable.
 
 ## Failure handling law
 

@@ -4,11 +4,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from application.planning.service import BatchPlannerService
 from application.planning.strict import (
     BatchCompletenessConflict,
     BatchDistinctnessConflict,
+    BatchRecoveryReserveConflict,
     R4StrictBatchPlannerService,
     batch_distinctness_issues,
+    recovery_reserve_candidate_ids,
 )
 from domain.planning.models import BatchRequestConstraints, ContentItem, IdeaCandidateV1, TargetWindow
 from domain.profiles.models import (
@@ -132,6 +135,10 @@ async def test_r4_exact_four_is_persisted_only_after_completeness_and_distinctne
         _candidate(2, "cloud queues", "backpressure during traffic spikes", role="insight", hook="counterintuitive", fmt="infographic"),
         _candidate(3, "software architecture", "failure ownership before diagrams", role="value", hook="diagram_flow", fmt="single_image"),
         _candidate(4, "computer networks", "latency budget worked example", role="relatable", hook="story", fmt="carousel"),
+        _candidate(5, "distributed tracing", "debugging request paths across services", role="education", hook="numbered", fmt="infographic"),
+        _candidate(6, "database replication", "failover tradeoffs under partial outage", role="insight", hook="myth_vs_fact", fmt="single_image"),
+        _candidate(7, "api versioning", "compatibility contracts during migrations", role="value", hook="question", fmt="carousel"),
+        _candidate(8, "container orchestration", "scheduling workloads under resource pressure", role="relatable", hook="diagram_flow", fmt="infographic"),
     ]
     service = R4StrictBatchPlannerService(Profiles(), repository, Source(candidates), Projector())
 
@@ -143,6 +150,32 @@ async def test_r4_exact_four_is_persisted_only_after_completeness_and_distinctne
     assert len(result.items) == 4
     assert repository.saved is not None
     assert not batch_distinctness_issues(result.items)
+    assert len(recovery_reserve_candidate_ids(result, 4)) == 4
+
+
+def test_r4_four_piece_pool_uses_full_bounded_candidate_capacity():
+    assert BatchPlannerService.recovery_reserve_size_for(4) == 4
+    assert BatchPlannerService.target_pool_size_for(4) == 24
+    assert BatchPlannerService.target_pool_size_for(7) == 24
+
+
+@pytest.mark.asyncio
+async def test_r4_complete_batch_without_recovery_reserve_fails_closed():
+    repository = Repository()
+    candidates = [
+        _candidate(1, "sql indexes", "why indexes change query cost", role="education", hook="question"),
+        _candidate(2, "cloud queues", "backpressure during traffic spikes", role="insight", hook="counterintuitive", fmt="infographic"),
+        _candidate(3, "software architecture", "failure ownership before diagrams", role="value", hook="diagram_flow", fmt="single_image"),
+        _candidate(4, "computer networks", "latency budget worked example", role="relatable", hook="story", fmt="carousel"),
+    ]
+    service = R4StrictBatchPlannerService(Profiles(), repository, Source(candidates), Projector())
+
+    with pytest.raises(BatchRecoveryReserveConflict, match="governed recovery reserve"):
+        await service.create_batch(
+            "tenant-r4", "profile-r4", _window(), 4, BatchRequestConstraints(), now=NOW
+        )
+
+    assert repository.saved is None
 
 
 @pytest.mark.asyncio

@@ -56,6 +56,23 @@ def _zero_performance(note: str) -> PlannerPerformanceScoreV1:
 class BatchPlannerService:
     memory_window_days = 30
     candidate_cap = 24
+    recovery_reserve_cap = 4
+    candidate_oversample_factor = 6
+
+    @classmethod
+    def recovery_reserve_size_for(cls, requested_size: int) -> int:
+        if requested_size < 1:
+            raise ValueError("requested_size must be positive")
+        return min(requested_size, cls.recovery_reserve_cap)
+
+    @classmethod
+    def target_pool_size_for(cls, requested_size: int) -> int:
+        if requested_size < 1:
+            raise ValueError("requested_size must be positive")
+        return min(
+            cls.candidate_cap,
+            max(8, requested_size * cls.candidate_oversample_factor),
+        )
 
     def __init__(
         self,
@@ -115,7 +132,7 @@ class BatchPlannerService:
         memory_since = clock - timedelta(days=self.memory_window_days)
         memory = await self.planning_repository.list_recent_memory(profile_id, memory_since)
 
-        target_pool_size = min(self.candidate_cap, max(8, requested_size * 3))
+        target_pool_size = self.target_pool_size_for(requested_size)
         candidates = self.candidate_source.generate(
             profile_version,
             target_window,

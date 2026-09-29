@@ -67,7 +67,7 @@ def _planning_router(router_instance):
     """Give creative planning its own bounded provider budget without mutating shared authority.
 
     Real R4.1 UAT exposed both latency-bound and provider-capacity failures for
-    the same governed 12-candidate request. Planning is user-triggered and the
+    bounded governed candidate requests. Planning is user-triggered and the
     browser request is bounded at 180 seconds, so keep one 165-second stage while
     allowing three known structured-output-capable QUALITY_TEXT model routes.
     With the current allocator the route budget is approximately 90s + 45s + 30s.
@@ -108,7 +108,7 @@ async def _candidate_source_for_request(
     if router_instance is None:
         raise HTTPException(status_code=503, detail="Creative planning model router is unavailable")
 
-    target_pool_size = min(BatchPlannerService.candidate_cap, max(8, body.requested_size * 3))
+    target_pool_size = BatchPlannerService.target_pool_size_for(body.requested_size)
     try:
         candidates = await RouterCandidateSource(_planning_router(router_instance)).generate(
             version,
