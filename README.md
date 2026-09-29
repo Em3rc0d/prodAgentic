@@ -22,7 +22,7 @@ Ordinary work uses `main` + `developer`. A temporary audit branch may exist when
 - `main@790f1e86312e13f4b14f1320db5d83f94ed8a97e` — MK1-R3 stable/certified authority.
 - `developer@61bf7f93b37b00f3315c3f710d8005fed977e672` — frozen R4 integration baseline while the independent R4.1 audit is open.
 - PR #69 (`r4.1-reliability-evidence-authority` → `developer`) — active R4.1 pre-UAT certification line. Its exact head SHA is the only candidate identity.
-- R4 remains **NOT CERTIFIED** until exact-head automated gates (including dependency audits), fresh real-provider Profile-v2 ×4 UAT, human 4/4 editorial approval, authorized merge, and exact-main post-certification all pass.
+- R4 remains **NOT CERTIFIED** until exact-head automated gates (including dependency audits), fresh real-provider ×4 UAT bound to the exact frozen ProfileVersion/digest, human 4/4 editorial approval, authorized merge, and exact-main post-certification all pass.
 
 Canonical development entry: [`mk1/build/WORK_START_HERE.md`](mk1/build/WORK_START_HERE.md).
 

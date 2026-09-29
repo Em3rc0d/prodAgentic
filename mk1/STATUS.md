@@ -55,7 +55,7 @@ The current R4.1 line includes:
 - model-backed 12-candidate planning with application-owned cardinality;
 - memory/novelty/diversity selection;
 - governed auto-format policy for visual-first Profile/channel authority;
-- Profile upgrade path that creates immutable v2 while preserving v1;
+- conditional legacy Profile upgrade path that creates an immutable next version while preserving history;
 - evidence-grounded Research, Writer and Editor contracts;
 - factual-modality blockers;
 - product-owned generated/source asset bytes and digest lineage;
@@ -75,12 +75,14 @@ R4 remains open until the exact current PR head proves all of the following:
 2. locked Python dependencies pass `pip-audit`;
 3. frontend dependency graph passes `npm audit --audit-level=high`;
 4. local production/non-demo runtime is rebuilt from that exact SHA;
-5. historical EM3RC0D Profile v1 is explicitly upgraded/accepted as Profile v2 without mutating v1;
-6. one fresh Profile-v2, real-provider EM3RC0D ×4 reaches **4/4 Reviewable**;
+5. the selected real Profile authority is inspected: eligible malformed legacy authority requires an explicit human upgrade decision, while a clean Profile records `NO_UPGRADE_REQUIRED`;
+6. the exact current ProfileVersion and digest are frozen and one fresh real-provider ×4 reaches **4/4 Reviewable**;
 7. human review gives PASS to all four exact final packages;
 8. repository branch protection / required-check rules are enabled before promotion;
 9. merge is explicitly authorized;
 10. exact merged `main` SHA passes post-certification and receives a release receipt.
+
+For the currently inspected Em3rc0d authority, the read-only diagnostic found clean `USER_ACCEPTED` Profile v1 with digest `6c24104a9df55df10c55dd1affb6d28672139ca7ff3da0ba2c3ee90348f45c20`, no malformed topic family and no matching legacy `content_profile`; its current certification disposition is `NO_UPGRADE_REQUIRED`.
 
 Any tracked change or product defect creates a new candidate SHA. A failed SHA remains failed historical evidence.
 
