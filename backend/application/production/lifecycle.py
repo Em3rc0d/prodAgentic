@@ -49,6 +49,24 @@ class ContentProductionLifecycle:
                 "ContentItem production state changed before the S3 revision could be bound"
             )
 
+    async def mark_reviewable(
+        self,
+        content_id: str,
+        revision_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        clock = now or utc_now()
+        ready = await self.repository.ensure_ready_for_review(
+            content_id,
+            revision_id,
+            now=clock,
+        )
+        if not ready:
+            raise ContentProductionConflict(
+                "ContentItem changed before durable QA authority could be mirrored to READY_FOR_REVIEW"
+            )
+
     async def fail(self, content_id: str, *, now: datetime | None = None) -> bool:
         clock = now or utc_now()
         return await self.repository.transition_content_item(

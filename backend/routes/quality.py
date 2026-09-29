@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from application.production.lifecycle import ContentProductionConflict, ContentProductionLifecycle
 from application.quality.execution import QualityExecutionError, QualityExecutionService
 from application.quality.service import QualityAuthorityError, QualityConflict
 from application.tenancy.context import require_tenant_context
@@ -10,6 +11,7 @@ from db.mongo import get_db
 from domain.production.models import RevisionStatus
 from domain.tenants.models import TenantContext
 from infrastructure.assets.r4_filesystem import R4FilesystemAssetStore
+from infrastructure.mongo.planning import MongoPlanningRepository
 from infrastructure.mongo.production import MongoProductionRepository
 from infrastructure.mongo.quality import MongoQualityRepository
 from infrastructure.mongo.rendering_r4 import MongoR4RenderingRepository
@@ -28,6 +30,7 @@ def _repositories(request: Request, context: TenantContext):
     if db is None:
         raise HTTPException(status_code=503, detail="MongoDB not connected")
     return (
+        MongoPlanningRepository(db, context),
         MongoProductionRepository(db, context),
         MongoQualityRepository(db, context),
         MongoR4RenderingRepository(db, context),
@@ -41,7 +44,7 @@ async def execute_revision_qa(
     request: Request,
     context: TenantContext = Depends(require_tenant_context),
 ):
-    production, quality, rendering, visual = _repositories(request, context)
+    planning, production, quality, rendering, visual = _repositories(request, context)
     service = QualityExecutionService(
         production_repository=production,
         rendering_repository=rendering,
@@ -62,6 +65,16 @@ async def execute_revision_qa(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     authority = result.authority
+    if authority.reviewable:
+        try:
+            await ContentProductionLifecycle(planning).mark_reviewable(
+                authority.revision.content_id,
+                authority.revision.revision_id,
+            )
+        except ContentProductionConflict as exc:
+            # Revision.REVIEWABLE + run.COMPLETED are already durable. A replay of
+            # this idempotent QA endpoint may safely complete the mirror later.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
         "revision": authority.revision.model_dump(mode="json"),
         "run": authority.run.model_dump(mode="json"),
@@ -78,7 +91,7 @@ async def get_revision_qa_evidence(
     request: Request,
     context: TenantContext = Depends(require_tenant_context),
 ):
-    production, quality, _, _ = _repositories(request, context)
+    _, production, quality, _, _ = _repositories(request, context)
     revision = await production.get_revision(context.tenant_id, revision_id)
     if revision is None:
         raise HTTPException(status_code=404, detail="ContentRevision not found")

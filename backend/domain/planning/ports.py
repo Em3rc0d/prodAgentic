@@ -69,6 +69,14 @@ class PlanningRepositoryPort(Protocol):
         now: datetime,
     ) -> bool: ...
 
+    async def ensure_ready_for_review(
+        self,
+        content_id: str,
+        revision_id: str,
+        *,
+        now: datetime,
+    ) -> bool: ...
+
     async def list_batch_items(self, batch_id: str) -> list[ContentItem]: ...
 
     async def list_batch_plans(self, batch_id: str) -> list[PersistedContentPlan]: ...

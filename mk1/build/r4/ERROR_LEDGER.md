@@ -24,6 +24,7 @@ This ledger records product and certification defects that must not disappear me
 | R4-E16 | Full external media provenance (e.g. C2PA) is not implemented. | LOW / FUTURE | DEFERRED | do not claim C2PA; retain internal source-asset provenance and evaluate later |
 | R4-E17 | Final certification protocol incorrectly universalized legacy Profile repair into a mandatory Profile v1→v2 transition, even when the selected real Profile was clean and not upgrade-eligible. | BLOCKER | RESOLVED / PROTOCOL | read-only Em3rc0d authority diagnostic proved clean `USER_ACCEPTED` v1 with no matching legacy source; candidate/status protocol now requires conditional legacy repair or `NO_UPGRADE_REQUIRED`, then freezes the exact current ProfileVersion/digest |
 | R4-E18 | A complete four-piece batch could exhaust its frozen candidate trace after a semantic `RESEARCH_NO_GO`, leaving fewer than 4/4 Reviewable even though planning initially committed 4/4. | BLOCKER | IMPLEMENTED / FINAL UAT | bounded larger candidate pool + pre-commit sequential recovery-reserve gate + regression; fresh exact-SHA real-provider ×4 must still reach 4/4 Reviewable and human PASS ×4 |
+| R4-E19 | S6 could persist `Revision.REVIEWABLE` + `GenerationRun.COMPLETED` while leaving the owning `ContentItem` in `PRODUCING`; after reload Create therefore surfaced already-reviewable work as `Queued · Continue saved draft`. | HIGH | IMPLEMENTED / FINAL UAT | exact-revision crash-safe CAS mirrors durable S6 authority to `READY_FOR_REVIEW`; stale pointers fail closed; reload/recovery must preserve reviewable state |
 
 ## R4-E17 disposition
 
@@ -65,6 +66,29 @@ The repair keeps the authority boundary intact:
 
 This entry is not closed by unit tests alone. The new exact SHA must still pass the
 full PRE-CERT matrix and a fresh real-provider four-piece UAT with 4/4 Reviewable.
+
+## R4-E19 disposition
+
+The production/non-demo UAT on
+`49deedd81ca251fb9d2fc0c35cc9f6516112dc2e` exposed a lifecycle mirror gap:
+the S6 revision and run authority could already be durable and visible in Review,
+while the owning ContentItem remained `PRODUCING`. A reload of Create therefore
+reconstructed the piece as resumable instead of reviewable.
+
+The repair makes the mirror explicit and crash-safe:
+
+- S6 still writes QA evidence, `Revision.REVIEWABLE`, and
+  `GenerationRun.COMPLETED` first.
+- The QA route then performs an exact `content_id + current_revision_id +
+  PRODUCING` CAS to `READY_FOR_REVIEW`.
+- Replays are idempotent when that exact item is already `READY_FOR_REVIEW` or
+  `APPROVED`.
+- A changed revision pointer fails closed and is never overwritten.
+- If a process dies between durable S6 authority and the ContentItem mirror,
+  replaying the idempotent QA endpoint completes only the missing mirror.
+
+The final exact-SHA UAT must prove that reload no longer turns reviewable work back
+into a queued/resumable presentation.
 
 ## Failure handling law
 
