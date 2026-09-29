@@ -56,7 +56,7 @@ test("R2 demo produces a real carousel, reaches Review, approves and exports", a
   await page.getByRole("button", { name: "Generate next batch" }).click();
   await expect(page).toHaveURL(/\/review$/, { timeout: 90_000 });
   await expect(page.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
-  const exactLink = page.getByRole("link", { name: /Open exact revision/ }).first();
+  const exactLink = page.getByRole("link", { name: /Review exact creative/ }).first();
   await expect(exactLink).toBeVisible();
   await exactLink.click();
 

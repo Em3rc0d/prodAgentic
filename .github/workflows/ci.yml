@@ -154,6 +154,7 @@ jobs:
       IMAGE_RENDER_ENABLED: "false"
       SCHEDULER_ENABLED: "false"
       PRODAGENTIC_AUTH_ENABLED: "false"
+      PRODAGENTIC_DEMO_MODE: "true"
       PRODAGENTIC_DEPLOYMENT_KEY: ui-cert-installation
       MK1_ENABLED: "true"
       MK1_PROFILE_V2: "true"
