@@ -161,6 +161,7 @@ async def create_batch(
         candidate_source,
         projector,
         performance_source=performance_source,
+        require_recovery_reserve=not demo_mode_enabled(),
     )
     try:
         result = await service.create_batch(
@@ -192,6 +193,11 @@ async def create_batch(
         "creative_source": "deterministic_demo" if demo_mode_enabled() else "model_router",
         "format_policy": R4_AUTO_FORMAT_POLICY_VERSION,
         "completeness_policy": "r4-exact-request-v1",
+        "recovery_reserve_policy": (
+            "r4-production-required-v1"
+            if not demo_mode_enabled()
+            else "simulation-not-certified"
+        ),
     }
 
 

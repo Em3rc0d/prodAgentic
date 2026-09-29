@@ -235,9 +235,11 @@ class R4StrictBatchPlannerService:
         memory_projector,
         novelty_engine=None,
         performance_source=None,
+        require_recovery_reserve: bool = True,
     ):
         self._planning_repository = planning_repository
         self._staged = _StagedPlanningRepository(planning_repository)
+        self._require_recovery_reserve = require_recovery_reserve
         self._planner = BatchPlannerService(
             profile_repository,
             self._staged,
@@ -270,18 +272,19 @@ class R4StrictBatchPlannerService:
                 f"(similarity={strongest.similarity:.3f}); no batch was persisted."
             )
 
-        required_reserve = self.recovery_reserve_size_for(requested_size)
-        reserve_ids = recovery_reserve_candidate_ids(
-            result,
-            requested_size,
-            self._planner.novelty_engine,
-        )
-        if len(reserve_ids) < required_reserve:
-            raise BatchRecoveryReserveConflict(
-                "R4 batch rejected because its frozen candidate trace cannot provide "
-                f"the required governed recovery reserve ({len(reserve_ids)}/{required_reserve}); "
-                "no batch was persisted."
+        if self._require_recovery_reserve:
+            required_reserve = self.recovery_reserve_size_for(requested_size)
+            reserve_ids = recovery_reserve_candidate_ids(
+                result,
+                requested_size,
+                self._planner.novelty_engine,
             )
+            if len(reserve_ids) < required_reserve:
+                raise BatchRecoveryReserveConflict(
+                    "R4 batch rejected because its frozen candidate trace cannot provide "
+                    f"the required governed recovery reserve ({len(reserve_ids)}/{required_reserve}); "
+                    "no batch was persisted."
+                )
 
         await self._staged.commit()
         return result

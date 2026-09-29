@@ -56,7 +56,10 @@ The repair keeps the authority boundary intact:
 - Before persistence, the strict R4 planner replays the frozen trace in recovery
   order and requires a bounded reserve (up to four candidates) that remains novel
   and materially distinct from the selected batch and earlier reserve choices.
-- If that reserve cannot be proven, the batch fails closed before persistence.
+- If that reserve cannot be proven in production/non-demo mode, the batch fails
+  closed before persistence.
+- Deterministic demo mode may omit this editorial reserve because it is simulation
+  evidence only; it cannot close R4-E18 or substitute for the real-provider UAT.
 - Recovery continues to select only from the original trace, preserving Profile,
   planning, novelty and replacement lineage authority.
 

@@ -178,6 +178,31 @@ async def test_r4_complete_batch_without_recovery_reserve_fails_closed():
 
 
 @pytest.mark.asyncio
+async def test_demo_boundary_can_bypass_recovery_reserve_without_redefining_production_gate():
+    repository = Repository()
+    candidates = [
+        _candidate(1, "sql indexes", "why indexes change query cost", role="education", hook="question"),
+        _candidate(2, "cloud queues", "backpressure during traffic spikes", role="insight", hook="counterintuitive", fmt="infographic"),
+        _candidate(3, "software architecture", "failure ownership before diagrams", role="value", hook="diagram_flow", fmt="single_image"),
+        _candidate(4, "computer networks", "latency budget worked example", role="relatable", hook="story", fmt="carousel"),
+    ]
+    service = R4StrictBatchPlannerService(
+        Profiles(),
+        repository,
+        Source(candidates),
+        Projector(),
+        require_recovery_reserve=False,
+    )
+
+    result = await service.create_batch(
+        "tenant-r4", "profile-r4", _window(), 4, BatchRequestConstraints(), now=NOW
+    )
+
+    assert result.batch.selected_size == 4
+    assert repository.saved is not None
+
+
+@pytest.mark.asyncio
 async def test_r4_shortfall_fails_closed_and_never_persists_partial_batch():
     repository = Repository()
     candidates = [
