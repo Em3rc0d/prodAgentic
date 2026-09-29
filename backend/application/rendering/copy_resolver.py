@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+
+from application.rendering.generated_assets import ResolvedSourceAsset
 from application.visual.validation import copy_reference_map
 from domain.production.models import ContentSpecV1, canonical_sha256 as production_sha256
 from domain.rendering.models import (
@@ -29,10 +32,12 @@ class UnsupportedRenderInput(ValueError):
     pass
 
 
-_EXTERNAL_ASSET_STRATEGIES = {
-    RenderStrategy.GENERATED_BACKGROUND,
+_CERTIFIED_RENDER_STRATEGIES = {
+    RenderStrategy.COMPOSED_STATIC,
     RenderStrategy.GENERATED_VISUAL_PLUS_COMPOSITE,
-    RenderStrategy.PHOTO_OVERLAY,
+    RenderStrategy.DIAGRAM,
+    RenderStrategy.CAROUSEL,
+    RenderStrategy.INFOGRAPHIC,
 }
 
 
@@ -43,7 +48,12 @@ def _resolve_ref(copy_map: dict[str, str], ref: str) -> str:
         raise UnsupportedRenderInput(f"renderer received unknown copy_ref: {ref}") from exc
 
 
-def _resolve_block(block, *, copy_map: dict[str, str]) -> ResolvedRenderBlockV1:
+def _resolve_block(
+    block,
+    *,
+    copy_map: dict[str, str],
+    resolved_assets: dict[str, ResolvedSourceAsset],
+) -> ResolvedRenderBlockV1:
     if isinstance(block, TextBlockV1):
         if block.copy_ref is not None:
             text = _resolve_ref(copy_map, block.copy_ref)
@@ -93,8 +103,31 @@ def _resolve_block(block, *, copy_map: dict[str, str]) -> ResolvedRenderBlockV1:
             editorial_critical=True,
         )
     if isinstance(block, ImageBlockV1):
-        raise UnsupportedRenderInput("S5 deterministic renderer does not yet own external image requirements")
+        source = resolved_assets.get(block.asset_requirement_ref)
+        if source is None:
+            raise UnsupportedRenderInput(
+                f"renderer received unresolved image requirement: {block.asset_requirement_ref}"
+            )
+        encoded = base64.b64encode(source.data).decode("ascii")
+        return ResolvedRenderBlockV1(
+            block_id=block.block_id,
+            kind="image",
+            image_data_uri=f"data:{source.content_type};base64,{encoded}",
+            image_sha256=source.sha256,
+            image_content_type=source.content_type,
+            editorial_critical=False,
+        )
     raise UnsupportedRenderInput(f"unsupported VisualBlock type: {type(block).__name__}")
+
+
+def _semantic_page(page: ResolvedRenderPageV1) -> dict:
+    payload = page.model_dump(mode="json")
+    for block in payload["blocks"]:
+        if block.get("kind") == "image":
+            # The digest binds the owned source SHA/content type, not duplicated
+            # base64 transport bytes. A changed image necessarily changes SHA.
+            block.pop("image_data_uri", None)
+    return payload
 
 
 def build_renderer_request(
@@ -105,7 +138,12 @@ def build_renderer_request(
     design_profile: DesignProfileV1,
     renderer_name: str,
     renderer_version: str,
+    resolved_assets: dict[str, ResolvedSourceAsset] | None = None,
 ) -> RendererRequestV1:
+    if visual_spec.render_strategy not in _CERTIFIED_RENDER_STRATEGIES:
+        raise UnsupportedRenderInput(
+            f"render strategy {visual_spec.render_strategy.value} is not certified"
+        )
     if visual_spec.revision_id != revision_id:
         raise UnsupportedRenderInput("VisualSpec revision authority mismatch")
     if visual_spec.content_spec_id != content.content_spec_id:
@@ -114,10 +152,13 @@ def build_renderer_request(
         raise UnsupportedRenderInput("VisualSpec DesignProfile authority mismatch")
     if visual_spec.style.design_profile_digest != design_profile.digest:
         raise UnsupportedRenderInput("VisualSpec DesignProfile digest mismatch")
-    if visual_spec.asset_requirements:
-        raise UnsupportedRenderInput("S5 deterministic renderer requires zero unresolved asset requirements")
-    if visual_spec.render_strategy in _EXTERNAL_ASSET_STRATEGIES:
-        raise UnsupportedRenderInput("external/generated image render strategy is not certified in S5 deterministic V1")
+
+    assets = resolved_assets or {}
+    required = {item.requirement_id for item in visual_spec.asset_requirements}
+    if set(assets) != required:
+        missing = sorted(required - set(assets))
+        extra = sorted(set(assets) - required)
+        raise UnsupportedRenderInput(f"resolved asset set does not match VisualSpec requirements; missing={missing}, extra={extra}")
 
     copy_map = copy_reference_map(content)
     pages = tuple(
@@ -126,7 +167,10 @@ def build_renderer_request(
             page_index=page.page_index,
             role=page.role.value,
             layout_family=page.layout_family.value,
-            blocks=tuple(_resolve_block(block, copy_map=copy_map) for block in page.blocks),
+            blocks=tuple(
+                _resolve_block(block, copy_map=copy_map, resolved_assets=assets)
+                for block in page.blocks
+            ),
             alt_text=visual_spec.alt_text_plan or content.alt_text_draft,
         )
         for page in visual_spec.pages
@@ -162,7 +206,7 @@ def build_renderer_request(
         "canvas_height": visual_spec.canvas.height,
         "safe_zone": safe_zone.model_dump(mode="json"),
         "theme": theme.model_dump(mode="json"),
-        "pages": [page.model_dump(mode="json") for page in pages],
+        "pages": [_semantic_page(page) for page in pages],
     }
     render_input_digest = canonical_render_sha256(semantic_payload)
     return RendererRequestV1(

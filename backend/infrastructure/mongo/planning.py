@@ -91,7 +91,7 @@ class MongoPlanningRepository:
         trace_inserted = False
         batch_inserted = False
         try:
-            await self.traces.insert_one(trace.model_dump())
+            await self.traces.insert_one(trace.model_dump(mode="json"))
             trace_inserted = True
             for plan in plans:
                 await self.plans.insert_one(plan.model_dump())
@@ -144,6 +144,46 @@ class MongoPlanningRepository:
             {"$set": update},
         )
         return result.matched_count == 1
+
+    async def ensure_ready_for_review(
+        self,
+        content_id: str,
+        revision_id: str,
+        *,
+        now: datetime,
+    ) -> bool:
+        """Mirror durable S6 REVIEWABLE authority into ContentItem exactly once.
+
+        Revision/run authority is written before this mirror. The exact revision
+        pointer is part of the CAS so a concurrent edit cannot be overwritten.
+        Replays are idempotent for READY_FOR_REVIEW and APPROVED items.
+        """
+        result = await self.items.update_one(
+            {
+                "content_id": content_id,
+                "current_revision_id": revision_id,
+                "editorial_state": ContentEditorialState.PRODUCING.value,
+            },
+            {
+                "$set": {
+                    "editorial_state": ContentEditorialState.READY_FOR_REVIEW.value,
+                    "updated_at": now,
+                }
+            },
+        )
+        if result.matched_count == 1:
+            return True
+        raw = await self.items.find_one(
+            {"content_id": content_id, "current_revision_id": revision_id}
+        )
+        return bool(
+            raw
+            and raw.get("editorial_state")
+            in {
+                ContentEditorialState.READY_FOR_REVIEW.value,
+                ContentEditorialState.APPROVED.value,
+            }
+        )
 
     async def list_batch_items(self, batch_id: str) -> list[ContentItem]:
         documents = await self.items.find_many({"batch_id": batch_id}, sort=[("created_at", 1)])

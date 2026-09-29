@@ -7,11 +7,14 @@ from domain.production.models import (
     SingleImageSpecV1,
 )
 from domain.visual.models import (
+    AssetRequirementKind,
+    AssetRequirementV1,
     CanvasV1,
     DesignProfileV1,
     DiagramBlockV1,
     DividerBlockV1,
     IconBlockV1,
+    ImageBlockV1,
     LayoutFamily,
     RenderStrategy,
     SafeZoneV1,
@@ -91,6 +94,15 @@ def _text(*, block_id: str, copy_ref: str, role: str = "body") -> TextBlockV1:
     )
 
 
+def _generated_requirement(requirement_id: str, purpose: str) -> AssetRequirementV1:
+    return AssetRequirementV1(
+        requirement_id=requirement_id,
+        kind=AssetRequirementKind.GENERATED_IMAGE,
+        purpose=purpose,
+        accepted_content_types=("image/png", "image/jpeg", "image/webp"),
+    )
+
+
 def _single_image_pattern(content: SingleImageSpecV1, profile: DesignProfileV1) -> str:
     if len(content.supporting_copy) >= 2:
         return "single_image.action_framework.v2"
@@ -121,27 +133,41 @@ def build_visual_spec(
     content: ContentSpecV1,
     design_profile: DesignProfileV1,
     supersedes_visual_spec_id: str | None = None,
+    generated_visuals_enabled: bool = False,
 ) -> VisualSpecV1:
     if content.format == "text":
         raise UnsupportedVisualFormat("text-only ContentSpec does not require VisualSpec")
 
     format_spec = content.format_spec
     pages: list[VisualPageV1] = []
+    requirements: list[AssetRequirementV1] = []
 
     if isinstance(format_spec, SingleImageSpecV1):
-        # Keep the accepted headline at the stable first editorial position while
-        # adding semantic accents around it. This preserves deterministic copy
-        # authority and the existing tamper tests.
-        blocks = [
-            _surface("surface", design_profile),
-            _text(
-                block_id="headline",
-                copy_ref="content_spec.format_spec.headline",
-                role="headline",
-            ),
-            _accent_icon("signal"),
-            _divider("headline-divider", design_profile),
-        ]
+        blocks = [_surface("surface", design_profile)]
+        if generated_visuals_enabled:
+            requirement = _generated_requirement(
+                "hero-generated",
+                "Editorial hero image that reinforces the accepted headline; no embedded words, letters, logos or UI text.",
+            )
+            requirements.append(requirement)
+            blocks.append(
+                ImageBlockV1(
+                    block_id="hero-image",
+                    asset_requirement_ref=requirement.requirement_id,
+                    treatment=design_profile.image_treatment,
+                )
+            )
+        blocks.extend(
+            [
+                _text(
+                    block_id="headline",
+                    copy_ref="content_spec.format_spec.headline",
+                    role="headline",
+                ),
+                _accent_icon("signal"),
+                _divider("headline-divider", design_profile),
+            ]
+        )
         support_refs = tuple(
             f"content_spec.format_spec.supporting_copy[{index}]"
             for index in range(len(format_spec.supporting_copy))
@@ -177,7 +203,11 @@ def build_visual_spec(
             )
         )
         visual_format = VisualFormat.SINGLE_IMAGE
-        strategy = RenderStrategy.COMPOSED_STATIC
+        strategy = (
+            RenderStrategy.GENERATED_VISUAL_PLUS_COMPOSITE
+            if generated_visuals_enabled
+            else RenderStrategy.COMPOSED_STATIC
+        )
         pattern = _single_image_pattern(format_spec, design_profile)
 
     elif isinstance(format_spec, CarouselSpecV1):
@@ -185,6 +215,19 @@ def build_visual_spec(
             role = VisualPageRole(slide.role)
             prefix = f"content_spec.format_spec.slides[{slide.slide_id}]"
             blocks = [_surface(f"surface-{slide.slide_id}", design_profile)]
+            if generated_visuals_enabled and index == 0:
+                requirement = _generated_requirement(
+                    f"hero-generated-{slide.slide_id}",
+                    "Editorial cover image for the carousel hook; no embedded words, letters, logos or UI text.",
+                )
+                requirements.append(requirement)
+                blocks.append(
+                    ImageBlockV1(
+                        block_id=f"hero-image-{slide.slide_id}",
+                        asset_requirement_ref=requirement.requirement_id,
+                        treatment=design_profile.image_treatment,
+                    )
+                )
             blocks.append(
                 _text(
                     block_id=f"headline-{slide.slide_id}",
@@ -204,9 +247,6 @@ def build_visual_spec(
                         role="body",
                     )
                 )
-            # Keep each bullet independently addressable. This is important for
-            # exact copy coverage/tamper detection and lets CSS layouts turn them
-            # into cards without duplicating visible copy.
             blocks.extend(
                 _text(
                     block_id=f"bullet-{slide.slide_id}-{bullet_index}",
@@ -294,7 +334,7 @@ def build_visual_spec(
         visual_pattern=pattern,
         style=_style(design_profile),
         pages=tuple(pages),
-        asset_requirements=(),
+        asset_requirements=tuple(requirements),
         alt_text_plan=content.alt_text_draft,
         supersedes_visual_spec_id=supersedes_visual_spec_id,
     )

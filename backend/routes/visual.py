@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from application.tenancy.context import require_tenant_context
 from application.visual.planner import UnsupportedVisualFormat
 from application.visual.service import VisualAuthorityError, VisualPlanningConflict, VisualSpecService
 from application.visual.validation import VisualSpecValidationError
+from core.demo import demo_mode_enabled
 from core.feature_flags import FeatureFlag
 from db.mongo import get_db
 from domain.tenants.models import TenantContext
@@ -16,6 +19,18 @@ from infrastructure.mongo.visual import MongoVisualRepository
 
 
 router = APIRouter(tags=["mk1-visual"])
+
+
+def _truthy(value: str | None, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _generated_visuals_enabled() -> bool:
+    if demo_mode_enabled():
+        return False
+    return _truthy(os.getenv("PRODAGENTIC_GENERATIVE_VISUALS"), default=True)
 
 
 def _repositories(request: Request, context: TenantContext):
@@ -43,6 +58,7 @@ async def create_visual_spec(
         production_repository=production,
         profile_repository=profiles,
         visual_repository=visual,
+        generated_visuals_enabled=_generated_visuals_enabled(),
     )
     try:
         result = await service.plan_revision(tenant_id=context.tenant_id, revision_id=revision_id)
@@ -64,6 +80,7 @@ async def create_visual_spec(
         "design_profile": result.design_profile.model_dump(mode="json"),
         "visual_spec": result.visual_spec.model_dump(mode="json"),
         "visual_spec_digest": result.visual_spec_digest,
+        "generated_visuals": bool(result.visual_spec.asset_requirements),
         "next_stage": "S5_RENDERER",
     }
 

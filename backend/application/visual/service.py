@@ -36,15 +36,15 @@ class VisualPlanningResult:
 
 
 class VisualSpecService:
-    """S4 authority: frozen text revision -> typed VisualSpec only.
+    """Frozen text revision -> typed visual intent.
 
-    There is deliberately no renderer or asset-store dependency here. S4
-    persists visual intent, binds lineage and leaves the GenerationRun in
-    VISUAL_PLANNING for S5 to start render execution.
+    R4 may authorize generated source imagery, but S4 still never executes a
+    provider or owns bytes. The decision to require generated imagery becomes
+    immutable VisualSpec authority; S5/R4 rendering resolves those requirements.
     """
 
     contract_versions = ("DesignProfileV1@1", "VisualSpecV1@1")
-    planner_version = "mk1-visual-planner-v2"
+    planner_version = "mk1-visual-planner-v3"
 
     def __init__(
         self,
@@ -52,10 +52,12 @@ class VisualSpecService:
         production_repository: VisualProductionAuthorityPort,
         profile_repository: ProfileVersionReaderPort,
         visual_repository: VisualRepositoryPort,
+        generated_visuals_enabled: bool = False,
     ):
         self.production_repository = production_repository
         self.profile_repository = profile_repository
         self.visual_repository = visual_repository
+        self.generated_visuals_enabled = bool(generated_visuals_enabled)
 
     def _bind_contract_versions(self, run: GenerationRunV1) -> GenerationRunV1:
         versions = list(run.contract_versions)
@@ -123,10 +125,6 @@ class VisualSpecService:
                 raise VisualAuthorityError("current revision VisualSpec lineage is inconsistent")
             if previous.style.design_profile_digest != design_profile.digest:
                 raise VisualAuthorityError("current revision VisualSpec DesignProfile lineage is inconsistent")
-
-            # Revision is the durable S4 pointer. If a process died after its CAS
-            # update but before mirroring the ref into GenerationRun, complete the
-            # interrupted operation and return the already-bound immutable spec.
             if run.visual_spec_ref != previous_visual_spec_id:
                 if run.visual_spec_ref is not None and previous.supersedes_visual_spec_id != run.visual_spec_ref:
                     raise VisualAuthorityError("GenerationRun/VisualSpec recovery lineage is inconsistent")
@@ -145,12 +143,10 @@ class VisualSpecService:
         elif run.visual_spec_ref is not None:
             raise VisualAuthorityError("GenerationRun has an unbound VisualSpec reference")
 
-        # The identity is deterministic for one planning attempt lineage. If a
-        # crash occurs after the immutable spec insert but before revision CAS,
-        # a retry reuses the same ID/bytes instead of creating orphan duplicates.
         identity_digest = canonical_visual_sha256(
             {
                 "planner_version": self.planner_version,
+                "generated_visuals_enabled": self.generated_visuals_enabled,
                 "revision_id": revision.revision_id,
                 "content_spec_id": content.content_spec_id,
                 "content_spec_digest": content_digest,
@@ -167,6 +163,7 @@ class VisualSpecService:
                 content=content,
                 design_profile=design_profile,
                 supersedes_visual_spec_id=previous_visual_spec_id,
+                generated_visuals_enabled=self.generated_visuals_enabled,
             )
             validate_visual_spec(visual_spec, content=content, design_profile=design_profile)
         except UnsupportedVisualFormat:

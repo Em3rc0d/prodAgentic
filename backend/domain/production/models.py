@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, model_serializer
+
+from domain.production.failures import ProductionRecoveryAction, recovery_for
 
 
 class FrozenModel(BaseModel):
@@ -76,6 +78,17 @@ class ClaimV1(FrozenModel):
 
 
 class ResearchPackV1(FrozenModel):
+    evidence_bundle_ref: str | None = Field(default=None, max_length=128)
+    evidence_bundle_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @model_serializer(mode="wrap")
+    def preserve_historical_shape(self, handler):
+        data = handler(self)
+        if self.evidence_bundle_ref is None and self.evidence_bundle_digest is None:
+            data.pop("evidence_bundle_ref", None)
+            data.pop("evidence_bundle_digest", None)
+        return data
+
     schema_version: Literal[1] = 1
     research_id: str = Field(min_length=1, max_length=128)
     plan_id: str = Field(min_length=1, max_length=128)
@@ -263,6 +276,7 @@ class AgentAttemptEvidenceV1(FrozenModel):
 
 class GenerationRunState(str, Enum):
     CREATED = "CREATED"
+    ACQUIRING_EVIDENCE = "ACQUIRING_EVIDENCE"
     RESEARCHING = "RESEARCHING"
     WRITING = "WRITING"
     EDITING = "EDITING"
@@ -275,6 +289,20 @@ class GenerationRunState(str, Enum):
 
 
 class GenerationFailureV1(FrozenModel):
+    recovery_action: ProductionRecoveryAction = ProductionRecoveryAction.HUMAN_ACTION_REQUIRED
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_failure(cls, value):
+        if isinstance(value, dict) and "recovery_action" not in value:
+            value = dict(value)
+            if value.get("stage", "").upper() == "RENDERING" and value.get("retryable"):
+                value["recovery_action"] = ProductionRecoveryAction.RESUME_PIPELINE
+            else:
+                value["recovery_action"] = recovery_for(value.get("code", ""))
+            value["retryable"] = value["recovery_action"] in {ProductionRecoveryAction.RETRY_PRODUCTION, ProductionRecoveryAction.RESUME_PIPELINE}
+        return value
+
     code: str = Field(min_length=1, max_length=160)
     stage: str = Field(min_length=1, max_length=80)
     retryable: bool
@@ -282,6 +310,10 @@ class GenerationFailureV1(FrozenModel):
 
 
 class GenerationRunV1(FrozenModel):
+    retry_of_run_id: str | None = Field(default=None, max_length=128)
+    evidence_bundle_ref: str | None = Field(default=None, max_length=128)
+    evidence_bundle_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
     schema_version: Literal[1] = 1
     run_id: str = Field(min_length=1, max_length=128)
     tenant_id: str = Field(min_length=1, max_length=128)

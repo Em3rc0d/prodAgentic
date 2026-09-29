@@ -16,11 +16,11 @@ class ContentProductionLifecycle:
     def __init__(self, repository: PlanningRepositoryPort):
         self.repository = repository
 
-    async def begin(self, content_id: str, *, now: datetime | None = None) -> None:
+    async def begin(self, content_id: str, *, retry: bool = False, now: datetime | None = None) -> None:
         clock = now or utc_now()
         changed = await self.repository.transition_content_item(
             content_id,
-            expected_state=ContentEditorialState.PLANNED,
+            expected_state=ContentEditorialState.FAILED if retry else ContentEditorialState.PLANNED,
             new_state=ContentEditorialState.PRODUCING,
             now=clock,
         )
@@ -47,6 +47,24 @@ class ContentProductionLifecycle:
         if not changed:
             raise ContentProductionConflict(
                 "ContentItem production state changed before the S3 revision could be bound"
+            )
+
+    async def mark_reviewable(
+        self,
+        content_id: str,
+        revision_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        clock = now or utc_now()
+        ready = await self.repository.ensure_ready_for_review(
+            content_id,
+            revision_id,
+            now=clock,
+        )
+        if not ready:
+            raise ContentProductionConflict(
+                "ContentItem changed before durable QA authority could be mirrored to READY_FOR_REVIEW"
             )
 
     async def fail(self, content_id: str, *, now: datetime | None = None) -> bool:

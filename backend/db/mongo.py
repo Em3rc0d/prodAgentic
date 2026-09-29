@@ -79,6 +79,9 @@ async def _ensure_mk1_planning_indexes(db):
 
 async def _ensure_mk1_production_indexes(db):
     """Install S3 GenerationRun/artifact/revision lineage invariants."""
+    await db["production_recovery_ledgers"].create_index(
+        [("tenant_id", 1), ("batch_id", 1)], unique=True, name="tenant_batch_recovery_unique"
+    )
     await db["generation_runs"].create_index(
         [("tenant_id", 1), ("run_id", 1)], unique=True, name="tenant_generation_run_unique"
     )

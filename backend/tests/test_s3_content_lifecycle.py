@@ -34,6 +34,26 @@ class FixturePlanningRepository:
             self.current_revision_id = current_revision_id
         return True
 
+    async def ensure_ready_for_review(self, content_id, revision_id, *, now):
+        self.transitions.append(
+            (
+                content_id,
+                ContentEditorialState.PRODUCING,
+                ContentEditorialState.READY_FOR_REVIEW,
+                revision_id,
+                now,
+            )
+        )
+        if self.current_revision_id != revision_id:
+            return False
+        if self.state == ContentEditorialState.PRODUCING:
+            self.state = ContentEditorialState.READY_FOR_REVIEW
+            return True
+        return self.state in {
+            ContentEditorialState.READY_FOR_REVIEW,
+            ContentEditorialState.APPROVED,
+        }
+
 
 @pytest.mark.asyncio
 async def test_begin_moves_planned_item_to_producing():
@@ -63,6 +83,32 @@ async def test_success_binds_draft_revision_without_fabricating_review_ready_sta
 
     assert repository.state == ContentEditorialState.PRODUCING
     assert repository.current_revision_id == "revision-1"
+
+
+@pytest.mark.asyncio
+async def test_qa_reviewable_mirror_is_durable_and_idempotent():
+    repository = FixturePlanningRepository(ContentEditorialState.PRODUCING)
+    repository.current_revision_id = "revision-1"
+    lifecycle = ContentProductionLifecycle(repository)
+
+    await lifecycle.mark_reviewable("content-1", "revision-1", now=NOW)
+    assert repository.state == ContentEditorialState.READY_FOR_REVIEW
+
+    await lifecycle.mark_reviewable("content-1", "revision-1", now=NOW)
+    assert repository.state == ContentEditorialState.READY_FOR_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_qa_reviewable_mirror_fails_closed_on_stale_revision_pointer():
+    repository = FixturePlanningRepository(ContentEditorialState.PRODUCING)
+    repository.current_revision_id = "revision-new"
+    lifecycle = ContentProductionLifecycle(repository)
+
+    with pytest.raises(ContentProductionConflict, match="durable QA authority"):
+        await lifecycle.mark_reviewable("content-1", "revision-old", now=NOW)
+
+    assert repository.state == ContentEditorialState.PRODUCING
+    assert repository.current_revision_id == "revision-new"
 
 
 @pytest.mark.asyncio

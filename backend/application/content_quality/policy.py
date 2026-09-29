@@ -6,10 +6,13 @@ from domain.planning.models import ContentPlanV1, normalize_text
 from domain.profiles.models import ProfileVersion
 from domain.production.models import (
     CarouselSpecV1,
+    ClaimConfidence,
+    ClaimPublishability,
     ContentSpecV1,
     EditorialIssueSeverity,
     EditorialIssueV1,
     InfographicSpecV1,
+    ResearchPackV1,
     SingleImageSpecV1,
 )
 
@@ -26,9 +29,6 @@ _INTERNAL_OUTPUT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("internal.state_name", re.compile(r"\b(?:READY_FOR_REVIEW|QA_PENDING|VISUAL_PLANNING)\b")),
 )
 
-# These values belong to prodAgentic's own planning/authority vocabulary. We do
-# not reject arbitrary snake_case because developer, data and engineering clients
-# may legitimately publish code identifiers such as retry_count or user_id.
 _INTERNAL_CONTROL_TOKENS = {
     "better_decision",
     "profile_snapshot_digest",
@@ -45,9 +45,73 @@ _GENERIC_OPENERS = (
     "hoy vamos a hablar de",
     "descubre todo sobre",
     "aprende todo sobre",
+    "para avanzar con",
+    "mas informacion sobre",
+    "antes de invertir mas tiempo en",
+    "to make progress with",
+    "more information about",
+    "before spending more time on",
+    "para avancar em",
+    "mais informacao sobre",
 )
 
+_TEMPLATE_BODY_PATTERNS = (
+    re.compile(r"define la decision.*elimina lo que no cambia.*siguiente accion", re.IGNORECASE | re.DOTALL),
+    re.compile(r"define the decision.*remove what does not change.*next action", re.IGNORECASE | re.DOTALL),
+    re.compile(r"defina a decisao.*elimine o que nao muda.*proxima acao", re.IGNORECASE | re.DOTALL),
+)
+
+# These warnings are intentionally tolerated by deterministic demo fixtures so
+# CI can remain provider-free. R4 real production promotes them to hard failures
+# through strict_publishability_issues().
+_STRICT_PROMOTION_CODES = {
+    "copy.generic_hook",
+    "copy.template_body",
+    "copy.body_hook_duplicate",
+    "copy.value_density_low",
+    "visual.carousel_duplicate_headlines",
+    "visual.infographic_duplicate_labels",
+}
+
 _SNAKE_CASE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
+
+# High-certainty wording is allowed only when the exact governed ResearchPack
+# carries equivalently strong support. These are deliberately narrow modality
+# markers, not a generic ban on persuasive language.
+_ABSOLUTE_FACT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "guarantee",
+        re.compile(
+            r"\b(?:garantiza|garantizan|garantizando|garantizado|garantizada|"
+            r"guarantees?|guaranteed|ensures?|ensured|garante|garantem|assegura|asseguram)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "no_interruption",
+        re.compile(
+            r"\b(?:sin interrupciones?|sin downtime|without interruptions?|zero downtime|"
+            r"sem interrupc(?:ao|oes))\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "elimination",
+        re.compile(
+            r"\b(?:elimina|eliminan|eliminando|eliminates?|eliminating|elimina(?:r)?|"
+            r"remove completamente|removes? completely)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "absolute_identity",
+        re.compile(
+            r"\b(?:identicos? y consistentes?|identical and consistent|"
+            r"identicos? e consistentes?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
 
 
 def _issue(code: str, severity: EditorialIssueSeverity, message: str, target_ref: str | None = None) -> EditorialIssueV1:
@@ -75,12 +139,11 @@ def evaluate_publishability(
     plan: ContentPlanV1,
     profile: ProfileVersion,
 ) -> tuple[EditorialIssueV1, ...]:
-    """Deterministic floor for audience-facing quality.
+    """Vertical-neutral audience-facing quality signals.
 
-    This does not pretend to replace model/human editorial judgment. It blocks
-    machine-internal leakage and structurally weak artifacts that should never be
-    approved, while returning warnings for softer quality risks. The rules are
-    vertical-neutral and bind only to frozen Profile/Plan/Content authority.
+    BLOCKING issues are universal safety/authority failures. Some WARNING issues
+    are promoted to hard failures only by the R4 real-production service, keeping
+    deterministic demo/certification fixtures separate from product-quality claims.
     """
 
     issues: list[EditorialIssueV1] = []
@@ -127,8 +190,19 @@ def evaluate_publishability(
             _issue(
                 "copy.generic_hook",
                 EditorialIssueSeverity.WARNING,
-                "Hook starts with generic framing instead of the Profile audience's specific tension, payoff or decision.",
+                "Hook uses generic/template framing instead of the Profile audience's specific tension, payoff or decision.",
                 "hook",
+            )
+        )
+
+    body_normalized = normalize_text(content.body)
+    if any(pattern.search(body_normalized) for pattern in _TEMPLATE_BODY_PATTERNS):
+        issues.append(
+            _issue(
+                "copy.template_body",
+                EditorialIssueSeverity.WARNING,
+                "Body matches a known generic production template instead of delivering topic-specific substance.",
+                "body",
             )
         )
 
@@ -152,7 +226,6 @@ def evaluate_publishability(
             )
         )
 
-    body_normalized = normalize_text(content.body)
     if body_normalized == hook_normalized:
         issues.append(
             _issue(
@@ -255,7 +328,6 @@ def evaluate_publishability(
                 )
             )
 
-    # Profile-aware but vertical-neutral checks.
     if profile.copy_policy.target_language != content.language:
         issues.append(
             _issue(
@@ -276,7 +348,6 @@ def evaluate_publishability(
             )
         )
 
-    # Deduplicate identical codes while preserving deterministic order.
     deduped: list[EditorialIssueV1] = []
     seen: set[str] = set()
     for item in issues:
@@ -285,6 +356,71 @@ def evaluate_publishability(
         seen.add(item.code)
         deduped.append(item)
     return tuple(deduped)
+
+
+def _absolute_fact_markers(value: str) -> set[str]:
+    normalized = normalize_text(value)
+    return {
+        code
+        for code, pattern in _ABSOLUTE_FACT_PATTERNS
+        if pattern.search(normalized)
+    }
+
+
+def factual_precision_issues(
+    *,
+    content: ContentSpecV1,
+    research: ResearchPackV1,
+) -> tuple[EditorialIssueV1, ...]:
+    """Block certainty inflation beyond the exact ResearchPack authority.
+
+    The writer/editor may paraphrase governed claims, but may not silently turn
+    qualified or uncertain evidence into guarantees, interruption-free behavior,
+    total elimination, or identity claims. A strong modality survives only when
+    a used HIGH-confidence ALLOWED claim carries the same modality and the
+    ResearchPack has no unresolved uncertainty.
+    """
+
+    visible_markers = _absolute_fact_markers(_visible_text(content))
+    if not visible_markers:
+        return ()
+
+    claims = {item.claim_id: item for item in research.claims}
+    used = [claims[item] for item in content.claims_used if item in claims]
+
+    if not used:
+        return (
+            _issue(
+                "factual.absolute_without_claim_authority",
+                EditorialIssueSeverity.BLOCKING,
+                "Audience-facing copy uses absolute factual language without a bound ResearchPack claim.",
+                content.content_spec_id,
+            ),
+        )
+
+    supported_markers: set[str] = set()
+    for claim in used:
+        if (
+            claim.publishability == ClaimPublishability.ALLOWED
+            and claim.confidence == ClaimConfidence.HIGH
+        ):
+            supported_markers.update(_absolute_fact_markers(claim.statement))
+
+    unsupported = visible_markers - supported_markers
+    if research.uncertainties:
+        unsupported = set(visible_markers)
+
+    if not unsupported:
+        return ()
+
+    return (
+        _issue(
+            "factual.modality_escalation",
+            EditorialIssueSeverity.BLOCKING,
+            "Audience-facing copy strengthens factual certainty beyond the governed ResearchPack.",
+            content.content_spec_id,
+        ),
+    )
 
 
 def blocking_publishability_issues(
@@ -297,4 +433,18 @@ def blocking_publishability_issues(
         issue
         for issue in evaluate_publishability(content=content, plan=plan, profile=profile)
         if issue.severity == EditorialIssueSeverity.BLOCKING
+    )
+
+
+def strict_publishability_issues(
+    *,
+    content: ContentSpecV1,
+    plan: ContentPlanV1,
+    profile: ProfileVersion,
+) -> tuple[EditorialIssueV1, ...]:
+    """R4 product-quality gate used only for real provider-backed production."""
+    return tuple(
+        issue
+        for issue in evaluate_publishability(content=content, plan=plan, profile=profile)
+        if issue.severity == EditorialIssueSeverity.BLOCKING or issue.code in _STRICT_PROMOTION_CODES
     )

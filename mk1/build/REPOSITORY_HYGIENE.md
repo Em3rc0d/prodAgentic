@@ -1,152 +1,114 @@
 # MK1 Repository Hygiene
 
-Status: **ACTIVE POLICY — S4 ENTRY**  
-Last reconciled: 2026-09-08
+Status: **ACTIVE POLICY — MAIN + DEVELOPER**  
+Last reconciled: 2026-09-13
 
 ## Purpose
 
-Keep the repository readable for humans and agents without destroying audit evidence. Branch/PR cleanup must never be used to hide failed candidates, bypass exact-SHA certification, or merge obsolete authority into the current MK1 line.
+Keep prodAgentic operationally simple without destroying audit history. The repository has exactly two **active authority branches**:
+
+```text
+main       stable / certified integration authority
+developer  active design + implementation authority
+```
+
+All other branch refs are historical, superseded, diagnostic, or temporary. They are **not** product authority and should be deleted once their useful Git/PR evidence is preserved.
 
 ## Canonical branch model
 
 ```text
+developer
+   ↓ design / implementation / hardening / tests
+   ↓ exact-SHA candidate freeze
+   ↓ required certification gates
+   ↓ PR
 main
-  └─ only merged/certified product work or explicitly bounded documentation descendants
-
-mk1/sN-<slice>
-  └─ one active implementation line for the current slice
-
-<temporary docs/fix branch>
-  └─ short-lived, merged through a PR, then eligible for deletion
+   ↓ exact-main post-merge certification
 ```
 
-There is currently **no `developer` / `develop` branch**. Do not create one merely for symmetry. If a development integration branch is introduced later, it requires an explicit workflow decision and documented merge authority. Until then, `main` is the only integration authority and active slice branches start from its exact SHA.
+Rules:
 
-## Preservation rule
+1. New product/design work goes to `developer`.
+2. `main` changes only through a certified promotion from `developer`, except an explicitly bounded emergency fix that follows the same exact-SHA discipline.
+3. Do not create long-lived `feat/*`, `fix/*`, `docs/*`, `mk1/s*`, candidate-shadow, or certification-shadow branches.
+4. Temporary branches are allowed only when GitHub mechanics genuinely require isolation; they must be deleted immediately after merge/archive.
+5. Failed candidates remain immutable evidence through commits, PRs, workflow runs and receipts. A failed branch ref is not required to preserve that evidence.
+6. Never force-move `main` to make history look clean.
 
-A branch may be deleted after its useful commits are reachable from `main` **or** after its PR is explicitly archived/superseded and the reason is recorded. Deleting a branch ref does not delete Git/PR history; failed candidates and certification evidence remain part of the audit trail.
-
-Never force-rewrite a historical certified branch just to make the branch list look clean.
-
-## Current canonical anchors
+## Current anchors
 
 ```text
-S3 product certificate:
-a10dfec7f5851ae3f8c850fcc934009951f7d422
+main
+790f1e86312e13f4b14f1320db5d83f94ed8a97e
+MK1-R3 certified stable authority
 
-S3 final documentation descendant / current pre-S4 main:
-2dd152e671667e1377907c53748aec83aaf4796b
+developer
+7f0eac200c7c533cd8e09dd43a5a5546bcdad343
+MK1-R4 current design/implementation authority
 ```
 
-S3 product authority remains bound to the product certificate SHA; the later documentation merge does not replace that boundary.
+`mk1-r4-creative-production` and `mk1-r4-production-hardening` were verified identical at `7f0eac200c7c533cd8e09dd43a5a5546bcdad343`; `developer` supersedes both as the active R4 line.
 
-## Archived open lines closed before S4
+## Historical PR cleanup
 
-### PR #42 — `mk1/s2-quality-hardening`
-
-Disposition: **CLOSED / NOT MERGED / PRESERVED AS DIAGNOSTIC DEBT**.
-
-Reason:
-- based on the old S2-era main;
-- intentionally excluded from the certified S3 lineage;
-- never achieved its required exact-head browser certificate;
-- cannot be promoted after S3 by silently merging stale code.
-
-The operator-found topic-authority problem remains valuable product evidence. If revisited, re-derive the fix from current `main` under a new bounded slice/PR and certify it there.
-
-### PR #27 — `reconcile/commercial-v1-main-first`
-
-Disposition: **CLOSED / NOT MERGED / HISTORICAL RECONCILIATION ARCHIVE**.
-
-Reason:
-- predates canonical MK1 slice authority;
-- contains a large historical reconciliation line with assumptions superseded by S0→S3;
-- merging it wholesale would contaminate the exact certification chain.
-
-Useful ideas/code may be mined from it, but only through current design/architecture contracts and a new certified slice.
-
-## Branch cleanup classes
-
-### KEEP
-
-- `main` — canonical integration branch.
-- `mk1/s4-visualspec-v1` — active S4 implementation branch once rebased/advanced to the final S4-entry main.
-- `mk0/freeze-20260831` — historical generation freeze anchor; keep unless replaced by an immutable tag/archive policy.
-
-### ELIGIBLE FOR DELETION AFTER MERGE/ARCHIVE VERIFICATION
-
-Historical feature, fix, docs, ops, release and completed MK1 slice branches whose accepted work is already reachable from `main`, including completed S0/S1/S2/S3 and their merged documentation/fix branches.
-
-Representative prefixes:
+The two remaining August draft PRs were closed during this consolidation:
 
 ```text
-feat/*
-fix/*
-hotfix/*
-ops/*
-docs/*
-release/*
-security/*
-mk1/s0-*
-mk1/s1-*
-mk1/s2-batch-*
-mk1/s3-*
-mk1/build-entry-*
-mk1/design-freeze-*
-mk1/work-execution-directive-*
+PR #24  CI: content intelligence foundation  CLOSED / SUPERSEDED
+PR #25  DOCKER-01 one-command stack           CLOSED / SUPERSEDED
 ```
 
-Before deleting any individual ref, verify one of:
+Their commits and PR discussions remain audit/mining evidence. They must not be merged wholesale into current MK1 authority.
 
-```bash
-git merge-base --is-ancestor origin/<branch> origin/main
-```
+## Branch cleanup policy
 
-or an explicit archived/superseded PR disposition exists.
-
-### ARCHIVE / DO NOT MERGE
+Desired remote branch set:
 
 ```text
-mk1/s2-quality-hardening
-reconcile/commercial-v1-main-first
+main
+developer
 ```
 
-Their branches may be deleted only after preserving the PR/ledger references; their code is not current authority.
+Every other remote branch is eligible for deletion after confirming that it is not the head of an intentionally open PR. Historical commit reachability is not lost merely because a branch ref is removed.
 
-## Pull-request hygiene
+The connected GitHub automation surface used during this reconciliation can create/move refs but does not expose branch-ref deletion. Therefore old refs must **not** be simulated as deleted by force-moving them. The mechanical delete-ref cleanup is the only remaining repository-admin action.
 
-At S4 entry there should be no unexplained open historical PRs. A PR may be open only when it is:
+## Working law
 
-1. the current active slice;
-2. an intentionally isolated bounded fix with its own certification line; or
-3. a short-lived documentation descendant.
-
-Draft status never substitutes for a documented disposition.
-
-## Slice branch law
-
-For S4:
+From this point forward, do not multiply branches per slice. The MK workflow lives inside the repository tree:
 
 ```text
-main@S4_ENTRY_SHA
-  ↓
-mk1/s4-visualspec-v1
-  ↓
-implementation + BUILD_RECORD + ERROR_LEDGER + tests
-  ↓
-freeze one exact candidate SHA
-  ↓
-required exact-SHA gates
-  ↓
-receipt-only head
-  ↓
-exact-head merge
-  ↓
-post-merge gates
+MK*/
+  brainstorming/
+  design/
+  arch/
+  plan/
+  build/
+  test/
+  mining-site/
+  quarries/
 ```
 
-No unrelated repository-cleanup changes should be mixed into the frozen S4 product candidate after this entry reconciliation.
+The folder/evidence graph carries engineering state; branches carry only integration state.
 
-## Tooling note
+## Promotion law
 
-Repository policy distinguishes **merging/archiving** from **deleting remote refs**. If the connected GitHub automation surface cannot delete branch refs, deletion is a final mechanical repository-admin action after the verification list above; it must not be simulated by force-moving old refs to `main`, because that would destroy useful lineage.
+`developer` may move freely while work is open. Once a release candidate is frozen:
+
+```text
+freeze exact developer SHA
+        ↓
+run complete required gates
+        ↓
+no tracked mutation after green candidate
+        ↓
+PR developer -> main
+        ↓
+merge only exact certified head
+        ↓
+run exact-main post-certification
+        ↓
+record final certificate
+```
+
+If the frozen candidate changes, it is superseded and a new exact SHA must be certified. No failed SHA may be relabeled green.

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from domain.production.models import ContentRevisionV1, GenerationFailureV1, GenerationRunV1
-from domain.rendering.models import AssetV1, RendererRequestV1, RenderResultV1
+from domain.rendering.models import AssetV1, GeneratedSourceAssetV1, RendererRequestV1, RenderResultV1
 
 
 class RendererPortError(RuntimeError):
@@ -14,6 +14,12 @@ class RendererPortError(RuntimeError):
 
 
 class AssetStorePortError(RuntimeError):
+    def __init__(self, message: str, *, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
+
+
+class ImageGenerationPortError(RuntimeError):
     def __init__(self, message: str, *, retryable: bool = False):
         super().__init__(message)
         self.retryable = retryable
@@ -34,6 +40,18 @@ class StoredBytes:
     storage_key: str
     sha256: str
     byte_size: int
+
+
+@dataclass(frozen=True)
+class GeneratedImageBytes:
+    data: bytes
+    content_type: str
+    provider: str
+    model: str
+
+
+class ImageGenerationPort(Protocol):
+    async def generate(self, *, prompt: str, aspect_ratio: str) -> GeneratedImageBytes: ...
 
 
 class RendererPort(Protocol):
@@ -65,6 +83,10 @@ class AssetStorePort(Protocol):
 
 
 class RenderingRepositoryPort(Protocol):
+    async def get_source_asset(self, source_asset_id: str) -> GeneratedSourceAssetV1 | None: ...
+
+    async def save_source_asset(self, asset: GeneratedSourceAssetV1) -> None: ...
+
     async def get_asset(self, asset_id: str) -> AssetV1 | None: ...
 
     async def save_asset(self, asset: AssetV1) -> None: ...

@@ -33,9 +33,53 @@ export interface ProductionRevisionSnapshot {
   };
 }
 
+export type RecoveryAction = "RETRY_PRODUCTION" | "REPLAN_CONTENT" | "RESUME_PIPELINE" | "HUMAN_ACTION_REQUIRED" | "NONE";
+export interface RecoveryDecision {
+  content_id: string;
+  run_id: string | null;
+  action: RecoveryAction;
+  code: string;
+  stage: string;
+  retryable: boolean;
+  safe_message: string;
+  replacement_content_id?: string | null;
+}
+
+export async function fetchContentRecovery(contentId: string): Promise<RecoveryDecision> {
+  const payload = await jsonOrThrow(await secureFetch(`${API}/api/content-items/${encodeURIComponent(contentId)}`, { cache: "no-store" }), "Recovery state unavailable");
+  return payload.recovery as RecoveryDecision;
+}
+
+export async function recoverContent(contentId: string, decision: RecoveryDecision,
+  onStage?: (stage: ProductionStage) => void,
+  onReplacement?: (contentId: string) => Promise<void>,
+): Promise<ProductionOutcome> {
+  if (!decision.run_id || !["RETRY_PRODUCTION", "REPLAN_CONTENT", "RESUME_PIPELINE"].includes(decision.action)) {
+    throw new Error("This piece requires attention before it can continue.");
+  }
+  onStage?.("AGENTS");
+  const payload = await jsonOrThrow(await secureFetch(`${API}/api/content-items/${encodeURIComponent(contentId)}/recover`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: decision.action, expected_run_id: decision.run_id }),
+  }), "Recovery failed");
+  if (decision.action === "RESUME_PIPELINE") {
+    const snapshot = payload as ProductionRevisionSnapshot;
+    return finishProduction(contentId, snapshot.revision.revision_id, snapshot.content.payload.format, onStage, snapshot.revision);
+  }
+  if (decision.action === "REPLAN_CONTENT") {
+    if (!payload.content_id) throw new Error("Replacement identity is missing.");
+    await onReplacement?.(String(payload.content_id));
+    return produceContentToReview(String(payload.content_id), onStage);
+  }
+  return finishProduction(contentId, String(payload.revision.revision_id), payload.content.format, onStage);
+}
+
 async function jsonOrThrow(response: Response, label: string) {
   const payload = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(payload?.detail || `${label}: ${response.status}`);
+  if (!response.ok) {
+    const detail = payload?.detail;
+    throw new Error(typeof detail === "string" ? detail : detail?.safe_message || `${label}: ${response.status}`);
+  }
   return payload;
 }
 
@@ -66,8 +110,17 @@ export async function resumeContentToReview(contentId: string, onStage?: (stage:
   const payload = await jsonOrThrow(await secureFetch(`${API}/api/content-items/${encodeURIComponent(contentId)}`, { cache: "no-store" }), "Content state unavailable");
   const item = payload?.content_item;
   if (item?.editorial_state === "PLANNED") return produceContentToReview(contentId, onStage);
+  if (item?.editorial_state === "PRODUCING" && !item?.current_revision_id) {
+    throw new Error("Production is still running without a bound revision; wait and retry.");
+  }
   if (!item?.current_revision_id || !["PRODUCING", "READY_FOR_REVIEW", "APPROVED"].includes(item.editorial_state)) {
-    throw new Error(`Production cannot resume from ${item?.editorial_state || "unknown"}. If an agent request is still running, wait and retry; otherwise create a new batch.`);
+    throw new Error(`Production cannot resume from ${item?.editorial_state || "unknown"}. Reload the saved recovery action before continuing.`);
+  }
+  // Recovery metadata was introduced in R4.1. If an older compatible API omits
+  // it, the frozen revision remains the authority and the historical durable
+  // resume path is safe. When metadata is present, obey it strictly.
+  if (payload.recovery && payload.recovery.action !== "RESUME_PIPELINE" && item.editorial_state !== "APPROVED") {
+    throw new Error(payload.recovery.safe_message || "The saved draft cannot continue yet.");
   }
   const snapshot = await fetchProductionRevision(item.current_revision_id);
   if (snapshot.revision.content_id !== contentId || snapshot.revision.status === "SUPERSEDED") {

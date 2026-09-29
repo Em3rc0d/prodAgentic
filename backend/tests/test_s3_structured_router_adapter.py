@@ -2,7 +2,8 @@ import json
 
 import pytest
 
-from agents.router import AttemptCompleted, AttemptStarted, ContentChunk
+from agents.adapters.types import ErrorCode
+from agents.router import AttemptCompleted, AttemptFailed, AttemptStarted, ContentChunk, RoutingExhausted, RoutingPolicy
 from core.context import GenerationContext, LanguageCode
 from core.model_registry import ModelProfile
 from core.validator import ArtifactType
@@ -15,6 +16,7 @@ class FixtureRouter:
         self.outputs = list(outputs)
         self.requests = []
         self.calls = 0
+        self.policy = RoutingPolicy()
 
     async def stream_generation(self, request):
         self.requests.append(request)
@@ -56,6 +58,43 @@ def research_json():
             "recommended_angle": None,
         }
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [item.value for item in ErrorCode] + ["LANGUAGE_MISMATCH"])
+async def test_failed_attempt_retains_typed_taxonomy_without_provider_payload(code):
+    class FailedRouter:
+        def __init__(self):
+            self.policy = RoutingPolicy()
+
+        async def stream_generation(self, request):
+            yield AttemptStarted("model", "attempt-1", "google")
+            yield AttemptFailed("opaque-provider-detail", "attempt-1", code)
+            yield RoutingExhausted("No routes remain")
+
+    executor = StructuredRouterExecutor[ResearchPackV1](FailedRouter())
+    with pytest.raises(StructuredAgentAdapterError) as captured:
+        await executor.execute(
+            agent=AgentKind.RESEARCH,
+            artifact_model=ResearchPackV1,
+            artifact_type=ArtifactType.RESEARCH,
+            model_profile=ModelProfile.QUALITY_TEXT,
+            prompt_version="s3-test-v1",
+            system_instruction="fixture",
+            input_payload={},
+            input_digest="e" * 64,
+            context=context(),
+        )
+    assert len(captured.value.attempts) == 1
+    attempt = captured.value.attempts[0]
+    assert attempt.status == AgentAttemptStatus.FAILED
+    assert attempt.safe_failure_code == code
+    assert "opaque-provider-detail" not in attempt.model_dump_json()
+
+
+def test_failure_taxonomy_rejects_unknown_explicit_codes():
+    assert StructuredRouterExecutor._safe_failure_code("TIMEOUT", "private-value") == "MODEL_ATTEMPT_FAILED"
+    assert StructuredRouterExecutor._safe_failure_code("Google API Error: QUOTA_EXHAUSTED") == "QUOTA_EXHAUSTED"
 
 
 @pytest.mark.asyncio

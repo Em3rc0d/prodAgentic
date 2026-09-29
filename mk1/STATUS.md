@@ -1,309 +1,95 @@
 # prodAgentic MK1 Status
 
-**As of:** 2026-09-08  
-**Stage:** IMPLEMENTATION — S0/S1/S2/S3/S4 CERTIFIED AND MERGED  
-**Current slice:** S5 — Renderer + AssetStore — NOT STARTED  
-**Integration authority:** `main` (no `developer`/`develop` branch exists)
+**As of:** 2026-09-28  
+**Stable authority:** `main@790f1e86312e13f4b14f1320db5d83f94ed8a97e` — MK1-R3 certified  
+**Integration baseline:** `developer@61bf7f93b37b00f3315c3f710d8005fed977e672` — intentionally untouched during independent R4.1 audit  
+**Active certification line:** PR #69 / exact head SHA on `r4.1-reliability-evidence-authority`  
+**R4 state:** PRE-UAT HARDENING / NOT CERTIFIED
 
-## Canonical product boundary
-
-Current S4 product-code certificate / merge:
-
-```text
-6a0a653d615e7fa2d1d63bc41b6b265b19646202
-```
-
-The final S4 documentation descendant may advance `main` after this SHA. A docs-only descendant records evidence/status; it does not replace the S4 product-code certificate.
-
-Earlier slice certificate boundaries remain independently valid.
-
-## MK1 certification ledger
-
-### Design Freeze
-
-State: **CLOSED**
+## Canonical authority model
 
 ```text
-reviewed design head  730c2f89ec6527031dc95d0e4fbf86c981a41b6f
-PR                    #32
-canonical merge       2211ffe5123fbf2d23d6b88ba3cd0257f569b5d1
+main
+  └─ stable/certified authority only
+
+developer
+  └─ integration authority
+
+PR #69 exact head SHA
+  └─ temporary R4.1 certification candidate only
 ```
 
-Build authorization phrase: `TAKE THE HUMMER`.
+A branch name is never a release identity. The exact PR head SHA plus its workflow receipts is the pre-UAT candidate. The temporary R4.1 branch exists only to preserve `main` and `developer` while the independent audit is completed; after R4 closure, ordinary work returns to the two-branch model.
 
-### S0 — Foundation + Bootstrap Tenant
+## Current stable product boundary
 
-State: **CERTIFIED / MERGED**
+R3 remains the latest certified product authority on `main`:
 
 ```text
-reviewed code head    74056ec8930aecd61ad771da94076046dc95a9c8
-CI run                33892749948 / #677
-backend-test          PASS
-frontend-test         PASS
-UI-01-CERT browser    PASS
-merge used by S1      88a615c519b5918944256afd678b67139ed8f0bd
+790f1e86312e13f4b14f1320db5d83f94ed8a97e
 ```
 
-Authority gained: server-owned tenant boundary, tenant-scoped repositories, additive/idempotent bootstrap migration and gated MK1 shell.
+R4 is not allowed to inherit the word “certified” from R3 merely because it descends from it.
 
-### S1 — Profile V2
+## R4 objective
 
-State: **CERTIFIED / MERGED**
+R4 closes the remaining gap between a governed technical content pipeline and a governed creative-production system capable of producing complete, profile-driven, publishable editorial packages with real visual production.
 
-```text
-candidate             b7b821691da6fe8375109ab00e6eb08c4858e5b4
-CI run                33928753075 / #689
-backend-test          PASS
-frontend-test         PASS
-UI-01-CERT browser    PASS
-merge used by S2      bfa64cb7e03e2344be80a789f0871bbac2bbbcea
-```
+Canonical R4 authority:
 
-Authority gained: low-friction Profile V2 proposal/acceptance, immutable ProfileVersion history, exact digests, crash/restart recovery and structural secret boundary.
+- `mk1/build/r4/README.md`
+- `mk1/build/r4/ARCHITECTURE.md`
+- `mk1/build/r4/BUILD_RECORD.md`
+- `mk1/build/r4/ERROR_LEDGER.md`
+- `mk1/build/r4/CANDIDATE.md`
+- `mk1/build/r4/CERTIFICATION_GRAPH.json`
+- `mk1/plan/R4_EXECUTION_PLAN.md`
+- `mk1/test/R4_ACCEPTANCE.md`
+- `mk1/mining-site/R4_RESEARCH_LEDGER.md`
+- `scripts/verify_r4_cert_graph.py`
 
-### S2 — Batch + Editorial Memory + Novelty
+## R4 implemented and automated
 
-State: **CERTIFIED / MERGED / POST-MERGE GREEN**
+The current R4.1 line includes:
 
-```text
-implementation candidate  3aa962e0d1bd378a3fa0eaa1b252dcd0a69affa2
-candidate CI run          33981477379 / #698
-receipt head              59d45a9dede3fd65246f4bba40707d707d4deea2
-product merge             002177e90431d6009498a88cc6eb20efc46e14b3
-post-merge CI run         33982022917
-```
+- model-backed 12-candidate planning with application-owned cardinality;
+- memory/novelty/diversity selection;
+- governed auto-format policy for visual-first Profile/channel authority;
+- conditional legacy Profile upgrade path that creates an immutable next version while preserving history;
+- evidence-grounded Research, Writer and Editor contracts;
+- factual-modality blockers;
+- product-owned generated/source asset bytes and digest lineage;
+- deterministic visual fallback when an optional generated-image enhancement is unavailable;
+- Chromium rendering + geometry QA + restart reconstruction;
+- bounded production recovery and replacement authority;
+- immutable approval package and verified manual export;
+- exact-SHA historical, Redis, browser, renderer and Docker regression gates.
 
-Authority gained: Batch planning, Editorial Memory, novelty/diversity gates and immutable ContentPlanV1 evidence.
+These are implemented capabilities, not a certification claim.
 
-Historical S2-quality PR #42 is **CLOSED / NOT MERGED**. It remains diagnostic history, not current product authority.
+## Remaining R4 closure gates
 
-### S3 — Structured Agent Cell
+R4 remains open until the exact current PR head proves all of the following:
 
-State: **CERTIFIED / MERGED / DOCUMENTATION CLOSED / POST-MERGE GREEN**
+1. canonical 9-workflow exact-SHA matrix green;
+2. locked Python dependencies pass `pip-audit`;
+3. frontend dependency graph passes `npm audit --audit-level=high`;
+4. local production/non-demo runtime is rebuilt from that exact SHA;
+5. the selected real Profile authority is inspected: eligible malformed legacy authority requires an explicit human upgrade decision, while a clean Profile records `NO_UPGRADE_REQUIRED`;
+6. the exact current ProfileVersion and digest are frozen and one fresh real-provider ×4 reaches **4/4 Reviewable**;
+7. human review gives PASS to all four exact final packages;
+8. repository branch protection / required-check rules are enabled before promotion;
+9. merge is explicitly authorized;
+10. exact merged `main` SHA passes post-certification and receives a release receipt.
 
-```text
-frozen implementation candidate  9d5db5bb375af0522c4d14c946abb70805147d64
-receipt-only head                53fc5ae804bcbcd4e85ae0f0c02f8fb5b3000d2e
-product merge                    a10dfec7f5851ae3f8c850fcc934009951f7d422
-final docs descendant            2dd152e671667e1377907c53748aec83aaf4796b
-```
+For the currently inspected Em3rc0d authority, the read-only diagnostic found clean `USER_ACCEPTED` Profile v1 with digest `6c24104a9df55df10c55dd1affb6d28672139ca7ff3da0ba2c3ee90348f45c20`, no malformed topic family and no matching legacy `content_profile`; its current certification disposition is `NO_UPGRADE_REQUIRED`.
 
-Final consensus:
+Any tracked change or product defect creates a new candidate SHA. A failed SHA remains failed historical evidence.
 
-```text
-backend-test                   PASS
-frontend-test                  PASS
-UI-01-CERT browser             PASS
-DOCKER-COMPOSE-LOCAL smoke     PASS
-S3-CERT structured-agent-cell  PASS
-```
+## Historical MK1 evidence
 
-Authority gained:
+Earlier S0–S12/R2/R3 slice records remain valid historical evidence for the exact boundaries they certified. They do not automatically certify R4.
 
-```text
-ContentPlanV1
-  -> ResearchPackV1
-  -> ContentSpecV1
-  -> EditorialReviewV1
-  -> ContentRevisionV1(DRAFT)
-  -> GenerationRun.VISUAL_PLANNING
-```
+## Build authorization
 
-Canonical receipt: `mk1/test/evidence/S3/CERTIFICATION.md`  
-Historical error ledger: `mk1/build/slices/S3/ERROR_LEDGER.md`
-
-### S4 — VisualSpec V1
-
-State: **CERTIFIED / MERGED / POST-MERGE GREEN**
-
-Entry main:
-
-```text
-408f598bae5f200bbd90d9a06883cc740b69bcac
-```
-
-Frozen implementation candidate:
-
-```text
-75a0fc048bc172d4a394baf26d44739b3759b3a2
-```
-
-Candidate exact-SHA consensus:
-
-```text
-backend-test                  PASS
-frontend-test                 PASS
-UI-01-CERT browser            PASS
-DOCKER-COMPOSE-LOCAL smoke    PASS
-S3-CERT structured-agent-cell PASS
-S4-CERT visualspec-v1         PASS
-```
-
-Receipt-only head:
-
-```text
-1b056136d3a5a4aa5eec7588555531133dcb0680
-```
-
-Receipt-head consensus: **6/6 GREEN**.
-
-Exact-head product merge:
-
-```text
-PR #46
-6a0a653d615e7fa2d1d63bc41b6b265b19646202
-```
-
-Post-merge evidence:
-
-```text
-Canonical CI                run 34262319702
-  frontend-test             PASS
-  backend-test              PASS
-  UI-01-CERT browser        PASS
-Docker Compose Local        run 34262319658  PASS
-S3 Structured Agent Cell    run 34262319740  PASS
-S4 VisualSpec V1 Cert       run 34262319707  PASS
-
-POST-MERGE CONSENSUS        6 / 6 GREEN
-```
-
-Authority gained:
-
-```text
-accepted ContentSpecV1
-+ exact ContentRevisionV1(DRAFT)
-+ GenerationRun.VISUAL_PLANNING
-+ exact frozen ProfileVersion
-        ↓
-DesignProfileV1
-        ↓
-VisualSpecV1
-        ↓
-validated critical copy_refs
-        ↓
-tenant-scoped immutable persistence
-        ↓
-restart-safe visual lineage
-```
-
-Certified formats:
-
-```text
-single_image
-carousel
-infographic
-```
-
-S4 intentionally leaves:
-
-```text
-GenerationRun.state     = VISUAL_PLANNING
-ContentRevision.status  = DRAFT
-asset_refs              = ()
-qa_report_id             = null
-```
-
-S4 does not own render bytes or pixel QA. S5 owns `VISUAL_PLANNING -> RENDERING` when real render execution starts.
-
-Canonical S4 evidence:
-
-- `mk1/test/evidence/S4/CERTIFICATION.md`
-- `mk1/build/slices/S4/BUILD_RECORD.md`
-- `mk1/build/slices/S4/ERROR_LEDGER.md`
-
-## Current certified product surface
-
-```text
-Bootstrap Tenant
-    ↓
-Profile V2
-    ↓
-immutable ProfileVersion
-    ↓
-Batch + Editorial Memory + Novelty
-    ↓
-ContentPlanV1
-    ↓
-ResearchPackV1
-    ↓
-ContentSpecV1
-    ↓
-EditorialReviewV1
-    ↓
-ContentRevisionV1(DRAFT)
-    ↓
-DesignProfileV1
-    ↓
-VisualSpecV1
-    ↓
-GenerationRun.VISUAL_PLANNING
-```
-
-## Future authority
-
-```text
-S5  Renderer + AssetStore        NEXT / NOT STARTED
-S6  QA + Recovery                NOT STARTED
-S7  Review + Approval V2         NOT STARTED
-S8  Export Package               NOT STARTED
-S9  Redis Streams + Outbox       NOT STARTED
-S10 Calendar + LinkedIn MK1      NOT STARTED
-S11 Analytics snapshots          NOT STARTED
-S12 Planner learning             NOT STARTED
-```
-
-## S4 explicit non-claims
-
-S4 does not certify:
-
-- final image appearance;
-- Chromium/Playwright render execution;
-- font rendering fidelity;
-- clipping/overlap;
-- generated-image quality;
-- AssetStore bytes or final asset hashes;
-- visual QA verdicts;
-- reviewability/approval;
-- scheduling or publication.
-
-## Repository hygiene
-
-Canonical policy: `mk1/build/REPOSITORY_HYGIENE.md`.
-
-- `main` is the only integration authority;
-- no `developer`/`develop` branch exists;
-- stale PR #42 and historical PR #27 are closed/not merged;
-- historical refs are not force-moved to simulate deletion;
-- completed refs may be mechanically deleted only after merge/archival verification and with real delete-ref authority.
-
-## Local runtime
-
-Docker/WSL local-stack support remains independently certified. Canonical guides:
-
-- `docs/LOCAL_DEVELOPMENT.md`
-- `docs/DOCKER_LOCAL.md`
-- `docs/WSL_NATIVE_DOCKER.md`
-- `mk1/test/LOCAL_ACCEPTANCE.md`
-
-Product-code certification and operator-machine acceptance remain separate evidence boundaries.
-
-## Next executable graph
-
-```text
-DESIGN FREEZE                 ✅ CLOSED
-        ↓
-S0 FOUNDATION                 ✅ CERTIFIED / MERGED
-        ↓
-S1 PROFILE V2                 ✅ CERTIFIED / MERGED
-        ↓
-S2 BATCH + MEMORY + NOVELTY   ✅ CERTIFIED / MERGED
-        ↓
-S3 STRUCTURED AGENT CELL      ✅ CERTIFIED / MERGED
-        ↓
-S4 VISUALSPEC V1              ✅ CERTIFIED / MERGED
-        ↓
-S5 RENDERER + ASSETSTORE      ⛔ NOT STARTED
-```
-
-The S4 product certificate remains `6a0a653d615e7fa2d1d63bc41b6b265b19646202`; later documentation descendants do not redefine it.
+The phrase **“Take the hummer”** means the active design/architecture/plan graph is sufficiently closed to enter implementation. It never bypasses exact-SHA gates, product-quality UAT, human approval or post-merge certification.

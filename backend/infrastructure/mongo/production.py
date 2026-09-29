@@ -63,14 +63,21 @@ class MongoProductionRepository:
         document = _clean(await self.runs.find_one({"run_id": run_id}))
         return GenerationRunV1.model_validate(document) if document else None
 
+    async def latest_run(self, tenant_id: str, content_id: str) -> GenerationRunV1 | None:
+        self._require_tenant(tenant_id)
+        document = await self.runs.collection.find_one(
+            self.runs._scope({"content_id": content_id}), sort=[("started_at", -1), ("_id", -1)],
+        )
+        return GenerationRunV1.model_validate(_clean(document)) if document else None
+
     async def update_run(self, run: GenerationRunV1) -> None:
         self._require_tenant(run.tenant_id)
         values = run.model_dump()
         values.pop("tenant_id", None)
         values.pop("run_id", None)
-        result = await self.runs.update_one({"run_id": run.run_id}, {"$set": values})
+        result = await self.runs.update_one({"run_id": run.run_id, "state": {"$nin": ["FAILED", "CANCELLED"]}}, {"$set": values})
         if result.matched_count != 1:
-            raise LookupError("GenerationRun not found")
+            raise LookupError("GenerationRun missing or terminal; historical failures are immutable")
 
     async def append_agent_attempt(self, tenant_id: str, run_id: str, attempt: AgentAttemptEvidenceV1) -> None:
         self._require_tenant(tenant_id)

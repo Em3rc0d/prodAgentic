@@ -9,9 +9,14 @@ import * as production from "@/lib/r2-production";
 const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock("@/lib/api", () => ({ fetchProfilesV2: jest.fn() }));
-jest.mock("@/lib/mk1-batches", () => ({ createBatchV1: jest.fn() }));
+jest.mock("@/lib/mk1-batches", () => ({ createBatchV1: jest.fn(), fetchBatchV1: jest.fn() }));
 jest.mock("@/lib/r2", () => ({ fetchRuntimeReadiness: jest.fn() }));
-jest.mock("@/lib/r2-production", () => ({ produceContentToReview: jest.fn(), resumeContentToReview: jest.fn() }));
+jest.mock("@/lib/r2-production", () => ({
+  produceContentToReview: jest.fn(),
+  resumeContentToReview: jest.fn(),
+  fetchContentRecovery: jest.fn(),
+  recoverContent: jest.fn(),
+}));
 
 const mockedApi = api as jest.Mocked<typeof api>;
 const mockedBatches = batches as jest.Mocked<typeof batches>;
@@ -50,12 +55,27 @@ function response(selectedSize = 4) {
   };
 }
 
+function retryDecision(contentId = "content-0") {
+  return {
+    content_id: contentId,
+    run_id: `run-${contentId}`,
+    action: "RETRY_PRODUCTION" as const,
+    code: "MODEL_TIMEOUT",
+    stage: "research",
+    retryable: true,
+    safe_message: "The failed production run can be retried without changing its frozen plan.",
+  };
+}
+
 describe("MK1 R2 Create", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    window.history.replaceState(null, "", "/create");
     mockedApi.fetchProfilesV2.mockResolvedValue({ profiles: [profile], count: 1 });
     mockedBatches.createBatchV1.mockResolvedValue(response());
+    mockedBatches.fetchBatchV1.mockResolvedValue(response());
     mockedR2.fetchRuntimeReadiness.mockResolvedValue({ state: "DEGRADED", label: "Runtime attention", detail: "Provider key is intentionally absent in unit tests." });
+    mockedProduction.fetchContentRecovery.mockImplementation(async (contentId) => retryDecision(contentId));
   });
 
   it("starts with outcome-level controls and plans four pieces by default", async () => {
@@ -115,7 +135,74 @@ describe("MK1 R2 Create", () => {
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/review"));
   });
 
-  it("preserves partial success and does not navigate when one piece fails QA", async () => {
+  it("automatically replans a semantic research NO_GO from the governed remaining pool", async () => {
+    const planned = response(1);
+    const refreshed = response(1);
+    refreshed.content_items[0].content_id = "content-replacement";
+    refreshed.plans[0].content_id = "content-replacement";
+
+    mockedBatches.createBatchV1.mockResolvedValueOnce(planned);
+    mockedBatches.fetchBatchV1.mockResolvedValueOnce(refreshed);
+    mockedR2.fetchRuntimeReadiness.mockResolvedValueOnce({ state: "READY", label: "Runtime ready", detail: "READY" });
+    mockedProduction.produceContentToReview.mockRejectedValueOnce(new Error("Reliable evidence was insufficient."));
+    mockedProduction.fetchContentRecovery.mockResolvedValueOnce({
+      content_id: "content-0",
+      run_id: "run-content-0",
+      action: "REPLAN_CONTENT",
+      code: "RESEARCH_NO_GO",
+      stage: "research",
+      retryable: false,
+      safe_message: "Reliable evidence was insufficient.",
+    });
+    mockedProduction.recoverContent.mockImplementationOnce(async (_contentId, _decision, _onStage, onReplacement) => {
+      await onReplacement?.("content-replacement");
+      return {
+        content_id: "content-replacement",
+        revision_id: "revision-replacement",
+        format: "single_image",
+        reviewable: true,
+      };
+    });
+
+    render(<Mk1BatchCreate />);
+    await screen.findByRole("heading", { name: "Create for Logan" });
+    fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
+
+    await waitFor(() => expect(mockedProduction.recoverContent).toHaveBeenCalledTimes(1));
+    expect(mockedBatches.fetchBatchV1).toHaveBeenCalledWith("batch-1");
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/review"));
+  });
+
+  it("automatically resumes a retryable persisted visual failure", async () => {
+    const planned = response(1);
+    mockedBatches.createBatchV1.mockResolvedValueOnce(planned);
+    mockedR2.fetchRuntimeReadiness.mockResolvedValueOnce({ state: "READY", label: "Runtime ready", detail: "READY" });
+    mockedProduction.produceContentToReview.mockRejectedValueOnce(new Error("R4 could not resolve a complete verified owned source-image set."));
+    mockedProduction.fetchContentRecovery.mockResolvedValueOnce({
+      content_id: "content-0",
+      run_id: "run-content-0",
+      action: "RESUME_PIPELINE",
+      code: "PERSISTED_REVISION",
+      stage: "production",
+      retryable: true,
+      safe_message: "R4 could not resolve a complete verified owned source-image set.",
+    });
+    mockedProduction.recoverContent.mockResolvedValueOnce({
+      content_id: "content-0",
+      revision_id: "revision-0",
+      format: "single_image",
+      reviewable: true,
+    });
+
+    render(<Mk1BatchCreate />);
+    await screen.findByRole("heading", { name: "Create for Logan" });
+    fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
+
+    await waitFor(() => expect(mockedProduction.recoverContent).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/review"));
+  });
+
+  it("preserves partial success and exposes an authoritative recovery action when one piece fails QA", async () => {
     const planned = response(2);
     mockedBatches.createBatchV1.mockResolvedValueOnce(planned);
     mockedR2.fetchRuntimeReadiness.mockResolvedValueOnce({ state: "READY", label: "Runtime ready", detail: "READY" });
@@ -129,19 +216,23 @@ describe("MK1 R2 Create", () => {
     await waitFor(() => expect(screen.getByText("1 reviewable · 1 need attention")).toBeVisible());
     expect(mockPush).not.toHaveBeenCalled();
     expect(screen.getByText("QA retained this revision for attention")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry production" })).toBeEnabled();
+    expect(mockedProduction.fetchContentRecovery).toHaveBeenCalledWith("content-1");
   });
 });
 
 
-it("releases pending state and keeps the server error when production fails", async () => {
+it("releases pending state, keeps the server error, and replaces the old misleading global retry with per-piece recovery", async () => {
   mockedApi.fetchProfilesV2.mockResolvedValue({ profiles: [profile], count: 1 });
   mockedBatches.createBatchV1.mockResolvedValue(response(1));
   mockedR2.fetchRuntimeReadiness.mockResolvedValue({ state: "READY", label: "Ready", detail: "" });
+  mockedProduction.fetchContentRecovery.mockImplementation(async (contentId) => retryDecision(contentId));
   mockedProduction.produceContentToReview.mockRejectedValue(new Error("ProfileVersion digest mismatch"));
   render(<Mk1BatchCreate />);
   await waitFor(() => expect(screen.getByRole("button", { name: "Generate next batch" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Generate next batch" }));
   expect(await screen.findByText("ProfileVersion digest mismatch")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Generate next batch" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Retry unfinished work" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Retry unfinished work" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retry production" })).toBeEnabled();
 });

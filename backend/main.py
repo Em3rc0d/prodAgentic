@@ -33,6 +33,7 @@ from routes.publishing import router as publishing_router
 from routes.scheduling import router as scheduling_router
 from routes.linkedin_oauth import router as linkedin_oauth_router
 from routes.profiles import router as profiles_router
+from routes.profile_upgrades import router as profile_upgrades_router
 from routes.batches import router as batches_router
 from routes.production import router as production_router
 from routes.visual import router as visual_router
@@ -137,6 +138,7 @@ app.include_router(publishing_router, prefix="/api")
 app.include_router(scheduling_router, prefix="/api")
 app.include_router(linkedin_oauth_router, prefix="/api")
 app.include_router(profiles_router, prefix="/api")
+app.include_router(profile_upgrades_router, prefix="/api")
 app.include_router(batches_router, prefix="/api")
 app.include_router(production_router, prefix="/api")
 app.include_router(visual_router, prefix="/api")

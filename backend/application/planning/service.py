@@ -82,6 +82,7 @@ class BatchPlannerService:
         constraints: BatchRequestConstraints,
         *,
         now: datetime | None = None,
+        target_pool_size_override: int | None = None,
     ) -> PlannedBatchResult:
         if requested_size < 1 or requested_size > 30:
             raise ValueError("requested_size must be between 1 and 30")
@@ -115,7 +116,17 @@ class BatchPlannerService:
         memory_since = clock - timedelta(days=self.memory_window_days)
         memory = await self.planning_repository.list_recent_memory(profile_id, memory_since)
 
-        target_pool_size = min(self.candidate_cap, max(8, requested_size * 3))
+        if target_pool_size_override is None:
+            target_pool_size = min(self.candidate_cap, max(8, requested_size * 3))
+        else:
+            if (
+                target_pool_size_override < requested_size
+                or target_pool_size_override > self.candidate_cap
+            ):
+                raise ValueError(
+                    "target_pool_size_override must be between requested_size and candidate_cap"
+                )
+            target_pool_size = target_pool_size_override
         candidates = self.candidate_source.generate(
             profile_version,
             target_window,
@@ -357,6 +368,9 @@ class BatchPlannerService:
             "created_at": clock.isoformat(),
         }
         trace = BatchPlanningTraceV1(**trace_payload, digest=canonical_sha256(trace_payload))
+        # Hash the typed JSON representation (including UTC serialization), not
+        # the pre-validation datetime string, so persisted authority round-trips.
+        trace = trace.model_copy(update={"digest": canonical_sha256(trace.model_dump(mode="json", exclude={"digest"}))})
         await self.planning_repository.save_batch(batch, items, plans, trace)
         return PlannedBatchResult(
             batch=batch,

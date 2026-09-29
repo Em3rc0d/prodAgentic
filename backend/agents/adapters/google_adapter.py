@@ -1,14 +1,54 @@
-import traceback
+import httpx
+import json
+import logging
 from typing import AsyncGenerator
 from google import genai
 from google.genai.errors import APIError
 
 from .types import ProviderAdapter, ModelExecutionResult, ModelExecutionError, ErrorCode
 
+logger = logging.getLogger(__name__)
+
 class GoogleDirectAdapter(ProviderAdapter):
     def __init__(self, client: genai.Client):
         self.client = client
         self.async_client = client.aio
+
+    @staticmethod
+    def _build_config(*, system_instruction=None, response_mime_type=None, response_json_schema=None):
+        from google.genai import types
+
+        values = {}
+        if system_instruction:
+            values["system_instruction"] = system_instruction
+        if response_mime_type:
+            values["response_mime_type"] = response_mime_type
+        if response_json_schema is not None:
+            values["response_json_schema"] = response_json_schema
+        return types.GenerateContentConfig(**values) if values else None
+
+    @staticmethod
+    def _safe_invalid_request_reason(e: Exception) -> str:
+        """Classify provider 400 detail without logging request/response bodies."""
+
+        try:
+            details = json.dumps(getattr(e, "details", None), ensure_ascii=True, sort_keys=True).lower()
+        except Exception:
+            details = ""
+        message = str(getattr(e, "message", "") or "").lower()
+        haystack = f"{message} {details}"
+
+        signatures = (
+            ("SCHEMA_CARDINALITY", ("minitems", "maxitems", "min_items", "max_items")),
+            ("RESPONSE_SCHEMA", ("responsejsonschema", "response_json_schema", "responseschema", "response_schema")),
+            ("RESPONSE_MIME_TYPE", ("responsemimetype", "response_mime_type")),
+            ("SYSTEM_INSTRUCTION", ("systeminstruction", "system_instruction", "system instruction")),
+            ("CONTENTS", ("contents",)),
+        )
+        for reason, needles in signatures:
+            if any(needle in haystack for needle in needles):
+                return reason
+        return "UNKNOWN"
 
     def _translate_error(self, e: Exception, model_id: str, attempt_id: str) -> ModelExecutionError:
         code = getattr(e, 'code', 500) if isinstance(e, APIError) else None
@@ -30,7 +70,8 @@ class GoogleDirectAdapter(ProviderAdapter):
                 category = ErrorCode.MODEL_NOT_FOUND
                 fallback_allowed = True
             elif code == 429:
-                if "quota" in message:
+                fallback_allowed = True
+                if "quota" in message or provider_error_code == "RESOURCE_EXHAUSTED":
                     category = ErrorCode.QUOTA_EXHAUSTED
                 else:
                     category = ErrorCode.RATE_LIMITED
@@ -43,12 +84,23 @@ class GoogleDirectAdapter(ProviderAdapter):
                 category = ErrorCode.TIMEOUT
                 retryable = True
                 fallback_allowed = True
-        elif "timeout" in str(e).lower():
+        elif isinstance(e, (TimeoutError, httpx.TimeoutException)) or "timeout" in message:
             category = ErrorCode.TIMEOUT
             retryable = True
             fallback_allowed = True
             
+        invalid_request_reason = None
+        if category == ErrorCode.INVALID_REQUEST:
+            invalid_request_reason = self._safe_invalid_request_reason(e)
+            logger.warning(
+                "Google invalid request rejected reason=%s status=%s",
+                invalid_request_reason,
+                provider_error_code or "UNKNOWN",
+            )
+
         sanitized_message = f"Google API Error: {category.value}"
+        if invalid_request_reason is not None:
+            sanitized_message += f":{invalid_request_reason}"
 
         return ModelExecutionError(
             category=category,
@@ -67,11 +119,11 @@ class GoogleDirectAdapter(ProviderAdapter):
         attempt_id = kwargs.get("attempt_id", "default")
         profile = kwargs.get("profile_name", "UNKNOWN")
         system_instruction = kwargs.get("system_instruction")
-        
-        config = None
-        if system_instruction:
-            from google.genai import types
-            config = types.GenerateContentConfig(system_instruction=system_instruction)
+        config = self._build_config(
+            system_instruction=system_instruction,
+            response_mime_type=kwargs.get("response_mime_type"),
+            response_json_schema=kwargs.get("response_json_schema"),
+        )
 
         try:
             response = await self.async_client.models.generate_content(
@@ -108,11 +160,11 @@ class GoogleDirectAdapter(ProviderAdapter):
     async def stream(self, model: str, prompt: str, **kwargs) -> AsyncGenerator[tuple, None]:
         attempt_id = kwargs.get("attempt_id", "default")
         system_instruction = kwargs.get("system_instruction")
-        
-        config = None
-        if system_instruction:
-            from google.genai import types
-            config = types.GenerateContentConfig(system_instruction=system_instruction)
+        config = self._build_config(
+            system_instruction=system_instruction,
+            response_mime_type=kwargs.get("response_mime_type"),
+            response_json_schema=kwargs.get("response_json_schema"),
+        )
 
         try:
             response = await self.async_client.models.generate_content_stream(
