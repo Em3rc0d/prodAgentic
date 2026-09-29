@@ -19,6 +19,10 @@ class BatchRecoveryReserveConflict(PlanningConflict):
     """R4 fail-closed signal when a complete batch has no governed recovery reserve."""
 
 
+_R4_RECOVERY_RESERVE_CAP = 4
+_R4_CANDIDATE_OVERSAMPLE_FACTOR = 6
+
+
 _GENERIC_EDITORIAL_TOKENS = {
     "a", "an", "and", "best", "checklist", "common", "de", "del", "el", "en", "for", "guide",
     "how", "la", "las", "los", "mistake", "mistakes", "more", "para", "post", "posts", "quick",
@@ -121,7 +125,9 @@ def recovery_reserve_candidate_ids(
     after the batch is committed.
     """
 
-    required = BatchPlannerService.recovery_reserve_size_for(requested_size)
+    if requested_size < 1:
+        raise ValueError("requested_size must be positive")
+    required = min(requested_size, _R4_RECOVERY_RESERVE_CAP)
     if required == 0:
         return ()
 
@@ -203,6 +209,23 @@ class R4StrictBatchPlannerService:
     """
 
     candidate_cap = BatchPlannerService.candidate_cap
+    recovery_reserve_cap = _R4_RECOVERY_RESERVE_CAP
+    candidate_oversample_factor = _R4_CANDIDATE_OVERSAMPLE_FACTOR
+
+    @classmethod
+    def recovery_reserve_size_for(cls, requested_size: int) -> int:
+        if requested_size < 1:
+            raise ValueError("requested_size must be positive")
+        return min(requested_size, cls.recovery_reserve_cap)
+
+    @classmethod
+    def target_pool_size_for(cls, requested_size: int) -> int:
+        if requested_size < 1:
+            raise ValueError("requested_size must be positive")
+        return min(
+            cls.candidate_cap,
+            max(8, requested_size * cls.candidate_oversample_factor),
+        )
 
     def __init__(
         self,
@@ -231,6 +254,7 @@ class R4StrictBatchPlannerService:
         if requested_size is None:
             raise TypeError("requested_size is required")
 
+        kwargs["target_pool_size_override"] = self.target_pool_size_for(requested_size)
         result = await self._planner.create_batch(*args, **kwargs)
         if result.batch.selected_size != requested_size or len(result.items) != requested_size:
             raise BatchCompletenessConflict(
@@ -246,7 +270,7 @@ class R4StrictBatchPlannerService:
                 f"(similarity={strongest.similarity:.3f}); no batch was persisted."
             )
 
-        required_reserve = BatchPlannerService.recovery_reserve_size_for(requested_size)
+        required_reserve = self.recovery_reserve_size_for(requested_size)
         reserve_ids = recovery_reserve_candidate_ids(
             result,
             requested_size,

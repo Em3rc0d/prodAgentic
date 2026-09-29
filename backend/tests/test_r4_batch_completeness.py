@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from application.planning.service import BatchPlannerService
 from application.planning.strict import (
     BatchCompletenessConflict,
     BatchDistinctnessConflict,
@@ -154,9 +153,9 @@ async def test_r4_exact_four_is_persisted_only_after_completeness_and_distinctne
 
 
 def test_r4_four_piece_pool_uses_full_bounded_candidate_capacity():
-    assert BatchPlannerService.recovery_reserve_size_for(4) == 4
-    assert BatchPlannerService.target_pool_size_for(4) == 24
-    assert BatchPlannerService.target_pool_size_for(7) == 24
+    assert R4StrictBatchPlannerService.recovery_reserve_size_for(4) == 4
+    assert R4StrictBatchPlannerService.target_pool_size_for(4) == 24
+    assert R4StrictBatchPlannerService.target_pool_size_for(7) == 24
 
 
 @pytest.mark.asyncio

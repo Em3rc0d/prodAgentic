@@ -108,7 +108,7 @@ async def _candidate_source_for_request(
     if router_instance is None:
         raise HTTPException(status_code=503, detail="Creative planning model router is unavailable")
 
-    target_pool_size = BatchPlannerService.target_pool_size_for(body.requested_size)
+    target_pool_size = R4StrictBatchPlannerService.target_pool_size_for(body.requested_size)
     try:
         candidates = await RouterCandidateSource(_planning_router(router_instance)).generate(
             version,
